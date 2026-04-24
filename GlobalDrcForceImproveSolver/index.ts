@@ -1,4 +1,4 @@
-export { GlobalDrcForceImproveSolver } from "./solvers/GlobalDrcForceImproveSolver"
+export { GlobalDrcForceImproveSolver } from "./GlobalDrcForceImproveSolver"
 export type {
   ConnectionPoint,
   DrcError,
@@ -10,4 +10,6 @@ export type {
   SimplifiedPcbTraces,
   SingleLayerConnectionPoint,
   SimpleRouteJson,
-} from "./solvers/GlobalDrcForceImproveSolver"
+  SolverDeps,
+  SolverOutput,
+} from "./types"
