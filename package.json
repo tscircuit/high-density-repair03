@@ -12,7 +12,7 @@
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "format": "biome format --write .",
-    "formatcheck": "biome check ."
+    "formatcheck": "biome format ."
   },
   "dependencies": {
     "@tscircuit/checks": "^0.0.123",
