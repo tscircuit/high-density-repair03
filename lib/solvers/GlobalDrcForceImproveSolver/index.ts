@@ -12,7 +12,7 @@ export type {
   DrcSnapshot,
   SolverDeps,
   SolverOutput,
-} from "../../../GlobalDrcForceImproveSolver/types"
+} from "./types"
 export type { HighDensityRoute } from "../../types/high-density-types"
 export type {
   ConnectionPoint,
