@@ -35,6 +35,12 @@ export interface GetDrcErrorsOptions {
   traceClearance?: number
 }
 
+const getSpacingOptions = (spacing: number | undefined) =>
+  ({
+    minSpacing: spacing,
+    minClearance: spacing,
+  }) as unknown as Parameters<typeof checkEachPcbTraceNonOverlapping>[1]
+
 export const getDrcErrors = (
   circuitJson: CircuitJson,
   options: GetDrcErrorsOptions = {},
@@ -43,16 +49,16 @@ export const getDrcErrors = (
     options.viaClearance ?? MIN_VIA_TO_VIA_CLEARANCE,
     MIN_VIA_TO_VIA_CLEARANCE,
   )
-  const traceErrors = checkEachPcbTraceNonOverlapping(circuitJson, {
-    minClearance: options.traceClearance,
-  })
+  const traceErrors = checkEachPcbTraceNonOverlapping(
+    circuitJson,
+    getSpacingOptions(options.traceClearance),
+  )
   const viaErrors = [
-    ...checkSameNetViaSpacing(circuitJson, {
-      minClearance: viaClearance,
-    }),
-    ...checkDifferentNetViaSpacing(circuitJson, {
-      minClearance: viaClearance,
-    }),
+    ...checkSameNetViaSpacing(circuitJson, getSpacingOptions(viaClearance)),
+    ...checkDifferentNetViaSpacing(
+      circuitJson,
+      getSpacingOptions(viaClearance),
+    ),
   ]
 
   const errors: DrcError[] = [...traceErrors, ...viaErrors]

@@ -47,10 +47,8 @@ type GlobalDrcForceImproveSolverParams = {
 const POSITION_EPSILON = 1e-6
 const COORDINATE_EPSILON = 1e-3
 const MAX_ERROR_MOVE = 0.14
-const BASE_MAX_PASSES = 3
-const BASE_MAX_CANDIDATE_ATTEMPTS = 8
 const BASE_MAX_TARGETED_CANDIDATE_ATTEMPTS = 2
-const BROAD_FORCE_PASSES = 6
+const BROAD_FORCE_PASSES = 12
 const BROAD_MAX_MOVE = 0.035
 const CLEARANCE_SLACK = 0.015
 const VIA_PAIR_REPAIR_MAX_MOVE = 0.16
@@ -148,6 +146,14 @@ const getDrcErrorSeverity = (error: Record<string, unknown>) => {
     const gap = Number.parseFloat(gapMatch[1]!)
     const required = Number.parseFloat(requiredMatch[1]!)
     if (Number.isFinite(gap) && Number.isFinite(required)) {
+      return Math.max(0, required - gap)
+    }
+  }
+
+  if (gapMatch) {
+    const gap = Number.parseFloat(gapMatch[1]!)
+    const required = RELAXED_DRC_OPTIONS.traceClearance ?? 0.1
+    if (Number.isFinite(gap)) {
       return Math.max(0, required - gap)
     }
   }
@@ -296,7 +302,7 @@ const pointToSegmentProjection = (point: Point, segment: Segment) => {
   const t = clampValue(
     ((point.x - segment.start.x) * segmentX +
       (point.y - segment.start.y) * segmentY) /
-      lengthSquared,
+    lengthSquared,
     0,
     1,
   )
@@ -326,9 +332,9 @@ const getNearestObstacleNearPoint = (
 ) => {
   let nearestObstacle:
     | {
-        obstacle: SimpleRouteJson["obstacles"][number]
-        distance: number
-      }
+      obstacle: SimpleRouteJson["obstacles"][number]
+      distance: number
+    }
     | undefined
 
   for (const obstacle of srj.obstacles) {
@@ -474,14 +480,14 @@ const getDirectionAwayFromPoint = (segment: Segment, point: Point) => {
     direction:
       distance > POSITION_EPSILON
         ? {
-            x: separationX / distance,
-            y: separationY / distance,
-          }
+          x: separationX / distance,
+          y: separationY / distance,
+        }
         : segmentLength > POSITION_EPSILON
           ? {
-              x: (-segmentY / segmentLength) * fallbackSign,
-              y: (segmentX / segmentLength) * fallbackSign,
-            }
+            x: (-segmentY / segmentLength) * fallbackSign,
+            y: (segmentX / segmentLength) * fallbackSign,
+          }
           : { x: 1, y: 0 },
   }
 }
@@ -603,37 +609,37 @@ const moveSegmentAwayFromObstacle = (
   const detourPoints =
     Math.abs(repulsion.direction.y) >= Math.abs(repulsion.direction.x)
       ? [
-          {
-            ...route.route[segment.startIndex]!,
-            x: obstacle.center.x - halfWidth - requiredDistance,
-            y:
-              obstacle.center.y +
-              repulsion.direction.y * (halfHeight + requiredDistance),
-          },
-          {
-            ...route.route[segment.startIndex]!,
-            x: obstacle.center.x + halfWidth + requiredDistance,
-            y:
-              obstacle.center.y +
-              repulsion.direction.y * (halfHeight + requiredDistance),
-          },
-        ]
+        {
+          ...route.route[segment.startIndex]!,
+          x: obstacle.center.x - halfWidth - requiredDistance,
+          y:
+            obstacle.center.y +
+            repulsion.direction.y * (halfHeight + requiredDistance),
+        },
+        {
+          ...route.route[segment.startIndex]!,
+          x: obstacle.center.x + halfWidth + requiredDistance,
+          y:
+            obstacle.center.y +
+            repulsion.direction.y * (halfHeight + requiredDistance),
+        },
+      ]
       : [
-          {
-            ...route.route[segment.startIndex]!,
-            x:
-              obstacle.center.x +
-              repulsion.direction.x * (halfWidth + requiredDistance),
-            y: obstacle.center.y - halfHeight - requiredDistance,
-          },
-          {
-            ...route.route[segment.startIndex]!,
-            x:
-              obstacle.center.x +
-              repulsion.direction.x * (halfWidth + requiredDistance),
-            y: obstacle.center.y + halfHeight + requiredDistance,
-          },
-        ]
+        {
+          ...route.route[segment.startIndex]!,
+          x:
+            obstacle.center.x +
+            repulsion.direction.x * (halfWidth + requiredDistance),
+          y: obstacle.center.y - halfHeight - requiredDistance,
+        },
+        {
+          ...route.route[segment.startIndex]!,
+          x:
+            obstacle.center.x +
+            repulsion.direction.x * (halfWidth + requiredDistance),
+          y: obstacle.center.y + halfHeight + requiredDistance,
+        },
+      ]
 
   const orderedDetourPoints = detourPoints
     .map((point) => ({
@@ -657,9 +663,9 @@ const getNearestSegment = (
 ) => {
   let best:
     | {
-        segment: Segment
-        distance: number
-      }
+      segment: Segment
+      distance: number
+    }
     | undefined
 
   for (const segment of segments) {
@@ -677,9 +683,9 @@ const getNearestSegment = (
 const getNearestVia = (vias: ViaNode[], point: Point) => {
   let best:
     | {
-        via: ViaNode
-        distance: number
-      }
+      via: ViaNode
+      distance: number
+    }
     | undefined
 
   for (const via of vias) {
@@ -854,6 +860,8 @@ const pushViaSegmentPair = (
   via: ViaNode,
   segment: Segment,
   bounds: SimpleRouteJson["bounds"],
+  maxMove = BROAD_MAX_MOVE,
+  moveDivisor = 2,
 ) => {
   if (via.rootConnectionName === segment.rootConnectionName) return false
 
@@ -885,7 +893,7 @@ const pushViaSegmentPair = (
       : segmentLength > POSITION_EPSILON
         ? (segmentX / segmentLength) * fallbackSign
         : 0
-  const move = Math.min(BROAD_MAX_MOVE, penetration / 2)
+  const move = Math.min(maxMove, penetration / moveDivisor)
   const movedVia = moveVia(
     routes,
     via,
@@ -1023,10 +1031,10 @@ const getSegmentRectRepulsion = (
 
   let best:
     | {
-        direction: Point
-        penetration: number
-        t: number
-      }
+      direction: Point
+      penetration: number
+      t: number
+    }
     | undefined
 
   for (const candidate of candidates) {
@@ -1232,17 +1240,24 @@ const getViaDrcIssueCount = (snapshot: DrcSnapshot) =>
 const getForceScalesForEffort = (effort: number) =>
   effort >= 2 ? DEEP_ERROR_FORCE_SCALES : FAST_ERROR_FORCE_SCALES
 
-const getMaxPassesForEffort = (effort: number) =>
-  Math.max(2, Math.round(BASE_MAX_PASSES * Math.max(1, effort)))
-
-const getMaxCandidateAttemptsForEffort = (effort: number) =>
-  Math.max(4, Math.round(BASE_MAX_CANDIDATE_ATTEMPTS * Math.max(1, effort)))
-
 const getMaxTargetedCandidateAttemptsForEffort = (effort: number) =>
   Math.max(
     1,
     Math.round(BASE_MAX_TARGETED_CANDIDATE_ATTEMPTS * Math.max(1, effort)),
   )
+
+const isBetterDrcSnapshot = (
+  candidateSnapshot: DrcSnapshot,
+  candidateViaIssueCount: number,
+  bestIssueCount: number,
+  bestIssueScore: number,
+  bestViaIssueCount: number,
+) =>
+  candidateSnapshot.count < bestIssueCount ||
+  (candidateSnapshot.count === bestIssueCount &&
+    candidateSnapshot.issueScore < bestIssueScore) ||
+  (candidateSnapshot.count === bestIssueCount &&
+    candidateViaIssueCount < bestViaIssueCount)
 
 const applyDrcErrorForces = (
   srj: SimpleRouteJson,
@@ -1295,27 +1310,44 @@ const applyDrcErrorForces = (
     const nearestSegment = getNearestSegment(segments, center, routeIndex)
     if (nearestSegment) {
       const nearestObstacle = getNearestObstacleNearPoint(srj, center)
+      const nearestVia = getNearestVia(vias, center)
+      if (
+        nearestVia &&
+        nearestVia.rootConnectionName !== nearestSegment.rootConnectionName &&
+        Math.hypot(nearestVia.x - center.x, nearestVia.y - center.y) < 0.45
+      ) {
+        changed =
+          pushViaSegmentPair(
+            routes,
+            nearestVia,
+            nearestSegment,
+            srj.bounds,
+            TRACE_PAD_REPAIR_MAX_MOVE * Math.abs(scale),
+            1,
+          ) || changed
+      }
+
       const movedSegment =
         nearestObstacle &&
-        !obstacleSharesNet(
-          nearestSegment.rootConnectionName,
-          nearestObstacle,
-        ) &&
-        obstacleAppliesToSegment(nearestObstacle, nearestSegment)
+          !obstacleSharesNet(
+            nearestSegment.rootConnectionName,
+            nearestObstacle,
+          ) &&
+          obstacleAppliesToSegment(nearestObstacle, nearestSegment)
           ? moveSegmentAwayFromObstacle(
-              routes,
-              nearestSegment,
-              nearestObstacle,
-              srj.bounds,
-              scale,
-            )
+            routes,
+            nearestSegment,
+            nearestObstacle,
+            srj.bounds,
+            scale,
+          )
           : moveSegmentAwayFromPoint(
-              routes,
-              nearestSegment,
-              repulsionPoint,
-              srj.bounds,
-              scale,
-            )
+            routes,
+            nearestSegment,
+            repulsionPoint,
+            srj.bounds,
+            scale,
+          )
       changed = movedSegment || changed
     }
 
@@ -1339,6 +1371,12 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   readonly effort: number
   readonly drcEvaluator?: DrcEvaluator
   outputHdRoutes: HighDensityRoute[]
+  private initialDrcIssueCount: number | undefined
+  private broadForceAccepted = false
+  private targetedForceAccepted = false
+  private candidateAttempts = 0
+  private errorCursor = 0
+  private stalledIterations = 0
 
   constructor(params: GlobalDrcForceImproveSolverParams) {
     super()
@@ -1347,7 +1385,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     this.effort = params.effort ?? 1
     this.drcEvaluator = params.drcEvaluator
     this.outputHdRoutes = params.hdRoutes
-    this.MAX_ITERATIONS = 1
+    this.MAX_ITERATIONS = Math.max(8, Math.round(16 * Math.max(1, this.effort)))
   }
 
   override getConstructorParams() {
@@ -1361,18 +1399,114 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     ] as const
   }
 
+  private updateStats(snapshot: DrcSnapshot) {
+    this.stats = {
+      initialDrcIssueCount: this.initialDrcIssueCount ?? snapshot.count,
+      finalDrcIssueCount: snapshot.count,
+      globalDrcForceImproveBroadForceAccepted: this.broadForceAccepted,
+      globalDrcForceImproveTargetedForceAccepted: this.targetedForceAccepted,
+      globalDrcForceImproveCandidateAttempts: this.candidateAttempts,
+      globalDrcForceImproveStalledIterations: this.stalledIterations,
+    }
+  }
+
   override _step() {
-    let bestRoutes = this.inputHdRoutes
+    let bestRoutes = this.outputHdRoutes
     let bestSnapshot = getDrcSnapshot(this.srj, bestRoutes, this.drcEvaluator)
+    if (this.initialDrcIssueCount === undefined) {
+      this.initialDrcIssueCount = bestSnapshot.count
+    }
+
+    if (bestSnapshot.count === 0) {
+      this.updateStats(bestSnapshot)
+      this.solved = true
+      return
+    }
+
     let bestIssueCount = bestSnapshot.count
     let bestIssueScore = bestSnapshot.issueScore
     let bestViaIssueCount = getViaDrcIssueCount(bestSnapshot)
-    const initialDrcIssueCount = bestIssueCount
-    let broadForceAccepted = false
-    let targetedForceAccepted = false
-    let candidateAttempts = 0
+    const centeredErrors = getCenteredErrors(bestSnapshot.errors)
+    if (centeredErrors.length === 0) {
+      this.updateStats(bestSnapshot)
+      this.solved = true
+      return
+    }
 
-    if (bestIssueCount > 0) {
+    const maxCandidateAttemptsThisStep =
+      getMaxTargetedCandidateAttemptsForEffort(this.effort)
+    let candidateAttemptsThisStep = 0
+    let acceptedCandidate = false
+    const maxErrorsThisStep = Math.min(
+      centeredErrors.length,
+      Math.max(1, Math.ceil(this.effort)),
+    )
+    const startErrorIndex = this.errorCursor % centeredErrors.length
+
+    for (
+      let errorOffset = 0;
+      errorOffset < maxErrorsThisStep &&
+      candidateAttemptsThisStep < maxCandidateAttemptsThisStep;
+      errorOffset += 1
+    ) {
+      const errorIndex = (startErrorIndex + errorOffset) % centeredErrors.length
+      const error = centeredErrors[errorIndex]
+      if (!error) continue
+
+      this.errorCursor = (errorIndex + 1) % centeredErrors.length
+
+      for (const scale of getForceScalesForEffort(this.effort)) {
+        if (candidateAttemptsThisStep >= maxCandidateAttemptsThisStep) break
+
+        const candidateRoutes = cloneRoutes(bestRoutes)
+        const changed = applyDrcErrorForces(
+          this.srj,
+          candidateRoutes,
+          [error],
+          bestSnapshot.traceRouteIndexById,
+          scale,
+        )
+        if (!changed) continue
+
+        candidateAttemptsThisStep += 1
+        this.candidateAttempts += 1
+        const materializedCandidateRoutes = materializeRoutes(candidateRoutes)
+        const candidateSnapshot = getDrcSnapshot(
+          this.srj,
+          materializedCandidateRoutes,
+          this.drcEvaluator,
+        )
+        const candidateViaIssueCount = getViaDrcIssueCount(candidateSnapshot)
+
+        if (
+          isBetterDrcSnapshot(
+            candidateSnapshot,
+            candidateViaIssueCount,
+            bestIssueCount,
+            bestIssueScore,
+            bestViaIssueCount,
+          )
+        ) {
+          bestRoutes = materializedCandidateRoutes
+          bestSnapshot = candidateSnapshot
+          bestIssueCount = candidateSnapshot.count
+          bestIssueScore = candidateSnapshot.issueScore
+          bestViaIssueCount = candidateViaIssueCount
+          this.targetedForceAccepted = true
+          acceptedCandidate = true
+          break
+        }
+      }
+
+      if (acceptedCandidate) break
+    }
+
+    const canAffordBroadFallback = bestRoutes.length <= 120
+    if (
+      !acceptedCandidate &&
+      (canAffordBroadFallback ||
+        (this.effort >= 2 && this.stalledIterations >= 2))
+    ) {
       const broadCandidateRoutes = applyBroadRepulsionForces(
         this.srj,
         bestRoutes,
@@ -1383,90 +1517,40 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         broadCandidateRoutes,
         this.drcEvaluator,
       )
-
       const broadCandidateViaIssueCount = getViaDrcIssueCount(
         broadCandidateSnapshot,
       )
       if (
-        broadCandidateSnapshot.count < bestIssueCount ||
-        (broadCandidateSnapshot.count === bestIssueCount &&
-          broadCandidateSnapshot.issueScore < bestIssueScore) ||
-        (broadCandidateSnapshot.count === bestIssueCount &&
-          broadCandidateViaIssueCount < bestViaIssueCount)
+        isBetterDrcSnapshot(
+          broadCandidateSnapshot,
+          broadCandidateViaIssueCount,
+          bestIssueCount,
+          bestIssueScore,
+          bestViaIssueCount,
+        )
       ) {
         bestRoutes = broadCandidateRoutes
         bestSnapshot = broadCandidateSnapshot
         bestIssueCount = broadCandidateSnapshot.count
         bestIssueScore = broadCandidateSnapshot.issueScore
         bestViaIssueCount = broadCandidateViaIssueCount
-        broadForceAccepted = true
+        this.broadForceAccepted = true
+        acceptedCandidate = true
       }
-    }
-
-    const maxPasses = getMaxPassesForEffort(this.effort)
-    const maxCandidateAttempts = getMaxCandidateAttemptsForEffort(this.effort)
-    for (
-      let pass = 0;
-      pass < maxPasses &&
-      bestIssueCount > 0 &&
-      candidateAttempts < maxCandidateAttempts;
-      pass += 1
-    ) {
-      const centeredErrors = getCenteredErrors(bestSnapshot.errors)
-      if (centeredErrors.length === 0) break
-
-      let acceptedCandidate = false
-      for (const scale of getForceScalesForEffort(this.effort)) {
-        if (candidateAttempts >= maxCandidateAttempts) break
-
-        const candidateRoutes = cloneRoutes(bestRoutes)
-        const changed = applyDrcErrorForces(
-          this.srj,
-          candidateRoutes,
-          centeredErrors,
-          bestSnapshot.traceRouteIndexById,
-          scale,
-        )
-        if (!changed) continue
-
-        candidateAttempts += 1
-        const materializedCandidateRoutes = materializeRoutes(candidateRoutes)
-        const candidateSnapshot = getDrcSnapshot(
-          this.srj,
-          materializedCandidateRoutes,
-          this.drcEvaluator,
-        )
-        const candidateViaIssueCount = getViaDrcIssueCount(candidateSnapshot)
-
-        if (
-          candidateSnapshot.count < bestIssueCount ||
-          (candidateSnapshot.count === bestIssueCount &&
-            candidateSnapshot.issueScore < bestIssueScore) ||
-          (candidateSnapshot.count === bestIssueCount &&
-            candidateViaIssueCount < bestViaIssueCount)
-        ) {
-          bestRoutes = materializedCandidateRoutes
-          bestSnapshot = candidateSnapshot
-          bestIssueCount = candidateSnapshot.count
-          bestIssueScore = candidateSnapshot.issueScore
-          bestViaIssueCount = candidateViaIssueCount
-          targetedForceAccepted = true
-          acceptedCandidate = true
-          break
-        }
-      }
-
-      if (!acceptedCandidate) break
     }
 
     this.outputHdRoutes = bestRoutes
-    this.stats = {
-      initialDrcIssueCount,
-      finalDrcIssueCount: bestIssueCount,
-      globalDrcForceImproveBroadForceAccepted: broadForceAccepted,
-      globalDrcForceImproveTargetedForceAccepted: targetedForceAccepted,
-      globalDrcForceImproveCandidateAttempts: candidateAttempts,
+    this.stalledIterations = acceptedCandidate ? 0 : this.stalledIterations + 1
+    this.updateStats(bestSnapshot)
+    if (
+      bestIssueCount === 0 ||
+      this.stalledIterations >= centeredErrors.length
+    ) {
+      this.solved = true
     }
+  }
+
+  override tryFinalAcceptance() {
     this.solved = true
   }
 

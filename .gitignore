@@ -16,6 +16,7 @@ coverage
 logs
 _.log
 report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
+global-drc-force-benchmark-result.*
 
 # dotenv environment variable files
 .env
