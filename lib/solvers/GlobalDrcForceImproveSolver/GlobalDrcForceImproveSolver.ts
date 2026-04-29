@@ -302,7 +302,7 @@ const pointToSegmentProjection = (point: Point, segment: Segment) => {
   const t = clampValue(
     ((point.x - segment.start.x) * segmentX +
       (point.y - segment.start.y) * segmentY) /
-    lengthSquared,
+      lengthSquared,
     0,
     1,
   )
@@ -332,9 +332,9 @@ const getNearestObstacleNearPoint = (
 ) => {
   let nearestObstacle:
     | {
-      obstacle: SimpleRouteJson["obstacles"][number]
-      distance: number
-    }
+        obstacle: SimpleRouteJson["obstacles"][number]
+        distance: number
+      }
     | undefined
 
   for (const obstacle of srj.obstacles) {
@@ -480,14 +480,14 @@ const getDirectionAwayFromPoint = (segment: Segment, point: Point) => {
     direction:
       distance > POSITION_EPSILON
         ? {
-          x: separationX / distance,
-          y: separationY / distance,
-        }
+            x: separationX / distance,
+            y: separationY / distance,
+          }
         : segmentLength > POSITION_EPSILON
           ? {
-            x: (-segmentY / segmentLength) * fallbackSign,
-            y: (segmentX / segmentLength) * fallbackSign,
-          }
+              x: (-segmentY / segmentLength) * fallbackSign,
+              y: (segmentX / segmentLength) * fallbackSign,
+            }
           : { x: 1, y: 0 },
   }
 }
@@ -609,37 +609,37 @@ const moveSegmentAwayFromObstacle = (
   const detourPoints =
     Math.abs(repulsion.direction.y) >= Math.abs(repulsion.direction.x)
       ? [
-        {
-          ...route.route[segment.startIndex]!,
-          x: obstacle.center.x - halfWidth - requiredDistance,
-          y:
-            obstacle.center.y +
-            repulsion.direction.y * (halfHeight + requiredDistance),
-        },
-        {
-          ...route.route[segment.startIndex]!,
-          x: obstacle.center.x + halfWidth + requiredDistance,
-          y:
-            obstacle.center.y +
-            repulsion.direction.y * (halfHeight + requiredDistance),
-        },
-      ]
+          {
+            ...route.route[segment.startIndex]!,
+            x: obstacle.center.x - halfWidth - requiredDistance,
+            y:
+              obstacle.center.y +
+              repulsion.direction.y * (halfHeight + requiredDistance),
+          },
+          {
+            ...route.route[segment.startIndex]!,
+            x: obstacle.center.x + halfWidth + requiredDistance,
+            y:
+              obstacle.center.y +
+              repulsion.direction.y * (halfHeight + requiredDistance),
+          },
+        ]
       : [
-        {
-          ...route.route[segment.startIndex]!,
-          x:
-            obstacle.center.x +
-            repulsion.direction.x * (halfWidth + requiredDistance),
-          y: obstacle.center.y - halfHeight - requiredDistance,
-        },
-        {
-          ...route.route[segment.startIndex]!,
-          x:
-            obstacle.center.x +
-            repulsion.direction.x * (halfWidth + requiredDistance),
-          y: obstacle.center.y + halfHeight + requiredDistance,
-        },
-      ]
+          {
+            ...route.route[segment.startIndex]!,
+            x:
+              obstacle.center.x +
+              repulsion.direction.x * (halfWidth + requiredDistance),
+            y: obstacle.center.y - halfHeight - requiredDistance,
+          },
+          {
+            ...route.route[segment.startIndex]!,
+            x:
+              obstacle.center.x +
+              repulsion.direction.x * (halfWidth + requiredDistance),
+            y: obstacle.center.y + halfHeight + requiredDistance,
+          },
+        ]
 
   const orderedDetourPoints = detourPoints
     .map((point) => ({
@@ -663,9 +663,9 @@ const getNearestSegment = (
 ) => {
   let best:
     | {
-      segment: Segment
-      distance: number
-    }
+        segment: Segment
+        distance: number
+      }
     | undefined
 
   for (const segment of segments) {
@@ -683,9 +683,9 @@ const getNearestSegment = (
 const getNearestVia = (vias: ViaNode[], point: Point) => {
   let best:
     | {
-      via: ViaNode
-      distance: number
-    }
+        via: ViaNode
+        distance: number
+      }
     | undefined
 
   for (const via of vias) {
@@ -1031,10 +1031,10 @@ const getSegmentRectRepulsion = (
 
   let best:
     | {
-      direction: Point
-      penetration: number
-      t: number
-    }
+        direction: Point
+        penetration: number
+        t: number
+      }
     | undefined
 
   for (const candidate of candidates) {
@@ -1329,25 +1329,25 @@ const applyDrcErrorForces = (
 
       const movedSegment =
         nearestObstacle &&
-          !obstacleSharesNet(
-            nearestSegment.rootConnectionName,
-            nearestObstacle,
-          ) &&
-          obstacleAppliesToSegment(nearestObstacle, nearestSegment)
+        !obstacleSharesNet(
+          nearestSegment.rootConnectionName,
+          nearestObstacle,
+        ) &&
+        obstacleAppliesToSegment(nearestObstacle, nearestSegment)
           ? moveSegmentAwayFromObstacle(
-            routes,
-            nearestSegment,
-            nearestObstacle,
-            srj.bounds,
-            scale,
-          )
+              routes,
+              nearestSegment,
+              nearestObstacle,
+              srj.bounds,
+              scale,
+            )
           : moveSegmentAwayFromPoint(
-            routes,
-            nearestSegment,
-            repulsionPoint,
-            srj.bounds,
-            scale,
-          )
+              routes,
+              nearestSegment,
+              repulsionPoint,
+              srj.bounds,
+              scale,
+            )
       changed = movedSegment || changed
     }
 
