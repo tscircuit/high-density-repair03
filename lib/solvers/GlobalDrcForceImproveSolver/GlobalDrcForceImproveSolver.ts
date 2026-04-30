@@ -8,6 +8,7 @@ import type { HighDensityRoute } from "../../types/high-density-types"
 import { convertHdRouteToSimplifiedRoute } from "../../utils/convertHdRouteToSimplifiedRoute"
 
 type Point = { x: number; y: number }
+type Bounds2D = { minX: number; minY: number; maxX: number; maxY: number }
 type MutableRoute = HighDensityRoute & {
   route: Array<HighDensityRoute["route"][number]>
   vias: Array<HighDensityRoute["vias"][number]>
@@ -42,6 +43,8 @@ type GlobalDrcForceImproveSolverParams = {
   hdRoutes: HighDensityRoute[]
   effort?: number
   drcEvaluator?: DrcEvaluator
+  maxIterations?: number
+  enableLargeBoardBroadFallback?: boolean
 }
 
 const POSITION_EPSILON = 1e-6
@@ -50,12 +53,56 @@ const MAX_ERROR_MOVE = 0.14
 const BASE_MAX_TARGETED_CANDIDATE_ATTEMPTS = 2
 const BROAD_FORCE_PASSES = 12
 const BROAD_MAX_MOVE = 0.035
+const BROAD_FALLBACK_SMALL_ROUTE_LIMIT = 120
+const MIN_ITERATIONS_FOR_LARGE_BOARD_BROAD_FALLBACK = 192
 const CLEARANCE_SLACK = 0.015
 const VIA_PAIR_REPAIR_MAX_MOVE = 0.16
-const TRACE_PAD_REPAIR_MAX_MOVE = 0.2
+const TRACE_PAD_REPAIR_MAX_MOVE = 0.3
 const PREFERRED_TRACE_TO_PAD_CLEARANCE = 0.16
+const MIN_MAX_ITERATIONS = 48
+const BASE_MAX_ITERATIONS_PER_EFFORT = 48
+const MAX_ITERATIONS_PER_DRC_ERROR = 8 / 3
+const LOW_DRC_COUNT_IMPROVEMENT_CHECK_INTERVAL = 1
+const SMALL_DRC_COUNT_IMPROVEMENT_CHECK_INTERVAL = 2
+const LARGE_DRC_COUNT_IMPROVEMENT_CHECK_INTERVAL = 8
+const LARGE_DRC_COUNT_THRESHOLD = 20
+const MAX_DRC_COUNT_PLATEAU_CHECKS = 2
+const MAX_LARGE_BOARD_BROAD_FALLBACK_MISSES = 2
 const FAST_ERROR_FORCE_SCALES = [1, 1.75] as const
 const DEEP_ERROR_FORCE_SCALES = [1, 1.75, -1] as const
+const BROAD_SPATIAL_CELL_SIZE_MIN = 1
+
+const getBaseMaxIterations = (effort: number) =>
+  Math.max(
+    MIN_MAX_ITERATIONS,
+    Math.round(BASE_MAX_ITERATIONS_PER_EFFORT * Math.max(1, effort)),
+  )
+
+const getDrcScaledMaxIterations = (drcIssueCount: number, effort: number) =>
+  Math.max(
+    getBaseMaxIterations(effort),
+    Math.ceil(
+      drcIssueCount * MAX_ITERATIONS_PER_DRC_ERROR * Math.max(1, effort),
+    ),
+  )
+
+const getRouteComplexityMinIterations = (
+  routeCount: number,
+  drcIssueCount: number,
+) =>
+  routeCount > BROAD_FALLBACK_SMALL_ROUTE_LIMIT && drcIssueCount > 0
+    ? MIN_ITERATIONS_FOR_LARGE_BOARD_BROAD_FALLBACK
+    : MIN_MAX_ITERATIONS
+
+const getLargeBoardBroadFallbackCadence = (centeredDrcIssueCount: number) =>
+  Math.max(16, Math.min(64, centeredDrcIssueCount * 2))
+
+const getDrcCountImprovementCheckInterval = (initialDrcIssueCount: number) =>
+  initialDrcIssueCount >= LARGE_DRC_COUNT_THRESHOLD
+    ? LARGE_DRC_COUNT_IMPROVEMENT_CHECK_INTERVAL
+    : initialDrcIssueCount <= 2
+      ? LOW_DRC_COUNT_IMPROVEMENT_CHECK_INTERVAL
+      : SMALL_DRC_COUNT_IMPROVEMENT_CHECK_INTERVAL
 
 const cloneRoutes = (routes: HighDensityRoute[]): MutableRoute[] =>
   routes.map((route) => ({
@@ -71,16 +118,85 @@ const areSameXY = (left: Point, right: Point) =>
 const getRootConnectionName = (route: HighDensityRoute) =>
   route.rootConnectionName ?? route.connectionName
 
-const sharesNet = (left: string, right: string | undefined) =>
-  Boolean(right) && left === right
+const netAliasCache = new Map<string, readonly string[]>()
+const netAliasSetCache = new Map<string, ReadonlySet<string>>()
+const obstacleConnectedAliasCache = new WeakMap<
+  SimpleRouteJson["obstacles"][number],
+  ReadonlySet<string>
+>()
+
+const getNetAliases = (name: string | undefined) => {
+  if (!name) return []
+  const cachedAliases = netAliasCache.get(name)
+  if (cachedAliases) return cachedAliases
+
+  const aliases = name.includes("__")
+    ? [...new Set([name, ...name.split("__").filter(Boolean)])]
+    : [name]
+  netAliasCache.set(name, aliases)
+  return aliases
+}
+
+const getNetAliasSet = (name: string) => {
+  const cachedAliasSet = netAliasSetCache.get(name)
+  if (cachedAliasSet) return cachedAliasSet
+
+  const aliasSet = new Set(getNetAliases(name))
+  netAliasSetCache.set(name, aliasSet)
+  return aliasSet
+}
+
+const sharesNet = (left: string, right: string | undefined) => {
+  if (!right) return false
+  if (left === right) return true
+
+  const leftAliases = getNetAliases(left)
+  if (leftAliases.length === 1 && !right.includes("__")) return false
+
+  const rightAliasSet = getNetAliasSet(right)
+  return leftAliases.some((alias) => rightAliasSet.has(alias))
+}
+
+const getObstacleConnectedAliasSet = (
+  obstacle: SimpleRouteJson["obstacles"][number],
+) => {
+  const cachedAliasSet = obstacleConnectedAliasCache.get(obstacle)
+  if (cachedAliasSet) return cachedAliasSet
+
+  const aliasSet = new Set<string>()
+  for (const connectedTo of obstacle.connectedTo ?? []) {
+    for (const alias of getNetAliases(connectedTo)) {
+      aliasSet.add(alias)
+    }
+  }
+
+  obstacleConnectedAliasCache.set(obstacle, aliasSet)
+  return aliasSet
+}
 
 const obstacleSharesNet = (
   rootConnectionName: string,
   obstacle: SimpleRouteJson["obstacles"][number],
 ) =>
-  (obstacle.connectedTo ?? []).some((connectedTo) =>
-    sharesNet(rootConnectionName, connectedTo),
+  getNetAliases(rootConnectionName).some((alias) =>
+    getObstacleConnectedAliasSet(obstacle).has(alias),
   )
+
+const OBSTACLE_TRACE_ERROR_TYPES = [
+  "pcb_smtpad",
+  "pcb_plated_hole",
+  "pcb_hole",
+  "pcb_keepout",
+]
+
+const isTraceObstacleDrcError = (error: Record<string, unknown>) => {
+  const message =
+    typeof error.message === "string" ? error.message.toLowerCase() : ""
+  return (
+    message.includes("pcb_trace") &&
+    OBSTACLE_TRACE_ERROR_TYPES.some((type) => message.includes(type))
+  )
+}
 
 const clampValue = (value: number, minValue: number, maxValue: number) =>
   Math.max(minValue, Math.min(value, maxValue))
@@ -88,6 +204,87 @@ const clampValue = (value: number, minValue: number, maxValue: number) =>
 const clampToBounds = (point: Point, bounds: SimpleRouteJson["bounds"]) => {
   point.x = clampValue(point.x, bounds.minX, bounds.maxX)
   point.y = clampValue(point.y, bounds.minY, bounds.maxY)
+}
+
+const expandBounds2d = (bounds: Bounds2D, margin: number): Bounds2D => ({
+  minX: bounds.minX - margin,
+  minY: bounds.minY - margin,
+  maxX: bounds.maxX + margin,
+  maxY: bounds.maxY + margin,
+})
+
+const getSpatialCellRange = (bounds: Bounds2D, cellSize: number) => ({
+  minCellX: Math.floor(bounds.minX / cellSize),
+  maxCellX: Math.floor(bounds.maxX / cellSize),
+  minCellY: Math.floor(bounds.minY / cellSize),
+  maxCellY: Math.floor(bounds.maxY / cellSize),
+})
+
+const getSpatialCellKey = (cellX: number, cellY: number) => `${cellX}:${cellY}`
+
+const createSpatialIndex = <T>(
+  items: T[],
+  getBounds: (item: T) => Bounds2D,
+  cellSize: number,
+) => {
+  const index = new Map<string, number[]>()
+
+  for (let itemIndex = 0; itemIndex < items.length; itemIndex += 1) {
+    const item = items[itemIndex]
+    if (!item) continue
+    const cellRange = getSpatialCellRange(getBounds(item), cellSize)
+
+    for (
+      let cellX = cellRange.minCellX;
+      cellX <= cellRange.maxCellX;
+      cellX += 1
+    ) {
+      for (
+        let cellY = cellRange.minCellY;
+        cellY <= cellRange.maxCellY;
+        cellY += 1
+      ) {
+        const key = getSpatialCellKey(cellX, cellY)
+        const existing = index.get(key)
+        if (existing) {
+          existing.push(itemIndex)
+        } else {
+          index.set(key, [itemIndex])
+        }
+      }
+    }
+  }
+
+  return index
+}
+
+const getSpatialCandidateIndexes = (
+  spatialIndex: Map<string, number[]>,
+  bounds: Bounds2D,
+  cellSize: number,
+) => {
+  const indexes = new Set<number>()
+  const cellRange = getSpatialCellRange(bounds, cellSize)
+
+  for (
+    let cellX = cellRange.minCellX;
+    cellX <= cellRange.maxCellX;
+    cellX += 1
+  ) {
+    for (
+      let cellY = cellRange.minCellY;
+      cellY <= cellRange.maxCellY;
+      cellY += 1
+    ) {
+      const cellIndexes = spatialIndex.get(getSpatialCellKey(cellX, cellY))
+      if (!cellIndexes) continue
+      for (const index of cellIndexes) {
+        indexes.add(index)
+      }
+    }
+  }
+
+  return [...indexes].sort((left, right) => left - right)
 }
 
 const createSimplifiedTraces = (
@@ -291,6 +488,54 @@ const collectSegments = (routes: MutableRoute[]): Segment[] => {
   return segments
 }
 
+const getViaBounds = (via: ViaNode): Bounds2D => ({
+  minX: via.x,
+  minY: via.y,
+  maxX: via.x,
+  maxY: via.y,
+})
+
+const getSegmentBounds = (segment: Segment): Bounds2D => ({
+  minX: Math.min(segment.start.x, segment.end.x),
+  minY: Math.min(segment.start.y, segment.end.y),
+  maxX: Math.max(segment.start.x, segment.end.x),
+  maxY: Math.max(segment.start.y, segment.end.y),
+})
+
+const getObstacleBounds = (
+  obstacle: SimpleRouteJson["obstacles"][number],
+): Bounds2D => ({
+  minX: obstacle.center.x - obstacle.width / 2,
+  minY: obstacle.center.y - obstacle.height / 2,
+  maxX: obstacle.center.x + obstacle.width / 2,
+  maxY: obstacle.center.y + obstacle.height / 2,
+})
+
+const getBroadSpatialInteractionDistance = (
+  srj: SimpleRouteJson,
+  vias: ViaNode[],
+  segments: Segment[],
+) => {
+  const maxViaRadius = vias.reduce(
+    (currentMax, via) => Math.max(currentMax, via.radius),
+    (srj.minViaDiameter ?? 0.3) / 2,
+  )
+  const maxSegmentRadius = segments.reduce(
+    (currentMax, segment) => Math.max(currentMax, segment.radius),
+    srj.minTraceWidth / 2,
+  )
+  const traceClearance =
+    (RELAXED_DRC_OPTIONS.traceClearance ?? 0.1) + CLEARANCE_SLACK
+
+  return Math.max(
+    maxViaRadius * 2 + PREFERRED_VIA_TO_VIA_CLEARANCE + CLEARANCE_SLACK,
+    maxViaRadius + maxSegmentRadius + traceClearance,
+    maxSegmentRadius * 2 + traceClearance,
+    maxSegmentRadius + PREFERRED_TRACE_TO_PAD_CLEARANCE + CLEARANCE_SLACK,
+    maxViaRadius + (srj.defaultObstacleMargin ?? 0.1) + CLEARANCE_SLACK,
+  )
+}
+
 const pointToSegmentProjection = (point: Point, segment: Segment) => {
   const segmentX = segment.end.x - segment.start.x
   const segmentY = segment.end.y - segment.start.y
@@ -329,6 +574,7 @@ const getNearestObstacleNearPoint = (
   srj: SimpleRouteJson,
   point: Point,
   maxDistance = 0.6,
+  predicate?: (obstacle: SimpleRouteJson["obstacles"][number]) => boolean,
 ) => {
   let nearestObstacle:
     | {
@@ -338,6 +584,7 @@ const getNearestObstacleNearPoint = (
     | undefined
 
   for (const obstacle of srj.obstacles) {
+    if (predicate && !predicate(obstacle)) continue
     const distance = getPointToObstacleDistance(point, obstacle)
     if (distance > maxDistance) continue
     if (!nearestObstacle || distance < nearestObstacle.distance) {
@@ -403,13 +650,17 @@ const getRepulsionPointForError = (
   srj: SimpleRouteJson,
   error: Record<string, unknown>,
   center: Point,
+  obstacleFilter?: (obstacle: SimpleRouteJson["obstacles"][number]) => boolean,
 ) => {
   const message = error.message
   if (typeof message !== "string" || !message.includes("pcb_")) {
     return center
   }
 
-  return getNearestObstacleNearPoint(srj, center)?.center ?? center
+  return (
+    getNearestObstacleNearPoint(srj, center, 0.6, obstacleFilter)?.center ??
+    center
+  )
 }
 
 const getCoincidentPointIndexes = (route: MutableRoute, pointIndex: number) => {
@@ -431,6 +682,23 @@ const getCoincidentPointIndexes = (route: MutableRoute, pointIndex: number) => {
   return [...new Set(pointIndexes)]
 }
 
+const getMovableCoincidentPointIndexes = (
+  route: MutableRoute,
+  pointIndex: number,
+) => {
+  if (pointIndex <= 0 || pointIndex >= route.route.length - 1) return undefined
+
+  const pointIndexes = getCoincidentPointIndexes(route, pointIndex)
+  if (
+    pointIndexes.includes(0) ||
+    pointIndexes.includes(route.route.length - 1)
+  ) {
+    return undefined
+  }
+
+  return pointIndexes
+}
+
 const moveRoutePoint = (
   routes: MutableRoute[],
   routeIndex: number,
@@ -440,17 +708,10 @@ const moveRoutePoint = (
   bounds: SimpleRouteJson["bounds"],
 ) => {
   const route = routes[routeIndex]
-  if (!route || pointIndex <= 0 || pointIndex >= route.route.length - 1) {
-    return false
-  }
+  if (!route) return false
 
-  const pointIndexes = getCoincidentPointIndexes(route, pointIndex)
-  if (
-    pointIndexes.includes(0) ||
-    pointIndexes.includes(route.route.length - 1)
-  ) {
-    return false
-  }
+  const pointIndexes = getMovableCoincidentPointIndexes(route, pointIndex)
+  if (!pointIndexes) return false
 
   let changed = false
   for (const candidateIndex of pointIndexes) {
@@ -463,6 +724,211 @@ const moveRoutePoint = (
   }
 
   return changed
+}
+
+const moveSegmentByTranslation = (
+  routes: MutableRoute[],
+  segment: Segment,
+  dx: number,
+  dy: number,
+  bounds: SimpleRouteJson["bounds"],
+) => {
+  const route = routes[segment.routeIndex]
+  if (!route) return false
+
+  const startIndexes = getMovableCoincidentPointIndexes(
+    route,
+    segment.startIndex,
+  )
+  const endIndexes = getMovableCoincidentPointIndexes(route, segment.endIndex)
+  if (!startIndexes || !endIndexes) return false
+
+  let changed = false
+  for (const pointIndex of [...new Set([...startIndexes, ...endIndexes])]) {
+    const point = route.route[pointIndex]
+    if (!point) continue
+    point.x += dx
+    point.y += dy
+    clampToBounds(point, bounds)
+    changed = true
+  }
+
+  return changed
+}
+
+const moveRoutePointIndexesByTranslation = (
+  route: MutableRoute,
+  pointIndexes: number[],
+  dx: number,
+  dy: number,
+  bounds: SimpleRouteJson["bounds"],
+) => {
+  let changed = false
+  for (const pointIndex of pointIndexes) {
+    const point = route.route[pointIndex]
+    if (!point) continue
+    point.x += dx
+    point.y += dy
+    clampToBounds(point, bounds)
+    changed = true
+  }
+
+  return changed
+}
+
+const segmentVectorsAreCollinear = (
+  left: Point,
+  middle: Point,
+  right: Point,
+) => {
+  const leftX = middle.x - left.x
+  const leftY = middle.y - left.y
+  const rightX = right.x - middle.x
+  const rightY = right.y - middle.y
+  return Math.abs(leftX * rightY - leftY * rightX) <= COORDINATE_EPSILON
+}
+
+const pointIsOnSegmentLine = (
+  point: HighDensityRoute["route"][number],
+  segment: Segment,
+) => {
+  if (point.z !== segment.z) return false
+  const segmentX = segment.end.x - segment.start.x
+  const segmentY = segment.end.y - segment.start.y
+  const pointX = point.x - segment.start.x
+  const pointY = point.y - segment.start.y
+  return Math.abs(segmentX * pointY - segmentY * pointX) <= COORDINATE_EPSILON
+}
+
+const getCollinearRunPointIndexes = (route: MutableRoute, segment: Segment) => {
+  const segmentX = segment.end.x - segment.start.x
+  const segmentY = segment.end.y - segment.start.y
+  const axisLineTolerance = Math.max(
+    COORDINATE_EPSILON,
+    (route.traceThickness ?? 0.1) * 0.12,
+  )
+  const isHorizontal = Math.abs(segmentY) <= axisLineTolerance
+  const isVertical = Math.abs(segmentX) <= axisLineTolerance
+  let startIndex = segment.startIndex
+  let endIndex = segment.endIndex
+
+  if (isHorizontal || isVertical) {
+    const lineCoordinate = isHorizontal
+      ? (segment.start.y + segment.end.y) / 2
+      : (segment.start.x + segment.end.x) / 2
+    while (startIndex > 0) {
+      const previousPoint = route.route[startIndex - 1]
+      if (
+        !previousPoint ||
+        previousPoint.z !== segment.z ||
+        Math.abs(
+          (isHorizontal ? previousPoint.y : previousPoint.x) - lineCoordinate,
+        ) > axisLineTolerance
+      ) {
+        break
+      }
+      startIndex -= 1
+    }
+
+    while (endIndex < route.route.length - 1) {
+      const nextPoint = route.route[endIndex + 1]
+      if (
+        !nextPoint ||
+        nextPoint.z !== segment.z ||
+        Math.abs((isHorizontal ? nextPoint.y : nextPoint.x) - lineCoordinate) >
+          axisLineTolerance
+      ) {
+        break
+      }
+      endIndex += 1
+    }
+
+    return Array.from(
+      { length: endIndex - startIndex + 1 },
+      (_, index) => startIndex + index,
+    )
+  }
+
+  while (startIndex > 0) {
+    const previousPoint = route.route[startIndex - 1]
+    const currentPoint = route.route[startIndex]
+    const nextPoint = route.route[startIndex + 1]
+    if (
+      !previousPoint ||
+      !currentPoint ||
+      !nextPoint ||
+      previousPoint.z !== segment.z ||
+      !pointIsOnSegmentLine(previousPoint, segment) ||
+      !segmentVectorsAreCollinear(previousPoint, currentPoint, nextPoint)
+    ) {
+      break
+    }
+    startIndex -= 1
+  }
+
+  while (endIndex < route.route.length - 1) {
+    const previousPoint = route.route[endIndex - 1]
+    const currentPoint = route.route[endIndex]
+    const nextPoint = route.route[endIndex + 1]
+    if (
+      !previousPoint ||
+      !currentPoint ||
+      !nextPoint ||
+      nextPoint.z !== segment.z ||
+      !pointIsOnSegmentLine(nextPoint, segment) ||
+      !segmentVectorsAreCollinear(previousPoint, currentPoint, nextPoint)
+    ) {
+      break
+    }
+    endIndex += 1
+  }
+
+  return Array.from(
+    { length: endIndex - startIndex + 1 },
+    (_, index) => startIndex + index,
+  )
+}
+
+const getMovableCollinearRunPointIndexes = (
+  route: MutableRoute,
+  segment: Segment,
+) => {
+  const runPointIndexes = getCollinearRunPointIndexes(route, segment)
+  if (runPointIndexes.length <= 2) return undefined
+
+  const movablePointIndexes: number[] = []
+  for (const pointIndex of runPointIndexes) {
+    const coincidentIndexes = getMovableCoincidentPointIndexes(
+      route,
+      pointIndex,
+    )
+    if (!coincidentIndexes) return undefined
+    movablePointIndexes.push(...coincidentIndexes)
+  }
+
+  return [...new Set(movablePointIndexes)]
+}
+
+const moveCollinearSegmentRunByTranslation = (
+  routes: MutableRoute[],
+  segment: Segment,
+  dx: number,
+  dy: number,
+  bounds: SimpleRouteJson["bounds"],
+) => {
+  const route = routes[segment.routeIndex]
+  if (!route) return false
+
+  const movablePointIndexes = getMovableCollinearRunPointIndexes(route, segment)
+  if (!movablePointIndexes) return false
+
+  return moveRoutePointIndexesByTranslation(
+    route,
+    movablePointIndexes,
+    dx,
+    dy,
+    bounds,
+  )
 }
 
 const getDirectionAwayFromPoint = (segment: Segment, point: Point) => {
@@ -579,31 +1045,24 @@ const moveSegmentAwayFromObstacle = (
   bounds: SimpleRouteJson["bounds"],
   scale = 1,
 ) => {
-  const repulsion = getSegmentRectRepulsion(
-    segment,
-    obstacle,
-    segment.radius + PREFERRED_TRACE_TO_PAD_CLEARANCE + CLEARANCE_SLACK,
-  )
+  const requiredDistance =
+    segment.radius + PREFERRED_TRACE_TO_PAD_CLEARANCE + CLEARANCE_SLACK
+  const repulsion = getSegmentRectRepulsion(segment, obstacle, requiredDistance)
   if (!repulsion) return false
 
   const move = Math.min(
     TRACE_PAD_REPAIR_MAX_MOVE * Math.abs(scale),
     repulsion.penetration,
   )
-  const movedSegment = moveSegmentByDistribution(
-    routes,
-    segment,
-    repulsion.direction.x * move,
-    repulsion.direction.y * move,
-    bounds,
-    repulsion.t,
-  )
+  const dx = repulsion.direction.x * move
+  const dy = repulsion.direction.y * move
+  const movedSegment =
+    moveCollinearSegmentRunByTranslation(routes, segment, dx, dy, bounds) ||
+    moveSegmentByTranslation(routes, segment, dx, dy, bounds)
   if (movedSegment) return true
 
   const route = routes[segment.routeIndex]
   if (!route) return false
-  const requiredDistance =
-    segment.radius + PREFERRED_TRACE_TO_PAD_CLEARANCE + CLEARANCE_SLACK
   const halfWidth = obstacle.width / 2
   const halfHeight = obstacle.height / 2
   const detourPoints =
@@ -863,7 +1322,8 @@ const pushViaSegmentPair = (
   maxMove = BROAD_MAX_MOVE,
   moveDivisor = 2,
 ) => {
-  if (via.rootConnectionName === segment.rootConnectionName) return false
+  if (sharesNet(via.rootConnectionName, segment.rootConnectionName))
+    return false
 
   const projection = pointToSegmentProjection(via, segment)
   const separationX = via.x - projection.x
@@ -920,7 +1380,7 @@ const pushSegmentSegmentPair = (
 ) => {
   if (
     left.z !== right.z ||
-    left.rootConnectionName === right.rootConnectionName
+    sharesNet(left.rootConnectionName, right.rootConnectionName)
   ) {
     return false
   }
@@ -1033,10 +1493,15 @@ const getSegmentRectRepulsion = (
     | {
         direction: Point
         penetration: number
+        normality: number
         t: number
       }
     | undefined
 
+  const segmentLength = Math.hypot(
+    segment.end.x - segment.start.x,
+    segment.end.y - segment.start.y,
+  )
   for (const candidate of candidates) {
     const repulsion = getRectRepulsion(
       candidate.point,
@@ -1044,9 +1509,23 @@ const getSegmentRectRepulsion = (
       requiredDistance,
     )
     if (!repulsion) continue
-    if (!best || repulsion.penetration > best.penetration) {
+    const normality =
+      segmentLength > POSITION_EPSILON
+        ? Math.abs(
+            ((segment.end.x - segment.start.x) * repulsion.direction.y -
+              (segment.end.y - segment.start.y) * repulsion.direction.x) /
+              segmentLength,
+          )
+        : 0
+    if (
+      !best ||
+      repulsion.penetration > best.penetration + POSITION_EPSILON ||
+      (Math.abs(repulsion.penetration - best.penetration) <= POSITION_EPSILON &&
+        normality > best.normality)
+    ) {
       best = {
         ...repulsion,
+        normality,
         t: candidate.t,
       }
     }
@@ -1060,6 +1539,9 @@ const pushMovablesAwayFromObstacles = (
   routes: MutableRoute[],
   vias: ViaNode[],
   segments: Segment[],
+  viaSpatialIndex: Map<string, number[]>,
+  segmentSpatialIndex: Map<string, number[]>,
+  spatialCellSize: number,
 ) => {
   let changed = false
   const requiredTraceObstacleDistance =
@@ -1071,8 +1553,16 @@ const pushMovablesAwayFromObstacles = (
 
   for (const obstacle of srj.obstacles) {
     if (obstacle.isCopperPour) continue
+    const obstacleBounds = getObstacleBounds(obstacle)
 
-    for (const via of vias) {
+    const nearbyViaIndexes = getSpatialCandidateIndexes(
+      viaSpatialIndex,
+      expandBounds2d(obstacleBounds, requiredViaObstacleDistance),
+      spatialCellSize,
+    )
+    for (const viaIndex of nearbyViaIndexes) {
+      const via = vias[viaIndex]
+      if (!via) continue
       if (obstacleSharesNet(via.rootConnectionName, obstacle)) continue
       const repulsion = getRectRepulsion(
         via,
@@ -1091,7 +1581,14 @@ const pushMovablesAwayFromObstacles = (
         ) || changed
     }
 
-    for (const segment of segments) {
+    const nearbySegmentIndexes = getSpatialCandidateIndexes(
+      segmentSpatialIndex,
+      expandBounds2d(obstacleBounds, requiredTraceObstacleDistance),
+      spatialCellSize,
+    )
+    for (const segmentIndex of nearbySegmentIndexes) {
+      const segment = segments[segmentIndex]
+      if (!segment) continue
       if (
         obstacleSharesNet(segment.rootConnectionName, obstacle) ||
         !obstacleAppliesToSegment(obstacle, segment)
@@ -1127,23 +1624,53 @@ const applyBroadRepulsionPass = (
   let changed = false
   const vias = collectViaNodes(routes)
   const segments = collectSegments(routes)
+  const spatialInteractionDistance = getBroadSpatialInteractionDistance(
+    srj,
+    vias,
+    segments,
+  )
+  const spatialCellSize = Math.max(
+    BROAD_SPATIAL_CELL_SIZE_MIN,
+    spatialInteractionDistance * 2,
+  )
+  const viaSpatialIndex = createSpatialIndex(
+    vias,
+    getViaBounds,
+    spatialCellSize,
+  )
+  const segmentSpatialIndex = createSpatialIndex(
+    segments,
+    getSegmentBounds,
+    spatialCellSize,
+  )
 
   for (let leftIndex = 0; leftIndex < vias.length; leftIndex += 1) {
     const left = vias[leftIndex]
     if (!left) continue
-    for (
-      let rightIndex = leftIndex + 1;
-      rightIndex < vias.length;
-      rightIndex += 1
-    ) {
+    const nearbyViaIndexes = getSpatialCandidateIndexes(
+      viaSpatialIndex,
+      expandBounds2d(getViaBounds(left), spatialInteractionDistance),
+      spatialCellSize,
+    )
+    for (const rightIndex of nearbyViaIndexes) {
+      if (rightIndex <= leftIndex) continue
       const right = vias[rightIndex]
       if (!right) continue
       changed = pushViaViaPair(routes, left, right, srj.bounds) || changed
     }
   }
 
-  for (const via of vias) {
-    for (const segment of segments) {
+  for (let viaIndex = 0; viaIndex < vias.length; viaIndex += 1) {
+    const via = vias[viaIndex]
+    if (!via) continue
+    const nearbySegmentIndexes = getSpatialCandidateIndexes(
+      segmentSpatialIndex,
+      expandBounds2d(getViaBounds(via), spatialInteractionDistance),
+      spatialCellSize,
+    )
+    for (const segmentIndex of nearbySegmentIndexes) {
+      const segment = segments[segmentIndex]
+      if (!segment) continue
       changed = pushViaSegmentPair(routes, via, segment, srj.bounds) || changed
     }
   }
@@ -1151,11 +1678,13 @@ const applyBroadRepulsionPass = (
   for (let leftIndex = 0; leftIndex < segments.length; leftIndex += 1) {
     const left = segments[leftIndex]
     if (!left) continue
-    for (
-      let rightIndex = leftIndex + 1;
-      rightIndex < segments.length;
-      rightIndex += 1
-    ) {
+    const nearbySegmentIndexes = getSpatialCandidateIndexes(
+      segmentSpatialIndex,
+      expandBounds2d(getSegmentBounds(left), spatialInteractionDistance),
+      spatialCellSize,
+    )
+    for (const rightIndex of nearbySegmentIndexes) {
+      if (rightIndex <= leftIndex) continue
       const right = segments[rightIndex]
       if (!right) continue
       changed =
@@ -1163,7 +1692,17 @@ const applyBroadRepulsionPass = (
     }
   }
 
-  return pushMovablesAwayFromObstacles(srj, routes, vias, segments) || changed
+  return (
+    pushMovablesAwayFromObstacles(
+      srj,
+      routes,
+      vias,
+      segments,
+      viaSpatialIndex,
+      segmentSpatialIndex,
+      spatialCellSize,
+    ) || changed
+  )
 }
 
 const applyBroadRepulsionForces = (
@@ -1176,12 +1715,15 @@ const applyBroadRepulsionForces = (
     2,
     Math.round(BROAD_FORCE_PASSES * Math.max(1, effort)),
   )
+  let changed = false
 
   for (let pass = 0; pass < maxPasses; pass += 1) {
-    if (!applyBroadRepulsionPass(srj, mutableRoutes)) break
+    const passChanged = applyBroadRepulsionPass(srj, mutableRoutes)
+    if (!passChanged) break
+    changed = true
   }
 
-  return materializeRoutes(mutableRoutes)
+  return changed ? materializeRoutes(mutableRoutes) : routes
 }
 
 const deriveVias = (route: MutableRoute): MutableRoute["vias"] => {
@@ -1246,6 +1788,16 @@ const getMaxTargetedCandidateAttemptsForEffort = (effort: number) =>
     Math.round(BASE_MAX_TARGETED_CANDIDATE_ATTEMPTS * Math.max(1, effort)),
   )
 
+const getTraceRouteIndexForError = (
+  error: Record<string, unknown>,
+  traceRouteIndexById: Map<string, number>,
+) => {
+  const traceId = error.pcb_trace_id
+  return typeof traceId === "string"
+    ? (traceRouteIndexById.get(traceId) ?? parseTraceRouteIndex(error))
+    : parseTraceRouteIndex(error)
+}
+
 const isBetterDrcSnapshot = (
   candidateSnapshot: DrcSnapshot,
   candidateViaIssueCount: number,
@@ -1273,10 +1825,11 @@ const applyDrcErrorForces = (
   for (const error of errors) {
     const center = getErrorCenter(error)
     if (!center) continue
-    const repulsionPoint = getRepulsionPointForError(srj, error, center)
+    let repulsionPoint = center
 
     const viaIds = error.pcb_via_ids
     if (Array.isArray(viaIds) && viaIds.length > 0) {
+      repulsionPoint = getRepulsionPointForError(srj, error, center)
       const nearestViaPair = getNearestViaPair(vias, center)
       if (nearestViaPair) {
         changed =
@@ -1303,17 +1856,33 @@ const applyDrcErrorForces = (
     }
 
     const traceId = error.pcb_trace_id
-    const routeIndex =
-      typeof traceId === "string"
-        ? (traceRouteIndexById.get(traceId) ?? parseTraceRouteIndex(error))
-        : parseTraceRouteIndex(error)
+    const routeIndex = getTraceRouteIndexForError(error, traceRouteIndexById)
     const nearestSegment = getNearestSegment(segments, center, routeIndex)
     if (nearestSegment) {
-      const nearestObstacle = getNearestObstacleNearPoint(srj, center)
+      const isObstacleError = isTraceObstacleDrcError(error)
+      const nearestObstacle = isObstacleError
+        ? getNearestObstacleNearPoint(
+            srj,
+            center,
+            0.6,
+            (obstacle) =>
+              !obstacleSharesNet(nearestSegment.rootConnectionName, obstacle) &&
+              obstacleAppliesToSegment(obstacle, nearestSegment),
+          )
+        : getNearestObstacleNearPoint(srj, center)
+      if (isObstacleError && !nearestObstacle) {
+        continue
+      }
+      repulsionPoint = isObstacleError
+        ? (nearestObstacle?.center ?? center)
+        : getRepulsionPointForError(srj, error, center)
       const nearestVia = getNearestVia(vias, center)
       if (
         nearestVia &&
-        nearestVia.rootConnectionName !== nearestSegment.rootConnectionName &&
+        !sharesNet(
+          nearestVia.rootConnectionName,
+          nearestSegment.rootConnectionName,
+        ) &&
         Math.hypot(nearestVia.x - center.x, nearestVia.y - center.y) < 0.45
       ) {
         changed =
@@ -1327,27 +1896,29 @@ const applyDrcErrorForces = (
           ) || changed
       }
 
-      const movedSegment =
-        nearestObstacle &&
-        !obstacleSharesNet(
-          nearestSegment.rootConnectionName,
-          nearestObstacle,
-        ) &&
-        obstacleAppliesToSegment(nearestObstacle, nearestSegment)
-          ? moveSegmentAwayFromObstacle(
-              routes,
-              nearestSegment,
-              nearestObstacle,
-              srj.bounds,
-              scale,
-            )
-          : moveSegmentAwayFromPoint(
-              routes,
-              nearestSegment,
-              repulsionPoint,
-              srj.bounds,
-              scale,
-            )
+      const shouldUseObstacleMove =
+        nearestObstacle !== undefined &&
+        (isObstacleError ||
+          (!obstacleSharesNet(
+            nearestSegment.rootConnectionName,
+            nearestObstacle,
+          ) &&
+            obstacleAppliesToSegment(nearestObstacle, nearestSegment)))
+      const movedSegment = shouldUseObstacleMove
+        ? moveSegmentAwayFromObstacle(
+            routes,
+            nearestSegment,
+            nearestObstacle!,
+            srj.bounds,
+            scale,
+          )
+        : moveSegmentAwayFromPoint(
+            routes,
+            nearestSegment,
+            repulsionPoint,
+            srj.bounds,
+            scale,
+          )
       changed = movedSegment || changed
     }
 
@@ -1370,6 +1941,8 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   readonly inputHdRoutes: HighDensityRoute[]
   readonly effort: number
   readonly drcEvaluator?: DrcEvaluator
+  readonly configuredMaxIterations?: number
+  readonly enableLargeBoardBroadFallback: boolean
   outputHdRoutes: HighDensityRoute[]
   private initialDrcIssueCount: number | undefined
   private broadForceAccepted = false
@@ -1377,6 +1950,11 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   private candidateAttempts = 0
   private errorCursor = 0
   private stalledIterations = 0
+  private bestDrcIssueCountSeen: number | undefined
+  private lastDrcCountImprovementCheckIteration = 0
+  private drcCountPlateauChecks = 0
+  private largeBoardBroadFallbackMisses = 0
+  private outputSnapshot: DrcSnapshot | undefined
 
   constructor(params: GlobalDrcForceImproveSolverParams) {
     super()
@@ -1384,8 +1962,12 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     this.inputHdRoutes = params.hdRoutes
     this.effort = params.effort ?? 1
     this.drcEvaluator = params.drcEvaluator
+    this.configuredMaxIterations = params.maxIterations
+    this.enableLargeBoardBroadFallback =
+      params.enableLargeBoardBroadFallback ?? true
     this.outputHdRoutes = params.hdRoutes
-    this.MAX_ITERATIONS = Math.max(8, Math.round(16 * Math.max(1, this.effort)))
+    this.MAX_ITERATIONS =
+      this.configuredMaxIterations ?? getBaseMaxIterations(this.effort)
   }
 
   override getConstructorParams() {
@@ -1395,6 +1977,8 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         hdRoutes: this.inputHdRoutes,
         effort: this.effort,
         drcEvaluator: this.drcEvaluator,
+        maxIterations: this.configuredMaxIterations,
+        enableLargeBoardBroadFallback: this.enableLargeBoardBroadFallback,
       },
     ] as const
   }
@@ -1403,18 +1987,101 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     this.stats = {
       initialDrcIssueCount: this.initialDrcIssueCount ?? snapshot.count,
       finalDrcIssueCount: snapshot.count,
+      globalDrcForceImproveMaxIterations: this.MAX_ITERATIONS,
       globalDrcForceImproveBroadForceAccepted: this.broadForceAccepted,
       globalDrcForceImproveTargetedForceAccepted: this.targetedForceAccepted,
       globalDrcForceImproveCandidateAttempts: this.candidateAttempts,
       globalDrcForceImproveStalledIterations: this.stalledIterations,
+      globalDrcForceImproveBestDrcIssueCountSeen:
+        this.bestDrcIssueCountSeen ?? snapshot.count,
+      globalDrcForceImproveDrcCountPlateauChecks: this.drcCountPlateauChecks,
+      globalDrcForceImproveLargeBoardBroadFallbackMisses:
+        this.largeBoardBroadFallbackMisses,
+    }
+  }
+
+  private increaseMaxIterationsForDrcIssueCount(drcIssueCount: number) {
+    if (this.configuredMaxIterations !== undefined) {
+      this.MAX_ITERATIONS = this.configuredMaxIterations
+      return
+    }
+
+    this.MAX_ITERATIONS = Math.max(
+      this.MAX_ITERATIONS,
+      getDrcScaledMaxIterations(drcIssueCount, this.effort),
+      getRouteComplexityMinIterations(this.inputHdRoutes.length, drcIssueCount),
+    )
+  }
+
+  private acceptSolvedRoutes(
+    routes: HighDensityRoute[],
+    snapshot: DrcSnapshot,
+  ) {
+    this.outputHdRoutes = routes
+    this.outputSnapshot = snapshot
+    this.stalledIterations = 0
+    this.updateStats(snapshot)
+    this.solved = true
+  }
+
+  private updateDrcCountPlateauState(snapshot: DrcSnapshot) {
+    this.bestDrcIssueCountSeen ??= snapshot.count
+    const initialDrcIssueCount = this.initialDrcIssueCount ?? snapshot.count
+    const isLargeRouteBoard =
+      this.inputHdRoutes.length > BROAD_FALLBACK_SMALL_ROUTE_LIMIT &&
+      initialDrcIssueCount > 0
+    const needsLargeBoardBroadFallbackWindow = isLargeRouteBoard
+
+    if (
+      (initialDrcIssueCount >= LARGE_DRC_COUNT_THRESHOLD ||
+        needsLargeBoardBroadFallbackWindow) &&
+      this.iterations < MIN_ITERATIONS_FOR_LARGE_BOARD_BROAD_FALLBACK
+    ) {
+      if (snapshot.count < this.bestDrcIssueCountSeen) {
+        this.bestDrcIssueCountSeen = snapshot.count
+      }
+      if (
+        isLargeRouteBoard &&
+        this.largeBoardBroadFallbackMisses >=
+          MAX_LARGE_BOARD_BROAD_FALLBACK_MISSES
+      ) {
+        this.solved = true
+      }
+      return
+    }
+
+    const improvementCheckInterval =
+      getDrcCountImprovementCheckInterval(initialDrcIssueCount)
+
+    if (
+      this.iterations - this.lastDrcCountImprovementCheckIteration <
+      improvementCheckInterval
+    ) {
+      return
+    }
+
+    this.lastDrcCountImprovementCheckIteration = this.iterations
+    if (snapshot.count < this.bestDrcIssueCountSeen) {
+      this.bestDrcIssueCountSeen = snapshot.count
+      this.drcCountPlateauChecks = 0
+      return
+    }
+
+    this.drcCountPlateauChecks += 1
+    if (this.drcCountPlateauChecks >= MAX_DRC_COUNT_PLATEAU_CHECKS) {
+      this.solved = true
     }
   }
 
   override _step() {
     let bestRoutes = this.outputHdRoutes
-    let bestSnapshot = getDrcSnapshot(this.srj, bestRoutes, this.drcEvaluator)
+    let bestSnapshot =
+      this.outputSnapshot ??
+      getDrcSnapshot(this.srj, bestRoutes, this.drcEvaluator)
     if (this.initialDrcIssueCount === undefined) {
       this.initialDrcIssueCount = bestSnapshot.count
+      this.bestDrcIssueCountSeen = bestSnapshot.count
+      this.increaseMaxIterationsForDrcIssueCount(bestSnapshot.count)
     }
 
     if (bestSnapshot.count === 0) {
@@ -1437,6 +2104,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       getMaxTargetedCandidateAttemptsForEffort(this.effort)
     let candidateAttemptsThisStep = 0
     let acceptedCandidate = false
+    let attemptedPeriodicLargeBoardBroadFallback = false
     const maxErrorsThisStep = Math.min(
       centeredErrors.length,
       Math.max(1, Math.ceil(this.effort)),
@@ -1468,9 +2136,9 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         )
         if (!changed) continue
 
+        const materializedCandidateRoutes = materializeRoutes(candidateRoutes)
         candidateAttemptsThisStep += 1
         this.candidateAttempts += 1
-        const materializedCandidateRoutes = materializeRoutes(candidateRoutes)
         const candidateSnapshot = getDrcSnapshot(
           this.srj,
           materializedCandidateRoutes,
@@ -1494,6 +2162,10 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           bestViaIssueCount = candidateViaIssueCount
           this.targetedForceAccepted = true
           acceptedCandidate = true
+          if (candidateSnapshot.count === 0) {
+            this.acceptSolvedRoutes(bestRoutes, bestSnapshot)
+            return
+          }
           break
         }
       }
@@ -1501,51 +2173,75 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       if (acceptedCandidate) break
     }
 
-    const canAffordBroadFallback = bestRoutes.length <= 120
+    const canAffordBroadFallback =
+      bestRoutes.length <= BROAD_FALLBACK_SMALL_ROUTE_LIMIT
+    const largeBoardBroadFallbackCadence = getLargeBoardBroadFallbackCadence(
+      centeredErrors.length,
+    )
+    const shouldTryPeriodicLargeBoardBroadFallback =
+      this.enableLargeBoardBroadFallback &&
+      this.MAX_ITERATIONS >= MIN_ITERATIONS_FOR_LARGE_BOARD_BROAD_FALLBACK &&
+      !canAffordBroadFallback &&
+      this.stalledIterations > 0 &&
+      this.stalledIterations % largeBoardBroadFallbackCadence === 0
     if (
       !acceptedCandidate &&
       (canAffordBroadFallback ||
-        (this.effort >= 2 && this.stalledIterations >= 2))
+        (this.effort >= 2 && this.stalledIterations >= 2) ||
+        shouldTryPeriodicLargeBoardBroadFallback)
     ) {
+      attemptedPeriodicLargeBoardBroadFallback =
+        shouldTryPeriodicLargeBoardBroadFallback
       const broadCandidateRoutes = applyBroadRepulsionForces(
         this.srj,
         bestRoutes,
         this.effort,
       )
-      const broadCandidateSnapshot = getDrcSnapshot(
-        this.srj,
-        broadCandidateRoutes,
-        this.drcEvaluator,
-      )
-      const broadCandidateViaIssueCount = getViaDrcIssueCount(
-        broadCandidateSnapshot,
-      )
-      if (
-        isBetterDrcSnapshot(
-          broadCandidateSnapshot,
-          broadCandidateViaIssueCount,
-          bestIssueCount,
-          bestIssueScore,
-          bestViaIssueCount,
+      if (broadCandidateRoutes !== bestRoutes) {
+        const broadCandidateSnapshot = getDrcSnapshot(
+          this.srj,
+          broadCandidateRoutes,
+          this.drcEvaluator,
         )
-      ) {
-        bestRoutes = broadCandidateRoutes
-        bestSnapshot = broadCandidateSnapshot
-        bestIssueCount = broadCandidateSnapshot.count
-        bestIssueScore = broadCandidateSnapshot.issueScore
-        bestViaIssueCount = broadCandidateViaIssueCount
-        this.broadForceAccepted = true
-        acceptedCandidate = true
+        const broadCandidateViaIssueCount = getViaDrcIssueCount(
+          broadCandidateSnapshot,
+        )
+        if (
+          isBetterDrcSnapshot(
+            broadCandidateSnapshot,
+            broadCandidateViaIssueCount,
+            bestIssueCount,
+            bestIssueScore,
+            bestViaIssueCount,
+          )
+        ) {
+          bestRoutes = broadCandidateRoutes
+          bestSnapshot = broadCandidateSnapshot
+          bestIssueCount = broadCandidateSnapshot.count
+          bestIssueScore = broadCandidateSnapshot.issueScore
+          bestViaIssueCount = broadCandidateViaIssueCount
+          this.broadForceAccepted = true
+          acceptedCandidate = true
+          if (broadCandidateSnapshot.count === 0) {
+            this.acceptSolvedRoutes(bestRoutes, bestSnapshot)
+            return
+          }
+        }
       }
     }
 
+    if (acceptedCandidate) {
+      this.largeBoardBroadFallbackMisses = 0
+    } else if (attemptedPeriodicLargeBoardBroadFallback) {
+      this.largeBoardBroadFallbackMisses += 1
+    }
+
     this.outputHdRoutes = bestRoutes
+    this.outputSnapshot = bestSnapshot
     this.stalledIterations = acceptedCandidate ? 0 : this.stalledIterations + 1
+    this.updateDrcCountPlateauState(bestSnapshot)
     this.updateStats(bestSnapshot)
-    if (
-      bestIssueCount === 0 ||
-      this.stalledIterations >= centeredErrors.length
-    ) {
+    if (bestIssueCount === 0) {
       this.solved = true
     }
   }
