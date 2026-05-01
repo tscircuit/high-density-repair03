@@ -10,9 +10,9 @@ import {
   COORDINATE_EPSILON,
   MAX_ERROR_MOVE,
   POSITION_EPSILON,
-  PREFERRED_TRACE_TO_PAD_CLEARANCE,
   TRACE_PAD_REPAIR_MAX_MOVE,
   VIA_PAIR_REPAIR_MAX_MOVE,
+  getTraceToPadEdgeClearance,
 } from "./solverConfig"
 import {
   clampToBounds,
@@ -162,7 +162,13 @@ export const getDrcSnapshot = (
 
   const drc = getDrcErrors(
     convertToCircuitJson(srj, traces, srj.minTraceWidth, srj.minViaDiameter),
-    RELAXED_DRC_OPTIONS,
+    {
+      ...RELAXED_DRC_OPTIONS,
+      traceClearance:
+        srj.minTraceToPadEdgeClearance ?? RELAXED_DRC_OPTIONS.traceClearance,
+      viaClearance:
+        srj.minTraceToPadEdgeClearance ?? RELAXED_DRC_OPTIONS.viaClearance,
+    },
   )
 
   return {
@@ -304,7 +310,7 @@ const getBroadSpatialInteractionDistance = (
     maxViaRadius * 2 + PREFERRED_VIA_TO_VIA_CLEARANCE + CLEARANCE_SLACK,
     maxViaRadius + maxSegmentRadius + traceClearance,
     maxSegmentRadius * 2 + traceClearance,
-    maxSegmentRadius + PREFERRED_TRACE_TO_PAD_CLEARANCE + CLEARANCE_SLACK,
+    maxSegmentRadius + getTraceToPadEdgeClearance(srj) + CLEARANCE_SLACK,
     maxViaRadius + (srj.defaultObstacleMargin ?? 0.1) + CLEARANCE_SLACK,
   )
 }
@@ -812,6 +818,7 @@ const moveSegmentAwayFromPoint = (
 }
 
 const moveSegmentAwayFromObstacle = (
+  srj: SimpleRouteJson,
   routes: MutableRoute[],
   segment: Segment,
   obstacle: SimpleRouteJson["obstacles"][number],
@@ -819,7 +826,7 @@ const moveSegmentAwayFromObstacle = (
   scale = 1,
 ) => {
   const requiredDistance =
-    segment.radius + PREFERRED_TRACE_TO_PAD_CLEARANCE + CLEARANCE_SLACK
+    segment.radius + getTraceToPadEdgeClearance(srj) + CLEARANCE_SLACK
   const repulsion = getSegmentRectRepulsion(segment, obstacle, requiredDistance)
   if (!repulsion) return false
 
@@ -1318,7 +1325,7 @@ const pushMovablesAwayFromObstacles = (
 ) => {
   let changed = false
   const requiredTraceObstacleDistance =
-    srj.minTraceWidth / 2 + PREFERRED_TRACE_TO_PAD_CLEARANCE + CLEARANCE_SLACK
+    srj.minTraceWidth / 2 + getTraceToPadEdgeClearance(srj) + CLEARANCE_SLACK
   const requiredViaObstacleDistance =
     (srj.minViaDiameter ?? 0.3) / 2 +
     (srj.defaultObstacleMargin ?? 0.1) +
@@ -1670,6 +1677,7 @@ export const applyDrcErrorForces = (
             obstacleAppliesToSegment(nearestObstacle, nearestSegment)))
       const movedSegment = shouldUseObstacleMove
         ? moveSegmentAwayFromObstacle(
+            srj,
             routes,
             nearestSegment,
             nearestObstacle!,

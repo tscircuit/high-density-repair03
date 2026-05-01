@@ -18,7 +18,7 @@
     "@tscircuit/checks": "^0.0.123",
     "@tscircuit/circuit-json-util": "^0.0.93",
     "@tscircuit/math-utils": "^0.0.36",
-    "circuit-json": "^0.0.419",
+    "circuit-json": "^0.0.422",
     "graphics-debug": "^0.0.93",
     "react": "^19.2.5",
     "react-dom": "^19.2.5"
