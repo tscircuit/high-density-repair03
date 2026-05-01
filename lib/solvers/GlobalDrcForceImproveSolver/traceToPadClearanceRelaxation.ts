@@ -1,12 +1,17 @@
 import {
+  distance,
+  getUnitVectorFromPointAToB,
+  midpoint,
   pointToSegmentClosestPoint,
   pointToSegmentDistance,
   segmentToBoxMinDistance,
   segmentToSegmentMinDistance,
 } from "@tscircuit/math-utils"
-import { obstacleSharesNet, sharesNet } from "./netUtils"
+import { getRootConnectionName, obstacleSharesNet, sharesNet } from "./netUtils"
+import { cloneRoutes } from "./solverHelpers"
 import type { SimpleRouteJson } from "../../types"
 import type { HighDensityRoute } from "../../types/high-density-types"
+import { mapZToLayerName } from "../../utils/mapZToLayerName"
 
 const CLEARANCE_EPSILON = 1e-6
 const RELAXATION_CLEARANCE_SLACK = 0.006
@@ -39,39 +44,20 @@ const getTraceHalfWidth = (srj: SimpleRouteJson, route: HighDensityRoute) =>
 const getRouteViaDiameter = (srj: SimpleRouteJson, route: HighDensityRoute) =>
   route.viaDiameter ?? srj.minViaDiameter ?? 0.3
 
-const distance = (left: Point2D, right: Point2D) =>
-  Math.hypot(left.x - right.x, left.y - right.y)
-
 const pointsEqual = (left: Point2D, right: Point2D) =>
   distance(left, right) < CLEARANCE_EPSILON
 
 const normalizeVector = (vector: Point2D): Point2D => {
-  const magnitude = Math.hypot(vector.x, vector.y)
+  const magnitude = distance({ x: 0, y: 0 }, vector)
   if (magnitude < CLEARANCE_EPSILON) return { x: 0, y: 0 }
-  return { x: vector.x / magnitude, y: vector.y / magnitude }
+  return getUnitVectorFromPointAToB({ x: 0, y: 0 }, vector)
 }
 
 const limitVector = (vector: Point2D, maxMagnitude: number): Point2D => {
-  const magnitude = Math.hypot(vector.x, vector.y)
+  const magnitude = distance({ x: 0, y: 0 }, vector)
   if (magnitude <= maxMagnitude || magnitude < CLEARANCE_EPSILON) return vector
   const scale = maxMagnitude / magnitude
   return { x: vector.x * scale, y: vector.y * scale }
-}
-
-const getMidpoint = (start: Point2D, end: Point2D): Point2D => ({
-  x: (start.x + end.x) / 2,
-  y: (start.y + end.y) / 2,
-})
-
-const layerNameToZ = (
-  layer: string,
-  layerCount: number,
-): number | undefined => {
-  if (layer === "top") return 0
-  if (layer === "bottom") return Math.max(0, layerCount - 1)
-  const innerMatch = layer.match(/^inner(\d+)$/)
-  if (innerMatch) return Number.parseInt(innerMatch[1]!, 10)
-  return undefined
 }
 
 const getObstacleZLayers = (
@@ -82,9 +68,9 @@ const getObstacleZLayers = (
     return obstacle.zLayers
   }
 
-  const zLayers = obstacle.layers
-    .map((layer) => layerNameToZ(layer, layerCount))
-    .filter((zLayer): zLayer is number => zLayer !== undefined)
+  const zLayers = Array.from({ length: layerCount }, (_, z) => z).filter((z) =>
+    obstacle.layers.includes(mapZToLayerName(z, layerCount)),
+  )
 
   return zLayers.length > 0
     ? zLayers
@@ -94,20 +80,17 @@ const getObstacleZLayers = (
 const blockerAppliesToLayer = (blocker: ClearanceBlocker, z: number) =>
   blocker.zLayers.includes(z)
 
-const routeName = (route: HighDensityRoute) =>
-  route.rootConnectionName ?? route.connectionName
-
 const routesAreConnected = (left: HighDensityRoute, right: HighDensityRoute) =>
-  sharesNet(routeName(left), routeName(right)) ||
-  sharesNet(routeName(left), right.connectionName) ||
-  sharesNet(left.connectionName, routeName(right)) ||
+  sharesNet(getRootConnectionName(left), getRootConnectionName(right)) ||
+  sharesNet(getRootConnectionName(left), right.connectionName) ||
+  sharesNet(left.connectionName, getRootConnectionName(right)) ||
   sharesNet(left.connectionName, right.connectionName)
 
 const isSameNetObstacle = (
   route: HighDensityRoute,
   obstacle: SimpleRouteJson["obstacles"][number],
 ) =>
-  obstacleSharesNet(routeName(route), obstacle) ||
+  obstacleSharesNet(getRootConnectionName(route), obstacle) ||
   obstacleSharesNet(route.connectionName, obstacle)
 
 const getClearanceBlockersForRoute = (
@@ -192,16 +175,16 @@ const getPushDirectionForBlocker = (
   ) {
     const dx = end.x - start.x
     const dy = end.y - start.y
-    const midpoint = getMidpoint(start, end)
+    const segmentMidpoint = midpoint(start, end)
     const normalA = normalizeVector({ x: -dy, y: dx })
     const normalB = { x: -normalA.x, y: -normalA.y }
     direction =
       distance(
-        { x: midpoint.x + normalA.x, y: midpoint.y + normalA.y },
+        { x: segmentMidpoint.x + normalA.x, y: segmentMidpoint.y + normalA.y },
         blockerCenter,
       ) >=
       distance(
-        { x: midpoint.x + normalB.x, y: midpoint.y + normalB.y },
+        { x: segmentMidpoint.x + normalB.x, y: segmentMidpoint.y + normalB.y },
         blockerCenter,
       )
         ? normalA
@@ -398,15 +381,15 @@ const computeNudgeForces = (
           clearance
         if (violation <= 0) continue
 
-        const midpoint = getMidpoint(start, end)
+        const segmentMidpoint = midpoint(start, end)
         const closestPoint = pointToSegmentClosestPoint(
-          midpoint,
+          segmentMidpoint,
           otherStart,
           otherEnd,
         )
         let direction = normalizeVector({
-          x: midpoint.x - closestPoint.x,
-          y: midpoint.y - closestPoint.y,
+          x: segmentMidpoint.x - closestPoint.x,
+          y: segmentMidpoint.y - closestPoint.y,
         })
         if (
           Math.abs(direction.x) < CLEARANCE_EPSILON &&
@@ -521,13 +504,6 @@ const nudgeRoute = (
   return nudgedRoute
 }
 
-const cloneRoute = (route: HighDensityRoute): HighDensityRoute => ({
-  ...route,
-  route: route.route.map((point) => ({ ...point })),
-  vias: route.vias.map((via) => ({ ...via })),
-  jumpers: route.jumpers ? [...route.jumpers] : undefined,
-})
-
 export const applyTraceToPadClearanceRelaxation = (
   srj: SimpleRouteJson,
   routes: HighDensityRoute[],
@@ -540,7 +516,7 @@ export const applyTraceToPadClearanceRelaxation = (
   }
 
   let changed = false
-  const relaxedRoutes = routes.map(cloneRoute)
+  const relaxedRoutes = cloneRoutes(routes)
 
   for (let pass = 0; pass < RELAXATION_PASSES; pass += 1) {
     for (
