@@ -1,1 +1,1 @@
-export { getDrcSnapshot } from "./GlobalDrcForceImproveSolver"
+export { getDrcSnapshot } from "./solverHelpers"

@@ -17,6 +17,15 @@ export type DrcSnapshot = {
   traceRouteIndexById: Map<string, number>
 }
 
+export type GlobalDrcForceImproveSolverParams = {
+  srj: SimpleRouteJson
+  hdRoutes: HighDensityRoute[]
+  effort?: number
+  drcEvaluator?: DrcEvaluator
+  maxIterations?: number
+  enableLargeBoardBroadFallback?: boolean
+}
+
 export type SolverDeps = Record<string, unknown>
 
 export type SolverOutput = HighDensityRoute[]

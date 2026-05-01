@@ -1,15 +1,10 @@
 export { GlobalDrcForceImproveSolver } from "./GlobalDrcForceImproveSolver"
 
-import type { GlobalDrcForceImproveSolver as GlobalDrcForceImproveSolverClass } from "./GlobalDrcForceImproveSolver"
-
-export type GlobalDrcForceImproveSolverParams = ConstructorParameters<
-  typeof GlobalDrcForceImproveSolverClass
->[0]
-
 export type {
   DrcError,
   DrcEvaluator,
   DrcSnapshot,
+  GlobalDrcForceImproveSolverParams,
   SolverDeps,
   SolverOutput,
 } from "./types"
