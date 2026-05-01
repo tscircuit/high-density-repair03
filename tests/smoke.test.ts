@@ -1,7 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { segmentToBoxMinDistance } from "@tscircuit/math-utils"
 import { GlobalDrcForceImproveSolver } from "../lib"
-import { getDrcSnapshot } from "../lib/solvers/GlobalDrcForceImproveSolver/drc-snapshot"
 
 describe("GlobalDrcForceImproveSolver", () => {
   test("solves in a single step", () => {
