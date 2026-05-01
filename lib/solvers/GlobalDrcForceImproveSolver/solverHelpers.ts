@@ -1328,7 +1328,7 @@ const pushMovablesAwayFromObstacles = (
     srj.minTraceWidth / 2 + getTraceToPadEdgeClearance(srj) + CLEARANCE_SLACK
   const requiredViaObstacleDistance =
     (srj.minViaDiameter ?? 0.3) / 2 +
-    (srj.defaultObstacleMargin ?? 0.1) +
+    getTraceToPadEdgeClearance(srj) +
     CLEARANCE_SLACK
 
   for (const obstacle of srj.obstacles) {

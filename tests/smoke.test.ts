@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { segmentToBoxMinDistance } from "@tscircuit/math-utils"
 import { GlobalDrcForceImproveSolver } from "../lib"
 import { getDrcSnapshot } from "../lib/solvers/GlobalDrcForceImproveSolver/drc-snapshot"
 
@@ -223,5 +224,58 @@ describe("GlobalDrcForceImproveSolver", () => {
         hdRoutes,
       ).count,
     ).toBeGreaterThan(0)
+  })
+
+  test("relaxes solved routes away from pad edges before output", () => {
+    const srj = {
+      bounds: { minX: -2, minY: -2, maxX: 2, maxY: 2 },
+      connections: [{ name: "A", pointsToConnect: [] }],
+      obstacles: [
+        {
+          type: "rect" as const,
+          layers: ["top"],
+          center: { x: 0, y: 0 },
+          width: 1,
+          height: 1,
+          connectedTo: ["pcb_smtpad_1"],
+        },
+      ],
+      layerCount: 2,
+      minTraceWidth: 0.1,
+      minTraceToPadEdgeClearance: 0.25,
+    }
+    const hdRoutes = [
+      {
+        connectionName: "A",
+        route: [
+          { x: -1.5, y: 0.7, z: 0 },
+          { x: -0.75, y: 0.7, z: 0 },
+          { x: 0.75, y: 0.7, z: 0 },
+          { x: 1.5, y: 0.7, z: 0 },
+        ],
+        vias: [],
+        traceThickness: 0.1,
+        viaDiameter: 0.3,
+      },
+    ]
+    const solver = new GlobalDrcForceImproveSolver({
+      srj,
+      hdRoutes,
+      drcEvaluator: () => [],
+    })
+
+    solver.solve()
+    const [route] = solver.getOutput()
+    const segmentStart = route!.route[1]!
+    const segmentEnd = route!.route[2]!
+    const edgeClearance =
+      segmentToBoxMinDistance(segmentStart, segmentEnd, srj.obstacles[0]!) -
+      route!.traceThickness / 2
+
+    expect(segmentStart.y).toBeGreaterThan(0.7)
+    expect(segmentEnd.y).toBeGreaterThan(0.7)
+    expect(edgeClearance).toBeGreaterThanOrEqual(
+      srj.minTraceToPadEdgeClearance - 1e-6,
+    )
   })
 })

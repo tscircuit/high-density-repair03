@@ -23,6 +23,7 @@ import {
   isBetterDrcSnapshot,
   materializeRoutes,
 } from "./solverHelpers"
+import { applyTraceToPadClearanceRelaxation } from "./traceToPadClearanceRelaxation"
 import type {
   DrcEvaluator,
   DrcSnapshot,
@@ -50,6 +51,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   private drcCountPlateauChecks = 0
   private largeBoardBroadFallbackMisses = 0
   private outputSnapshot: DrcSnapshot | undefined
+  private finalClearanceRelaxationApplied = false
 
   constructor(params: GlobalDrcForceImproveSolverParams) {
     super()
@@ -112,11 +114,38 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     routes: HighDensityRoute[],
     snapshot: DrcSnapshot,
   ) {
-    this.outputHdRoutes = routes
-    this.outputSnapshot = snapshot
+    const relaxedRoutes = applyTraceToPadClearanceRelaxation(this.srj, routes)
+    const relaxedSnapshot =
+      relaxedRoutes === routes
+        ? snapshot
+        : getDrcSnapshot(this.srj, relaxedRoutes, this.drcEvaluator)
+
+    this.outputHdRoutes = relaxedRoutes
+    this.outputSnapshot = relaxedSnapshot
+    this.finalClearanceRelaxationApplied = true
     this.stalledIterations = 0
-    this.updateStats(snapshot)
+    this.updateStats(relaxedSnapshot)
     this.solved = true
+  }
+
+  private applyFinalClearanceRelaxation() {
+    if (this.finalClearanceRelaxationApplied) return
+
+    const relaxedRoutes = applyTraceToPadClearanceRelaxation(
+      this.srj,
+      this.outputHdRoutes,
+    )
+    if (relaxedRoutes !== this.outputHdRoutes) {
+      this.outputHdRoutes = relaxedRoutes
+      this.outputSnapshot = getDrcSnapshot(
+        this.srj,
+        relaxedRoutes,
+        this.drcEvaluator,
+      )
+      this.updateStats(this.outputSnapshot)
+    }
+
+    this.finalClearanceRelaxationApplied = true
   }
 
   private updateDrcCountPlateauState(snapshot: DrcSnapshot) {
@@ -180,8 +209,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     }
 
     if (bestSnapshot.count === 0) {
-      this.updateStats(bestSnapshot)
-      this.solved = true
+      this.acceptSolvedRoutes(bestRoutes, bestSnapshot)
       return
     }
 
@@ -342,10 +370,14 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   }
 
   override tryFinalAcceptance() {
+    this.applyFinalClearanceRelaxation()
     this.solved = true
   }
 
   override getOutput() {
+    if (this.solved) {
+      this.applyFinalClearanceRelaxation()
+    }
     return this.outputHdRoutes
   }
 }
