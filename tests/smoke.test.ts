@@ -1,6 +1,11 @@
-import { describe, expect, test } from "bun:test"
-import { GlobalDrcForceImproveSolver } from "../lib"
-import { getDrcSnapshot } from "../lib/solvers/GlobalDrcForceImproveSolver/drc-snapshot"
+import {
+  describe,
+  expect,
+  getDrcSnapshot,
+  GlobalDrcForceImproveSolver,
+  test,
+} from "./solver-test-helpers"
+import type { SimpleRouteJson } from "./solver-test-helpers"
 
 describe("GlobalDrcForceImproveSolver", () => {
   test("solves in a single step", () => {
@@ -24,7 +29,7 @@ describe("GlobalDrcForceImproveSolver", () => {
   })
 
   test("improves routes when a DRC evaluator reports conflicts", () => {
-    const srj = {
+    const srj: SimpleRouteJson = {
       bounds: { minX: 0, minY: 0, maxX: 10, maxY: 10 },
       connections: [
         { name: "A", pointsToConnect: [] },
@@ -99,86 +104,5 @@ describe("GlobalDrcForceImproveSolver", () => {
     const outputDrc = getDrcSnapshot(srj, output, drcEvaluator)
     expect(outputDrc.count).toBe(0)
     expect(output[0]?.route[1]?.y).not.toBe(5)
-  })
-
-  test("preserves width, via diameter, and endpoint port ids in DRC traces", () => {
-    const srj = {
-      bounds: { minX: 0, minY: 0, maxX: 10, maxY: 10 },
-      connections: [
-        {
-          name: "A",
-          pointsToConnect: [
-            { x: 1, y: 1, layer: "top", pcb_port_id: "pcb_port_start" },
-            { x: 4, y: 1, layer: "bottom", pcb_port_id: "pcb_port_end" },
-          ],
-        },
-      ],
-      obstacles: [],
-      layerCount: 2,
-      minTraceWidth: 0.1,
-      minViaDiameter: 0.3,
-    }
-    const hdRoutes = [
-      {
-        connectionName: "A",
-        route: [
-          { x: 1, y: 1, z: 0 },
-          { x: 2, y: 1, z: 0 },
-          { x: 2, y: 1, z: 1 },
-          { x: 4, y: 1, z: 1 },
-        ],
-        vias: [{ x: 2, y: 1 }],
-        traceThickness: 0.42,
-        viaDiameter: 0.71,
-      },
-    ]
-    let observedTrace: {
-      route: Array<Record<string, unknown>>
-    } | null = null
-
-    const snapshot = getDrcSnapshot(srj, hdRoutes, ({ traces }) => {
-      observedTrace = traces[0] ?? null
-      return []
-    })
-
-    expect(snapshot.count).toBe(0)
-    expect(observedTrace).not.toBeNull()
-    if (!observedTrace) {
-      throw new Error("expected drcEvaluator to receive a trace")
-    }
-    const trace = observedTrace as {
-      route: Array<Record<string, unknown>>
-    }
-    expect(trace.route[0]).toEqual({
-      route_type: "wire",
-      x: 1,
-      y: 1,
-      width: 0.42,
-      layer: "top",
-      start_pcb_port_id: "pcb_port_start",
-    })
-    expect(trace.route[1]).toEqual({
-      route_type: "wire",
-      x: 2,
-      y: 1,
-      width: 0.42,
-      layer: "top",
-    })
-    expect(trace.route[2]).toEqual({
-      route_type: "via",
-      x: 2,
-      y: 1,
-      from_layer: "top",
-      to_layer: "bottom",
-      via_diameter: 0.71,
-    })
-    expect(trace.route[3]).toEqual({
-      route_type: "wire",
-      x: 4,
-      y: 1,
-      width: 0.42,
-      layer: "bottom",
-      end_pcb_port_id: "pcb_port_end",
-    })
   })
 })

@@ -1,3 +1,7 @@
+import {
+  pointToSegmentDistance,
+  segmentToSegmentMinDistance,
+} from "@tscircuit/math-utils"
 import { RELAXED_DRC_OPTIONS } from "./drcPresets"
 import { PREFERRED_VIA_TO_VIA_CLEARANCE, getDrcErrors } from "./getDrcErrors"
 import { convertToCircuitJson } from "../utils/convertToCircuitJson"
@@ -10,6 +14,7 @@ import {
   COORDINATE_EPSILON,
   MAX_ERROR_MOVE,
   POSITION_EPSILON,
+  PREFERRED_TRACE_TO_PAD_CLEARANCE,
   TRACE_PAD_REPAIR_MAX_MOVE,
   VIA_PAIR_REPAIR_MAX_MOVE,
   getTraceToPadEdgeClearance,
@@ -315,28 +320,34 @@ const getBroadSpatialInteractionDistance = (
   )
 }
 
-const pointToSegmentProjection = (point: Point, segment: Segment) => {
-  const segmentX = segment.end.x - segment.start.x
-  const segmentY = segment.end.y - segment.start.y
+const projectPointOntoLineSegment = (
+  point: Point,
+  start: Point,
+  end: Point,
+) => {
+  const segmentX = end.x - start.x
+  const segmentY = end.y - start.y
   const lengthSquared = segmentX * segmentX + segmentY * segmentY
   if (lengthSquared <= POSITION_EPSILON) {
-    return { x: segment.start.x, y: segment.start.y, t: 0 }
+    return { x: start.x, y: start.y, t: 0 }
   }
 
   const t = clampValue(
-    ((point.x - segment.start.x) * segmentX +
-      (point.y - segment.start.y) * segmentY) /
+    ((point.x - start.x) * segmentX + (point.y - start.y) * segmentY) /
       lengthSquared,
     0,
     1,
   )
 
   return {
-    x: segment.start.x + segmentX * t,
-    y: segment.start.y + segmentY * t,
+    x: start.x + segmentX * t,
+    y: start.y + segmentY * t,
     t,
   }
 }
+
+const pointToSegmentProjection = (point: Point, segment: Segment) =>
+  projectPointOntoLineSegment(point, segment.start, segment.end)
 
 const getPointToObstacleDistance = (
   point: Point,
@@ -478,27 +489,533 @@ const getMovableCoincidentPointIndexes = (
   return pointIndexes
 }
 
+const pointIsInsideBounds = (point: Point, bounds: SimpleRouteJson["bounds"]) =>
+  point.x >= bounds.minX - COORDINATE_EPSILON &&
+  point.x <= bounds.maxX + COORDINATE_EPSILON &&
+  point.y >= bounds.minY - COORDINATE_EPSILON &&
+  point.y <= bounds.maxY + COORDINATE_EPSILON
+
+const getPointBoundsClearance = (
+  point: Point,
+  bounds: SimpleRouteJson["bounds"],
+) =>
+  Math.min(
+    point.x - bounds.minX,
+    bounds.maxX - point.x,
+    point.y - bounds.minY,
+    bounds.maxY - point.y,
+  )
+
+const pointIsOnSegment = (point: Point, start: Point, end: Point) => {
+  const segmentX = end.x - start.x
+  const segmentY = end.y - start.y
+  const pointX = point.x - start.x
+  const pointY = point.y - start.y
+  const cross = segmentX * pointY - segmentY * pointX
+  if (Math.abs(cross) > COORDINATE_EPSILON) return false
+
+  const minX = Math.min(start.x, end.x) - COORDINATE_EPSILON
+  const maxX = Math.max(start.x, end.x) + COORDINATE_EPSILON
+  const minY = Math.min(start.y, end.y) - COORDINATE_EPSILON
+  const maxY = Math.max(start.y, end.y) + COORDINATE_EPSILON
+
+  return (
+    point.x >= minX && point.x <= maxX && point.y >= minY && point.y <= maxY
+  )
+}
+
+const pointIsInsideOutline = (
+  point: Point,
+  outline: NonNullable<SimpleRouteJson["outline"]>,
+) => {
+  if (outline.length < 3) return true
+
+  for (let index = 0; index < outline.length; index += 1) {
+    const start = outline[index]
+    const end = outline[(index + 1) % outline.length]
+    if (!start || !end) continue
+    if (pointIsOnSegment(point, start, end)) return true
+  }
+
+  let inside = false
+  for (
+    let index = 0, previousIndex = outline.length - 1;
+    index < outline.length;
+    previousIndex = index, index += 1
+  ) {
+    const current = outline[index]
+    const previous = outline[previousIndex]
+    if (!current || !previous) continue
+
+    const intersects =
+      current.y > point.y !== previous.y > point.y &&
+      point.x <
+        ((previous.x - current.x) * (point.y - current.y)) /
+          (previous.y - current.y) +
+          current.x
+
+    if (intersects) inside = !inside
+  }
+
+  return inside
+}
+
+const getPointOutlineClearance = (
+  point: Point,
+  outline: NonNullable<SimpleRouteJson["outline"]>,
+) => {
+  let minDistance = Number.POSITIVE_INFINITY
+
+  for (let index = 0; index < outline.length; index += 1) {
+    const start = outline[index]
+    const end = outline[(index + 1) % outline.length]
+    if (!start || !end) continue
+    minDistance = Math.min(
+      minDistance,
+      pointToSegmentDistance(point, start, end),
+    )
+  }
+
+  return minDistance
+}
+
+const normalizeVector = (x: number, y: number) => {
+  const length = Math.hypot(x, y)
+  if (length <= POSITION_EPSILON) return undefined
+  return { x: x / length, y: y / length }
+}
+
+const getOutlineSignedArea = (
+  outline: NonNullable<SimpleRouteJson["outline"]>,
+) => {
+  let signedArea = 0
+
+  for (let index = 0; index < outline.length; index += 1) {
+    const current = outline[index]
+    const next = outline[(index + 1) % outline.length]
+    if (!current || !next) continue
+    signedArea += current.x * next.y - next.x * current.y
+  }
+
+  return signedArea / 2
+}
+
+const getBoundsInwardNormal = (
+  point: Point,
+  bounds: SimpleRouteJson["bounds"],
+) => {
+  const leftClearance = point.x - bounds.minX
+  const rightClearance = bounds.maxX - point.x
+  const bottomClearance = point.y - bounds.minY
+  const topClearance = bounds.maxY - point.y
+  const minClearance = Math.min(
+    leftClearance,
+    rightClearance,
+    bottomClearance,
+    topClearance,
+  )
+
+  let inwardX = 0
+  let inwardY = 0
+
+  if (leftClearance <= minClearance + COORDINATE_EPSILON) inwardX += 1
+  if (rightClearance <= minClearance + COORDINATE_EPSILON) inwardX -= 1
+  if (bottomClearance <= minClearance + COORDINATE_EPSILON) inwardY += 1
+  if (topClearance <= minClearance + COORDINATE_EPSILON) inwardY -= 1
+
+  return normalizeVector(inwardX, inwardY)
+}
+
+const getOutlineInwardNormal = (
+  point: Point,
+  outline: NonNullable<SimpleRouteJson["outline"]>,
+) => {
+  const isInside = pointIsInsideOutline(point, outline)
+  let nearestEdge:
+    | {
+        projection: Point
+        start: Point
+        end: Point
+        distance: number
+      }
+    | undefined
+
+  for (let index = 0; index < outline.length; index += 1) {
+    const start = outline[index]
+    const end = outline[(index + 1) % outline.length]
+    if (!start || !end) continue
+
+    const projection = projectPointOntoLineSegment(point, start, end)
+    const distance = Math.hypot(point.x - projection.x, point.y - projection.y)
+    if (!nearestEdge || distance < nearestEdge.distance) {
+      nearestEdge = { projection, start, end, distance }
+    }
+  }
+
+  if (!nearestEdge) return undefined
+
+  const normalFromClosestPoint = normalizeVector(
+    isInside
+      ? point.x - nearestEdge.projection.x
+      : nearestEdge.projection.x - point.x,
+    isInside
+      ? point.y - nearestEdge.projection.y
+      : nearestEdge.projection.y - point.y,
+  )
+  if (normalFromClosestPoint) return normalFromClosestPoint
+
+  const edgeX = nearestEdge.end.x - nearestEdge.start.x
+  const edgeY = nearestEdge.end.y - nearestEdge.start.y
+  const edgeLength = Math.hypot(edgeX, edgeY)
+  if (edgeLength <= POSITION_EPSILON) return undefined
+
+  const isCounterClockwise = getOutlineSignedArea(outline) >= 0
+  return {
+    x: isCounterClockwise ? -edgeY / edgeLength : edgeY / edgeLength,
+    y: isCounterClockwise ? edgeX / edgeLength : -edgeX / edgeLength,
+  }
+}
+
+const getPointBoardInwardNormal = (srj: SimpleRouteJson, point: Point) =>
+  srj.outline && srj.outline.length >= 3
+    ? getOutlineInwardNormal(point, srj.outline)
+    : getBoundsInwardNormal(point, srj.bounds)
+
+const pointIsInsideBoard = (srj: SimpleRouteJson, point: Point) =>
+  srj.outline && srj.outline.length >= 3
+    ? pointIsInsideOutline(point, srj.outline)
+    : pointIsInsideBounds(point, srj.bounds)
+
+const getPointBoardClearance = (srj: SimpleRouteJson, point: Point) => {
+  if (srj.outline && srj.outline.length >= 3) {
+    const clearance = getPointOutlineClearance(point, srj.outline)
+    return pointIsInsideOutline(point, srj.outline) ? clearance : -clearance
+  }
+
+  return getPointBoundsClearance(point, srj.bounds)
+}
+
+const getSegmentBoardClearance = (
+  srj: SimpleRouteJson,
+  start: Point,
+  end: Point,
+) => {
+  if (
+    Math.abs(start.x - end.x) <= COORDINATE_EPSILON &&
+    Math.abs(start.y - end.y) <= COORDINATE_EPSILON
+  ) {
+    return Math.min(
+      getPointBoardClearance(srj, start),
+      getPointBoardClearance(srj, end),
+    )
+  }
+
+  if (srj.outline && srj.outline.length >= 3) {
+    if (
+      !pointIsInsideOutline(start, srj.outline) ||
+      !pointIsInsideOutline(end, srj.outline)
+    ) {
+      return Math.min(
+        getPointBoardClearance(srj, start),
+        getPointBoardClearance(srj, end),
+      )
+    }
+
+    let minDistance = Number.POSITIVE_INFINITY
+    for (let index = 0; index < srj.outline.length; index += 1) {
+      const edgeStart = srj.outline[index]
+      const edgeEnd = srj.outline[(index + 1) % srj.outline.length]
+      if (!edgeStart || !edgeEnd) continue
+      minDistance = Math.min(
+        minDistance,
+        segmentToSegmentMinDistance(start, end, edgeStart, edgeEnd),
+      )
+    }
+    return minDistance
+  }
+
+  if (
+    !pointIsInsideBounds(start, srj.bounds) ||
+    !pointIsInsideBounds(end, srj.bounds)
+  ) {
+    return Math.min(
+      getPointBoardClearance(srj, start),
+      getPointBoardClearance(srj, end),
+    )
+  }
+
+  return Math.min(
+    getPointBoundsClearance(start, srj.bounds),
+    getPointBoundsClearance(end, srj.bounds),
+  )
+}
+
+const getBoardEdgeProximityThreshold = (
+  srj: SimpleRouteJson,
+  featureRadius: number,
+) =>
+  featureRadius +
+  Math.max(
+    PREFERRED_TRACE_TO_PAD_CLEARANCE,
+    srj.defaultObstacleMargin ?? 0,
+    RELAXED_DRC_OPTIONS.traceClearance ?? 0.1,
+  )
+
+const moveReducesClearanceIntoBoardEdgeZone = (
+  currentClearance: number,
+  nextClearance: number,
+  edgeProximityThreshold: number,
+) =>
+  nextClearance < currentClearance - COORDINATE_EPSILON &&
+  Math.min(currentClearance, nextClearance) <=
+    edgeProximityThreshold + COORDINATE_EPSILON
+
+const clipTranslationAgainstBoardEdge = (
+  dx: number,
+  dy: number,
+  inwardNormal: Point,
+  currentClearance: number,
+  edgeProximityThreshold: number,
+) => {
+  const dot = dx * inwardNormal.x + dy * inwardNormal.y
+  const maxOutwardMotion = Math.max(
+    0,
+    currentClearance - edgeProximityThreshold,
+  )
+  const minAllowedDot = -maxOutwardMotion
+
+  if (dot >= minAllowedDot - COORDINATE_EPSILON) {
+    return { x: dx, y: dy }
+  }
+
+  const adjustment = minAllowedDot - dot
+  return {
+    x: dx + inwardNormal.x * adjustment,
+    y: dy + inwardNormal.y * adjustment,
+  }
+}
+
+const clipPointTranslationAwayFromBoardEdge = (
+  srj: SimpleRouteJson,
+  point: Point,
+  dx: number,
+  dy: number,
+  featureRadius: number,
+) => {
+  const inwardNormal = getPointBoardInwardNormal(srj, point)
+  if (!inwardNormal) return { x: dx, y: dy }
+
+  return clipTranslationAgainstBoardEdge(
+    dx,
+    dy,
+    inwardNormal,
+    getPointBoardClearance(srj, point),
+    getBoardEdgeProximityThreshold(srj, featureRadius),
+  )
+}
+
+const clipPointIndexesTranslationAwayFromBoardEdge = (
+  srj: SimpleRouteJson,
+  route: MutableRoute,
+  pointIndexes: number[],
+  dx: number,
+  dy: number,
+  featureRadius: number,
+) => {
+  const uniquePointIndexes = [...new Set(pointIndexes)].sort(
+    (left, right) => left - right,
+  )
+  let translation = { x: dx, y: dy }
+  const edgeProximityThreshold = getBoardEdgeProximityThreshold(
+    srj,
+    featureRadius,
+  )
+
+  for (let pass = 0; pass < Math.max(1, uniquePointIndexes.length); pass += 1) {
+    let changed = false
+
+    for (const pointIndex of uniquePointIndexes) {
+      const point = route.route[pointIndex]
+      if (!point) continue
+
+      const inwardNormal = getPointBoardInwardNormal(srj, point)
+      if (!inwardNormal) continue
+
+      const clippedTranslation = clipTranslationAgainstBoardEdge(
+        translation.x,
+        translation.y,
+        inwardNormal,
+        getPointBoardClearance(srj, point),
+        edgeProximityThreshold,
+      )
+
+      if (
+        Math.abs(clippedTranslation.x - translation.x) > POSITION_EPSILON ||
+        Math.abs(clippedTranslation.y - translation.y) > POSITION_EPSILON
+      ) {
+        translation = clippedTranslation
+        changed = true
+      }
+    }
+
+    if (!changed) break
+  }
+
+  return translation
+}
+
+const getRoutePointIndexesMinBoardClearance = (
+  srj: SimpleRouteJson,
+  route: MutableRoute,
+  pointIndexes: number[],
+  translatedPoints?: Map<number, Point>,
+) => {
+  const uniquePointIndexes = [...new Set(pointIndexes)].sort(
+    (left, right) => left - right,
+  )
+  if (uniquePointIndexes.length === 0) return Number.POSITIVE_INFINITY
+
+  const movedPointIndexes = new Set(uniquePointIndexes)
+  const getPoint = (pointIndex: number) =>
+    translatedPoints?.get(pointIndex) ?? route.route[pointIndex]
+
+  let minClearance = Number.POSITIVE_INFINITY
+
+  for (const pointIndex of uniquePointIndexes) {
+    const point = getPoint(pointIndex)
+    if (!point) continue
+    minClearance = Math.min(minClearance, getPointBoardClearance(srj, point))
+  }
+
+  for (
+    let pointIndex = 0;
+    pointIndex < route.route.length - 1;
+    pointIndex += 1
+  ) {
+    if (
+      !movedPointIndexes.has(pointIndex) &&
+      !movedPointIndexes.has(pointIndex + 1)
+    ) {
+      continue
+    }
+
+    const start = getPoint(pointIndex)
+    const end = getPoint(pointIndex + 1)
+    if (!start || !end) continue
+    minClearance = Math.min(
+      minClearance,
+      getSegmentBoardClearance(srj, start, end),
+    )
+  }
+
+  return minClearance
+}
+
+const getSafeTranslationForPointIndexes = (
+  srj: SimpleRouteJson,
+  route: MutableRoute,
+  pointIndexes: number[],
+  dx: number,
+  dy: number,
+  featureRadius: number,
+) => {
+  const sortedPointIndexes = [...new Set(pointIndexes)].sort(
+    (left, right) => left - right,
+  )
+  if (sortedPointIndexes.length === 0) return undefined
+  const translation = clipPointIndexesTranslationAwayFromBoardEdge(
+    srj,
+    route,
+    sortedPointIndexes,
+    dx,
+    dy,
+    featureRadius,
+  )
+  if (
+    Math.abs(translation.x) <= POSITION_EPSILON &&
+    Math.abs(translation.y) <= POSITION_EPSILON
+  ) {
+    return undefined
+  }
+  const translatedPoints = new Map<number, Point>()
+
+  for (const pointIndex of sortedPointIndexes) {
+    const point = route.route[pointIndex]
+    if (!point) continue
+
+    const translatedPoint = {
+      x: point.x + translation.x,
+      y: point.y + translation.y,
+    }
+    translatedPoints.set(pointIndex, translatedPoint)
+  }
+
+  const currentMinClearance = getRoutePointIndexesMinBoardClearance(
+    srj,
+    route,
+    sortedPointIndexes,
+  )
+  const translatedMinClearance = getRoutePointIndexesMinBoardClearance(
+    srj,
+    route,
+    sortedPointIndexes,
+    translatedPoints,
+  )
+
+  if (translatedMinClearance < featureRadius - COORDINATE_EPSILON) {
+    return undefined
+  }
+
+  const edgeProximityThreshold = getBoardEdgeProximityThreshold(
+    srj,
+    featureRadius,
+  )
+  if (
+    moveReducesClearanceIntoBoardEdgeZone(
+      currentMinClearance,
+      translatedMinClearance,
+      edgeProximityThreshold,
+    )
+  ) {
+    return undefined
+  }
+
+  return translation
+}
+
 const moveRoutePoint = (
   routes: MutableRoute[],
   routeIndex: number,
   pointIndex: number,
   dx: number,
   dy: number,
-  bounds: SimpleRouteJson["bounds"],
+  srj: SimpleRouteJson,
+  featureRadius: number,
 ) => {
   const route = routes[routeIndex]
   if (!route) return false
 
   const pointIndexes = getMovableCoincidentPointIndexes(route, pointIndex)
   if (!pointIndexes) return false
+  const translation = getSafeTranslationForPointIndexes(
+    srj,
+    route,
+    pointIndexes,
+    dx,
+    dy,
+    featureRadius,
+  )
+  if (!translation) {
+    return false
+  }
 
   let changed = false
   for (const candidateIndex of pointIndexes) {
     const point = route.route[candidateIndex]
     if (!point) continue
-    point.x += dx
-    point.y += dy
-    clampToBounds(point, bounds)
+    point.x += translation.x
+    point.y += translation.y
+    clampToBounds(point, srj.bounds)
     changed = true
   }
 
@@ -510,7 +1027,7 @@ const moveSegmentByTranslation = (
   segment: Segment,
   dx: number,
   dy: number,
-  bounds: SimpleRouteJson["bounds"],
+  srj: SimpleRouteJson,
 ) => {
   const route = routes[segment.routeIndex]
   if (!route) return false
@@ -522,13 +1039,26 @@ const moveSegmentByTranslation = (
   const endIndexes = getMovableCoincidentPointIndexes(route, segment.endIndex)
   if (!startIndexes || !endIndexes) return false
 
+  const pointIndexes = [...new Set([...startIndexes, ...endIndexes])]
+  const translation = getSafeTranslationForPointIndexes(
+    srj,
+    route,
+    pointIndexes,
+    dx,
+    dy,
+    segment.radius,
+  )
+  if (!translation) {
+    return false
+  }
+
   let changed = false
-  for (const pointIndex of [...new Set([...startIndexes, ...endIndexes])]) {
+  for (const pointIndex of pointIndexes) {
     const point = route.route[pointIndex]
     if (!point) continue
-    point.x += dx
-    point.y += dy
-    clampToBounds(point, bounds)
+    point.x += translation.x
+    point.y += translation.y
+    clampToBounds(point, srj.bounds)
     changed = true
   }
 
@@ -540,15 +1070,26 @@ const moveRoutePointIndexesByTranslation = (
   pointIndexes: number[],
   dx: number,
   dy: number,
-  bounds: SimpleRouteJson["bounds"],
+  srj: SimpleRouteJson,
+  featureRadius: number,
 ) => {
+  const translation = getSafeTranslationForPointIndexes(
+    srj,
+    route,
+    pointIndexes,
+    dx,
+    dy,
+    featureRadius,
+  )
+  if (!translation) return false
+
   let changed = false
   for (const pointIndex of pointIndexes) {
     const point = route.route[pointIndex]
     if (!point) continue
-    point.x += dx
-    point.y += dy
-    clampToBounds(point, bounds)
+    point.x += translation.x
+    point.y += translation.y
+    clampToBounds(point, srj.bounds)
     changed = true
   }
 
@@ -693,7 +1234,7 @@ const moveCollinearSegmentRunByTranslation = (
   segment: Segment,
   dx: number,
   dy: number,
-  bounds: SimpleRouteJson["bounds"],
+  srj: SimpleRouteJson,
 ) => {
   const route = routes[segment.routeIndex]
   if (!route) return false
@@ -706,7 +1247,8 @@ const moveCollinearSegmentRunByTranslation = (
     movablePointIndexes,
     dx,
     dy,
-    bounds,
+    srj,
+    segment.radius,
   )
 }
 
@@ -741,19 +1283,69 @@ const insertDetourPointAwayFromPoint = (
   routes: MutableRoute[],
   segment: Segment,
   point: Point,
-  bounds: SimpleRouteJson["bounds"],
+  srj: SimpleRouteJson,
   scale: number,
 ) => {
   const route = routes[segment.routeIndex]
   if (!route) return false
 
   const { projection, direction } = getDirectionAwayFromPoint(segment, point)
+  const detourTranslation = clipPointTranslationAwayFromBoardEdge(
+    srj,
+    projection,
+    direction.x * MAX_ERROR_MOVE * scale,
+    direction.y * MAX_ERROR_MOVE * scale,
+    segment.radius,
+  )
+  if (
+    Math.abs(detourTranslation.x) <= POSITION_EPSILON &&
+    Math.abs(detourTranslation.y) <= POSITION_EPSILON
+  ) {
+    return false
+  }
   const detourPoint = {
     ...route.route[segment.startIndex]!,
-    x: projection.x + direction.x * MAX_ERROR_MOVE * scale,
-    y: projection.y + direction.y * MAX_ERROR_MOVE * scale,
+    x: projection.x + detourTranslation.x,
+    y: projection.y + detourTranslation.y,
   }
-  clampToBounds(detourPoint, bounds)
+  clampToBounds(detourPoint, srj.bounds)
+  if (
+    pointToSegmentDistance(detourPoint, segment.start, segment.end) <=
+    COORDINATE_EPSILON
+  ) {
+    return false
+  }
+
+  const startPoint = route.route[segment.startIndex]
+  const endPoint = route.route[segment.endIndex]
+  if (!startPoint || !endPoint) return false
+
+  const currentMinClearance = getSegmentBoardClearance(
+    srj,
+    startPoint,
+    endPoint,
+  )
+  const detourMinClearance = Math.min(
+    getPointBoardClearance(srj, detourPoint),
+    getSegmentBoardClearance(srj, startPoint, detourPoint),
+    getSegmentBoardClearance(srj, detourPoint, endPoint),
+  )
+  if (detourMinClearance < segment.radius - COORDINATE_EPSILON) return false
+
+  const edgeProximityThreshold = getBoardEdgeProximityThreshold(
+    srj,
+    segment.radius,
+  )
+  if (
+    moveReducesClearanceIntoBoardEdgeZone(
+      currentMinClearance,
+      detourMinClearance,
+      edgeProximityThreshold,
+    )
+  ) {
+    return false
+  }
+
   route.route.splice(segment.endIndex, 0, detourPoint)
   return true
 }
@@ -763,15 +1355,47 @@ const moveVia = (
   via: ViaNode,
   dx: number,
   dy: number,
-  bounds: SimpleRouteJson["bounds"],
+  srj: SimpleRouteJson,
 ) => {
   if (!via.movable) return false
   const route = routes[via.routeIndex]
   if (!route) return false
+  const translation = clipPointTranslationAwayFromBoardEdge(
+    srj,
+    via,
+    dx,
+    dy,
+    via.radius,
+  )
+  if (
+    Math.abs(translation.x) <= POSITION_EPSILON &&
+    Math.abs(translation.y) <= POSITION_EPSILON
+  ) {
+    return false
+  }
 
-  via.x += dx
-  via.y += dy
-  clampToBounds(via, bounds)
+  const nextPosition = {
+    x: via.x + translation.x,
+    y: via.y + translation.y,
+  }
+  const currentClearance = getPointBoardClearance(srj, via)
+  const nextClearance = getPointBoardClearance(srj, nextPosition)
+  if (nextClearance < via.radius - COORDINATE_EPSILON) return false
+
+  const edgeProximityThreshold = getBoardEdgeProximityThreshold(srj, via.radius)
+  if (
+    moveReducesClearanceIntoBoardEdgeZone(
+      currentClearance,
+      nextClearance,
+      edgeProximityThreshold,
+    )
+  ) {
+    return false
+  }
+
+  via.x += translation.x
+  via.y += translation.y
+  clampToBounds(via, srj.bounds)
   for (const pointIndex of via.pointIndexes) {
     const point = route.route[pointIndex]
     if (!point) continue
@@ -785,7 +1409,7 @@ const moveSegmentAwayFromPoint = (
   routes: MutableRoute[],
   segment: Segment,
   point: Point,
-  bounds: SimpleRouteJson["bounds"],
+  srj: SimpleRouteJson,
   scale = 1,
 ) => {
   const { projection, direction } = getDirectionAwayFromPoint(segment, point)
@@ -799,7 +1423,8 @@ const moveSegmentAwayFromPoint = (
     segment.startIndex,
     direction.x * move * startWeight,
     direction.y * move * startWeight,
-    bounds,
+    srj,
+    segment.radius,
   )
   const movedEnd = moveRoutePoint(
     routes,
@@ -807,22 +1432,22 @@ const moveSegmentAwayFromPoint = (
     segment.endIndex,
     direction.x * move * endWeight,
     direction.y * move * endWeight,
-    bounds,
+    srj,
+    segment.radius,
   )
 
   if (movedStart || movedEnd) {
     return true
   }
 
-  return insertDetourPointAwayFromPoint(routes, segment, point, bounds, scale)
+  return insertDetourPointAwayFromPoint(routes, segment, point, srj, scale)
 }
 
 const moveSegmentAwayFromObstacle = (
-  srj: SimpleRouteJson,
   routes: MutableRoute[],
   segment: Segment,
   obstacle: SimpleRouteJson["obstacles"][number],
-  bounds: SimpleRouteJson["bounds"],
+  srj: SimpleRouteJson,
   scale = 1,
 ) => {
   const requiredDistance =
@@ -837,8 +1462,8 @@ const moveSegmentAwayFromObstacle = (
   const dx = repulsion.direction.x * move
   const dy = repulsion.direction.y * move
   const movedSegment =
-    moveCollinearSegmentRunByTranslation(routes, segment, dx, dy, bounds) ||
-    moveSegmentByTranslation(routes, segment, dx, dy, bounds)
+    moveCollinearSegmentRunByTranslation(routes, segment, dx, dy, srj) ||
+    moveSegmentByTranslation(routes, segment, dx, dy, srj)
   if (movedSegment) return true
 
   const route = routes[segment.routeIndex]
@@ -881,17 +1506,103 @@ const moveSegmentAwayFromObstacle = (
         ]
 
   const orderedDetourPoints = detourPoints
-    .map((point) => ({
-      point,
-      t: pointToSegmentProjection(point, segment).t,
-    }))
-    .sort((a, b) => a.t - b.t)
-    .map(({ point }) => {
-      clampToBounds(point, bounds)
-      return point
-    })
+    .map((point) => {
+      const { t } = pointToSegmentProjection(point, segment)
+      const projectionPoint = {
+        x: segment.start.x + (segment.end.x - segment.start.x) * t,
+        y: segment.start.y + (segment.end.y - segment.start.y) * t,
+      }
+      const translation = clipPointTranslationAwayFromBoardEdge(
+        srj,
+        projectionPoint,
+        point.x - projectionPoint.x,
+        point.y - projectionPoint.y,
+        segment.radius,
+      )
 
-  route.route.splice(segment.endIndex, 0, ...orderedDetourPoints)
+      point.x = projectionPoint.x + translation.x
+      point.y = projectionPoint.y + translation.y
+      clampToBounds(point, srj.bounds)
+
+      return {
+        point,
+        t,
+        moved:
+          Math.abs(translation.x) > POSITION_EPSILON ||
+          Math.abs(translation.y) > POSITION_EPSILON,
+        awayFromObstacleMotion:
+          translation.x * repulsion.direction.x +
+          translation.y * repulsion.direction.y,
+      }
+    })
+    .sort((a, b) => a.t - b.t)
+
+  if (!orderedDetourPoints.some(({ moved }) => moved)) {
+    return false
+  }
+  if (
+    !orderedDetourPoints.some(
+      ({ awayFromObstacleMotion }) =>
+        awayFromObstacleMotion > COORDINATE_EPSILON,
+    )
+  ) {
+    return false
+  }
+
+  const normalizedDetourPoints = orderedDetourPoints.map(({ point }) => point)
+  if (
+    normalizedDetourPoints.every(
+      (point) =>
+        pointToSegmentDistance(point, segment.start, segment.end) <=
+        COORDINATE_EPSILON,
+    )
+  ) {
+    return false
+  }
+
+  if (normalizedDetourPoints.some((point) => !pointIsInsideBoard(srj, point))) {
+    return false
+  }
+
+  const startPoint = route.route[segment.startIndex]
+  const endPoint = route.route[segment.endIndex]
+  const firstDetourPoint = normalizedDetourPoints[0]
+  const secondDetourPoint = normalizedDetourPoints[1]
+  if (!startPoint || !endPoint || !firstDetourPoint || !secondDetourPoint) {
+    return false
+  }
+
+  const currentMinClearance = getSegmentBoardClearance(
+    srj,
+    startPoint,
+    endPoint,
+  )
+  const detourMinClearance = Math.min(
+    getPointBoardClearance(srj, firstDetourPoint),
+    getPointBoardClearance(srj, secondDetourPoint),
+    getSegmentBoardClearance(srj, startPoint, firstDetourPoint),
+    getSegmentBoardClearance(srj, firstDetourPoint, secondDetourPoint),
+    getSegmentBoardClearance(srj, secondDetourPoint, endPoint),
+  )
+  if (detourMinClearance < segment.radius - COORDINATE_EPSILON) {
+    return false
+  }
+
+  const edgeProximityThreshold = getBoardEdgeProximityThreshold(
+    srj,
+    segment.radius,
+  )
+  if (
+    moveReducesClearanceIntoBoardEdgeZone(
+      currentMinClearance,
+      detourMinClearance,
+      edgeProximityThreshold,
+    )
+  ) {
+    return false
+  }
+
+  route.route.splice(segment.endIndex, 0, ...normalizedDetourPoints)
   return true
 }
 
@@ -954,7 +1665,7 @@ const moveViaAwayFromPoint = (
   routes: MutableRoute[],
   via: ViaNode,
   point: Point,
-  bounds: SimpleRouteJson["bounds"],
+  srj: SimpleRouteJson,
 ) => {
   const separationX = via.x - point.x
   const separationY = via.y - point.y
@@ -967,7 +1678,7 @@ const moveViaAwayFromPoint = (
     via,
     directionX * MAX_ERROR_MOVE,
     directionY * MAX_ERROR_MOVE,
-    bounds,
+    srj,
   )
 }
 
@@ -1020,7 +1731,7 @@ const moveSegmentByDistribution = (
   segment: Segment,
   dx: number,
   dy: number,
-  bounds: SimpleRouteJson["bounds"],
+  srj: SimpleRouteJson,
   t: number,
 ) => {
   const clampedT = clampValue(t, 0, 1)
@@ -1032,7 +1743,8 @@ const moveSegmentByDistribution = (
     segment.startIndex,
     dx * startWeight,
     dy * startWeight,
-    bounds,
+    srj,
+    segment.radius,
   )
   const movedEnd = moveRoutePoint(
     routes,
@@ -1040,7 +1752,8 @@ const moveSegmentByDistribution = (
     segment.endIndex,
     dx * endWeight,
     dy * endWeight,
-    bounds,
+    srj,
+    segment.radius,
   )
 
   return movedStart || movedEnd
@@ -1050,7 +1763,7 @@ const pushViaViaPair = (
   routes: MutableRoute[],
   left: ViaNode,
   right: ViaNode,
-  bounds: SimpleRouteJson["bounds"],
+  srj: SimpleRouteJson,
   maxMove = BROAD_MAX_MOVE,
 ) => {
   const requiredDistance =
@@ -1082,14 +1795,14 @@ const pushViaViaPair = (
     left,
     directionX * move,
     directionY * move,
-    bounds,
+    srj,
   )
   const movedRight = moveVia(
     routes,
     right,
     -directionX * move,
     -directionY * move,
-    bounds,
+    srj,
   )
   return movedLeft || movedRight
 }
@@ -1098,7 +1811,7 @@ const pushViaSegmentPair = (
   routes: MutableRoute[],
   via: ViaNode,
   segment: Segment,
-  bounds: SimpleRouteJson["bounds"],
+  srj: SimpleRouteJson,
   maxMove = BROAD_MAX_MOVE,
   moveDivisor = 2,
 ) => {
@@ -1139,14 +1852,14 @@ const pushViaSegmentPair = (
     via,
     directionX * move,
     directionY * move,
-    bounds,
+    srj,
   )
   const movedSegment = moveSegmentByDistribution(
     routes,
     segment,
     -directionX * move,
     -directionY * move,
-    bounds,
+    srj,
     projection.t,
   )
   return movedVia || movedSegment
@@ -1156,7 +1869,7 @@ const pushSegmentSegmentPair = (
   routes: MutableRoute[],
   left: Segment,
   right: Segment,
-  bounds: SimpleRouteJson["bounds"],
+  srj: SimpleRouteJson,
 ) => {
   if (
     left.z !== right.z ||
@@ -1201,7 +1914,7 @@ const pushSegmentSegmentPair = (
     left,
     directionX * move,
     directionY * move,
-    bounds,
+    srj,
     candidate.leftT,
   )
   const movedRight = moveSegmentByDistribution(
@@ -1209,7 +1922,7 @@ const pushSegmentSegmentPair = (
     right,
     -directionX * move,
     -directionY * move,
-    bounds,
+    srj,
     candidate.rightT,
   )
   return movedLeft || movedRight
@@ -1357,7 +2070,7 @@ const pushMovablesAwayFromObstacles = (
           via,
           repulsion.direction.x * move,
           repulsion.direction.y * move,
-          srj.bounds,
+          srj,
         ) || changed
     }
 
@@ -1388,7 +2101,7 @@ const pushMovablesAwayFromObstacles = (
           segment,
           repulsion.direction.x * move,
           repulsion.direction.y * move,
-          srj.bounds,
+          srj,
           repulsion.t,
         ) || changed
     }
@@ -1436,7 +2149,7 @@ const applyBroadRepulsionPass = (
       if (rightIndex <= leftIndex) continue
       const right = vias[rightIndex]
       if (!right) continue
-      changed = pushViaViaPair(routes, left, right, srj.bounds) || changed
+      changed = pushViaViaPair(routes, left, right, srj) || changed
     }
   }
 
@@ -1451,7 +2164,7 @@ const applyBroadRepulsionPass = (
     for (const segmentIndex of nearbySegmentIndexes) {
       const segment = segments[segmentIndex]
       if (!segment) continue
-      changed = pushViaSegmentPair(routes, via, segment, srj.bounds) || changed
+      changed = pushViaSegmentPair(routes, via, segment, srj) || changed
     }
   }
 
@@ -1467,8 +2180,7 @@ const applyBroadRepulsionPass = (
       if (rightIndex <= leftIndex) continue
       const right = segments[rightIndex]
       if (!right) continue
-      changed =
-        pushSegmentSegmentPair(routes, left, right, srj.bounds) || changed
+      changed = pushSegmentSegmentPair(routes, left, right, srj) || changed
     }
   }
 
@@ -1608,19 +2320,15 @@ export const applyDrcErrorForces = (
             routes,
             nearestViaPair[0],
             nearestViaPair[1],
-            srj.bounds,
+            srj,
             VIA_PAIR_REPAIR_MAX_MOVE * Math.abs(scale),
           ) || changed
       } else {
         const nearestVia = getNearestVia(vias, center)
         if (nearestVia) {
           changed =
-            moveViaAwayFromPoint(
-              routes,
-              nearestVia,
-              repulsionPoint,
-              srj.bounds,
-            ) || changed
+            moveViaAwayFromPoint(routes, nearestVia, repulsionPoint, srj) ||
+            changed
         }
       }
       continue
@@ -1661,7 +2369,7 @@ export const applyDrcErrorForces = (
             routes,
             nearestVia,
             nearestSegment,
-            srj.bounds,
+            srj,
             TRACE_PAD_REPAIR_MAX_MOVE * Math.abs(scale),
             1,
           ) || changed
@@ -1677,18 +2385,17 @@ export const applyDrcErrorForces = (
             obstacleAppliesToSegment(nearestObstacle, nearestSegment)))
       const movedSegment = shouldUseObstacleMove
         ? moveSegmentAwayFromObstacle(
-            srj,
             routes,
             nearestSegment,
             nearestObstacle!,
-            srj.bounds,
+            srj,
             scale,
           )
         : moveSegmentAwayFromPoint(
             routes,
             nearestSegment,
             repulsionPoint,
-            srj.bounds,
+            srj,
             scale,
           )
       changed = movedSegment || changed
@@ -1700,8 +2407,7 @@ export const applyDrcErrorForces = (
       Math.hypot(nearestVia.x - center.x, nearestVia.y - center.y) < 0.35
     ) {
       changed =
-        moveViaAwayFromPoint(routes, nearestVia, repulsionPoint, srj.bounds) ||
-        changed
+        moveViaAwayFromPoint(routes, nearestVia, repulsionPoint, srj) || changed
     }
   }
 
