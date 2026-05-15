@@ -1,4 +1,8 @@
-export { GlobalDrcForceImproveSolver } from "./GlobalDrcForceImproveSolver"
+export {
+  GlobalDrcForceImproveSolver,
+  setGlobalDrcForceImproveSolverVisualizer,
+} from "./GlobalDrcForceImproveSolver"
+export type { GlobalDrcForceImproveSolverVisualizer } from "./GlobalDrcForceImproveSolver"
 
 export type {
   DrcError,

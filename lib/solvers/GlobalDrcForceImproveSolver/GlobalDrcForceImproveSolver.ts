@@ -34,174 +34,16 @@ import type {
 import type { SimpleRouteJson } from "../../types"
 import type { HighDensityRoute } from "../../types/high-density-types"
 
-const layerColor = (z: number) => {
-  if (z === 0) return "#FF0000"
-  if (z === 1) return "#0000FF"
-  return "#4f46e5"
-}
+export type GlobalDrcForceImproveSolverVisualizer = (
+  solver: GlobalDrcForceImproveSolver,
+) => GraphicsObject
 
-const getBoardOutlineGraphics = (srj: SimpleRouteJson): GraphicsObject => {
-  if (srj.outline && srj.outline.length >= 3) {
-    return {
-      polygons: [
-        {
-          points: srj.outline,
-          stroke: "#1d4ed8",
-          fill: "rgba(29, 78, 216, 0.0)",
-          label: "board-outline",
-        },
-      ],
-    }
-  }
+let registeredVisualizer: GlobalDrcForceImproveSolverVisualizer | undefined
 
-  return {
-    rects: [
-      {
-        center: {
-          x: (srj.bounds.minX + srj.bounds.maxX) / 2,
-          y: (srj.bounds.minY + srj.bounds.maxY) / 2,
-        },
-        width: srj.bounds.maxX - srj.bounds.minX,
-        height: srj.bounds.maxY - srj.bounds.minY,
-        stroke: "#1d4ed8",
-        fill: "rgba(29, 78, 216, 0.0)",
-        label: "board-outline",
-      },
-    ],
-  }
-}
-
-const getErrorCenter = (error: Record<string, unknown>) => {
-  const center = error.center ?? error.pcb_center
-  if (!center || typeof center !== "object") return undefined
-  const maybeCenter = center as Record<string, unknown>
-  return typeof maybeCenter.x === "number" && typeof maybeCenter.y === "number"
-    ? { x: maybeCenter.x, y: maybeCenter.y }
-    : undefined
-}
-
-const getDrcErrorKey = (error: Record<string, unknown>) => {
-  if (typeof error.pcb_error_id === "string" && error.pcb_error_id.length > 0) {
-    return `id:${error.pcb_error_id}`
-  }
-
-  const center = getErrorCenter(error)
-  if (!center) return undefined
-
-  const message = typeof error.message === "string" ? error.message : ""
-  const type =
-    typeof error.type === "string"
-      ? error.type
-      : typeof error.error_type === "string"
-        ? error.error_type
-        : "unknown"
-
-  return [
-    `center:${center.x.toFixed(3)},${center.y.toFixed(3)}`,
-    `type:${type}`,
-    `message:${message}`,
-  ].join("|")
-}
-
-const createDrcIssueCircles = (
-  initialSnapshot: DrcSnapshot,
-  currentSnapshot: DrcSnapshot,
-): NonNullable<GraphicsObject["circles"]> => {
-  const currentIssueKeys = new Set(
-    currentSnapshot.errors
-      .map((error) => getDrcErrorKey(error))
-      .filter((key): key is string => Boolean(key)),
-  )
-
-  return initialSnapshot.errors.flatMap((error) => {
-    const center = getErrorCenter(error)
-    const key = getDrcErrorKey(error)
-    if (!center || !key) return []
-
-    const fixed = !currentIssueKeys.has(key)
-
-    return [
-      {
-        center,
-        radius: 0.18,
-        fill: fixed ? "rgba(22, 163, 74, 0.18)" : "rgba(147, 51, 234, 0.2)",
-        stroke: fixed ? "#16a34a" : "#9333ea",
-        label: fixed ? "fixed-initial-drc" : "initial-drc",
-      },
-    ]
-  })
-}
-
-const routesToGraphics = (
-  srj: SimpleRouteJson,
-  routes: HighDensityRoute[],
-  drcIssueCircles: NonNullable<GraphicsObject["circles"]> = [],
-): GraphicsObject => {
-  const boardOutlineGraphics = getBoardOutlineGraphics(srj)
-
-  return {
-    coordinateSystem: "cartesian",
-    title: "Global DRC Force Improve Solver visualization",
-    rects: [
-      ...(boardOutlineGraphics.rects ?? []),
-      ...srj.obstacles.map((obstacle) => ({
-        center: obstacle.center,
-        width: obstacle.width,
-        height: obstacle.height,
-        ccwRotationDegrees: obstacle.ccwRotationDegrees,
-        fill:
-          obstacle.connectedTo.length > 0 ? "rgba(2, 132, 199, 0.22)" : "#eee",
-        stroke: "#334155",
-        label: obstacle.connectedTo[0],
-      })),
-    ],
-    polygons: boardOutlineGraphics.polygons,
-    lines: routes.flatMap((route) =>
-      route.route.slice(1).map((point, index) => {
-        const previousPoint = route.route[index]
-        if (!previousPoint) {
-          return {
-            points: [
-              { x: point.x, y: point.y },
-              { x: point.x, y: point.y },
-            ],
-            strokeColor: layerColor(point.z),
-            strokeWidth: route.traceThickness,
-            label: route.connectionName,
-          }
-        }
-        return {
-          points: [
-            { x: previousPoint.x, y: previousPoint.y },
-            { x: point.x, y: point.y },
-          ],
-          strokeColor: layerColor(point.z),
-          strokeWidth: route.traceThickness,
-          label: route.connectionName,
-        }
-      }),
-    ),
-    circles: [
-      ...routes.flatMap((route) =>
-        route.vias.map((via) => ({
-          center: via,
-          radius: route.viaDiameter / 2,
-          fill: "rgba(15, 23, 42, 0.25)",
-          stroke: "#0f172a",
-          label: route.connectionName,
-        })),
-      ),
-      ...drcIssueCircles,
-    ],
-    points: srj.connections.flatMap((connection) =>
-      connection.pointsToConnect.map((point) => ({
-        x: point.x,
-        y: point.y,
-        color: "#dc2626",
-        label: connection.name,
-      })),
-    ),
-  }
+export const setGlobalDrcForceImproveSolverVisualizer = (
+  visualizer: GlobalDrcForceImproveSolverVisualizer,
+) => {
+  registeredVisualizer = visualizer
 }
 
 export class GlobalDrcForceImproveSolver extends BaseSolver {
@@ -223,7 +65,6 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   private drcCountPlateauChecks = 0
   private largeBoardBroadFallbackMisses = 0
   private outputSnapshot: DrcSnapshot | undefined
-  private initialVisualizationSnapshot: DrcSnapshot | undefined
 
   constructor(params: GlobalDrcForceImproveSolverParams) {
     super()
@@ -537,34 +378,8 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     return this.outputHdRoutes
   }
 
-  private getInitialVisualizationSnapshot() {
-    this.initialVisualizationSnapshot = getDrcSnapshot(
-      this.srj,
-      this.inputHdRoutes,
-      this.drcEvaluator,
-    )
-    return this.initialVisualizationSnapshot
-  }
-
-  private getCurrentVisualizationSnapshot() {
-    if (this.iterations === 0 && this.outputSnapshot === undefined) {
-      return this.getInitialVisualizationSnapshot()
-    }
-
-    return (
-      this.outputSnapshot ??
-      getDrcSnapshot(this.srj, this.outputHdRoutes, this.drcEvaluator)
-    )
-  }
-
   override visualize(): GraphicsObject {
-    const initialSnapshot = this.getInitialVisualizationSnapshot()
-    const currentSnapshot = this.getCurrentVisualizationSnapshot()
-    return routesToGraphics(
-      this.srj,
-      this.outputHdRoutes,
-      createDrcIssueCircles(initialSnapshot, currentSnapshot),
-    )
+    return registeredVisualizer?.(this) ?? super.visualize()
   }
 
   override preview(): GraphicsObject {

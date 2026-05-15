@@ -1,9 +1,13 @@
-export { GlobalDrcForceImproveSolver } from "./solvers/GlobalDrcForceImproveSolver"
+export {
+  GlobalDrcForceImproveSolver,
+  setGlobalDrcForceImproveSolverVisualizer,
+} from "./solvers/GlobalDrcForceImproveSolver"
 export type {
   ConnectionPoint,
   DrcError,
   DrcEvaluator,
   DrcSnapshot,
+  GlobalDrcForceImproveSolverVisualizer,
   GlobalDrcForceImproveSolverParams,
   HighDensityRoute,
   SimplifiedPcbTrace,
