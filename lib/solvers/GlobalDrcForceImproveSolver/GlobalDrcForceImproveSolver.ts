@@ -2,6 +2,7 @@ import { BaseSolver } from "../BaseSolver"
 import type { GraphicsObject } from "graphics-debug"
 import {
   BROAD_FALLBACK_SMALL_ROUTE_LIMIT,
+  EXTENDED_BROAD_FORCE_PASS_MULTIPLIER,
   LARGE_DRC_COUNT_THRESHOLD,
   MAX_DRC_COUNT_PLATEAU_CHECKS,
   MAX_LARGE_BOARD_BROAD_FALLBACK_MISSES,
@@ -61,6 +62,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   private errorCursor = 0
   private stalledIterations = 0
   private bestDrcIssueCountSeen: number | undefined
+  private bestDrcIssueScoreSeen: number | undefined
   private lastDrcCountImprovementCheckIteration = 0
   private drcCountPlateauChecks = 0
   private largeBoardBroadFallbackMisses = 0
@@ -104,6 +106,8 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       globalDrcForceImproveStalledIterations: this.stalledIterations,
       globalDrcForceImproveBestDrcIssueCountSeen:
         this.bestDrcIssueCountSeen ?? snapshot.count,
+      globalDrcForceImproveBestDrcIssueScoreSeen:
+        this.bestDrcIssueScoreSeen ?? snapshot.issueScore,
       globalDrcForceImproveDrcCountPlateauChecks: this.drcCountPlateauChecks,
       globalDrcForceImproveLargeBoardBroadFallbackMisses:
         this.largeBoardBroadFallbackMisses,
@@ -149,6 +153,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
 
   private updateDrcCountPlateauState(snapshot: DrcSnapshot) {
     this.bestDrcIssueCountSeen ??= snapshot.count
+    this.bestDrcIssueScoreSeen ??= snapshot.issueScore
     const initialDrcIssueCount = this.initialDrcIssueCount ?? snapshot.count
     const isLargeRouteBoard =
       this.inputHdRoutes.length > BROAD_FALLBACK_SMALL_ROUTE_LIMIT &&
@@ -160,8 +165,13 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         needsLargeBoardBroadFallbackWindow) &&
       this.iterations < MIN_ITERATIONS_FOR_LARGE_BOARD_BROAD_FALLBACK
     ) {
-      if (snapshot.count < this.bestDrcIssueCountSeen) {
+      if (
+        snapshot.count < this.bestDrcIssueCountSeen ||
+        (snapshot.count === this.bestDrcIssueCountSeen &&
+          snapshot.issueScore < this.bestDrcIssueScoreSeen)
+      ) {
         this.bestDrcIssueCountSeen = snapshot.count
+        this.bestDrcIssueScoreSeen = snapshot.issueScore
       }
       if (
         isLargeRouteBoard &&
@@ -184,8 +194,13 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     }
 
     this.lastDrcCountImprovementCheckIteration = this.iterations
-    if (snapshot.count < this.bestDrcIssueCountSeen) {
+    if (
+      snapshot.count < this.bestDrcIssueCountSeen ||
+      (snapshot.count === this.bestDrcIssueCountSeen &&
+        snapshot.issueScore < this.bestDrcIssueScoreSeen)
+    ) {
       this.bestDrcIssueCountSeen = snapshot.count
+      this.bestDrcIssueScoreSeen = snapshot.issueScore
       this.drcCountPlateauChecks = 0
       return
     }
@@ -204,6 +219,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     if (this.initialDrcIssueCount === undefined) {
       this.initialDrcIssueCount = bestSnapshot.count
       this.bestDrcIssueCountSeen = bestSnapshot.count
+      this.bestDrcIssueScoreSeen = bestSnapshot.issueScore
       this.increaseMaxIterationsForDrcIssueCount(bestSnapshot.count)
     }
 
@@ -313,12 +329,14 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     ) {
       attemptedPeriodicLargeBoardBroadFallback =
         shouldTryPeriodicLargeBoardBroadFallback
-      const broadCandidateRoutes = applyBroadRepulsionForces(
-        this.srj,
-        bestRoutes,
-        this.effort,
-      )
-      if (broadCandidateRoutes !== bestRoutes) {
+      for (const passMultiplier of [1, EXTENDED_BROAD_FORCE_PASS_MULTIPLIER]) {
+        const broadCandidateRoutes = applyBroadRepulsionForces(
+          this.srj,
+          bestRoutes,
+          this.effort,
+          passMultiplier,
+        )
+        if (broadCandidateRoutes === bestRoutes) continue
         const broadCandidateSnapshot = getDrcSnapshot(
           this.srj,
           broadCandidateRoutes,
@@ -328,7 +346,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           broadCandidateSnapshot,
         )
         if (
-          isBetterDrcSnapshot(
+          !isBetterDrcSnapshot(
             broadCandidateSnapshot,
             broadCandidateViaIssueCount,
             bestIssueCount,
@@ -336,17 +354,19 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
             bestViaIssueCount,
           )
         ) {
-          bestRoutes = broadCandidateRoutes
-          bestSnapshot = broadCandidateSnapshot
-          bestIssueCount = broadCandidateSnapshot.count
-          bestIssueScore = broadCandidateSnapshot.issueScore
-          bestViaIssueCount = broadCandidateViaIssueCount
-          this.broadForceAccepted = true
-          acceptedCandidate = true
-          if (broadCandidateSnapshot.count === 0) {
-            this.acceptSolvedRoutes(bestRoutes, bestSnapshot)
-            return
-          }
+          continue
+        }
+
+        bestRoutes = broadCandidateRoutes
+        bestSnapshot = broadCandidateSnapshot
+        bestIssueCount = broadCandidateSnapshot.count
+        bestIssueScore = broadCandidateSnapshot.issueScore
+        bestViaIssueCount = broadCandidateViaIssueCount
+        this.broadForceAccepted = true
+        acceptedCandidate = true
+        if (broadCandidateSnapshot.count === 0) {
+          this.acceptSolvedRoutes(bestRoutes, bestSnapshot)
+          return
         }
       }
     }

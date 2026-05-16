@@ -19,9 +19,10 @@ const RELAXATION_ITERATIONS = 160
 const RELAXATION_PASSES = 4
 const MAX_NUDGE_DISTANCE = 0.5
 const CANDIDATE_SCALES = [1, 0.5, 0.25, 0.1, 0.05, 0.025] as const
+const DEFAULT_TRACE_CLEARANCE = 0.1
 
 type Point2D = { x: number; y: number }
-type Point3D = Point2D & { z: number }
+type Point3D = Point2D & { z: number; pcb_port_id?: string }
 
 type ClearanceBlocker =
   | {
@@ -40,6 +41,9 @@ type ClearanceBlocker =
 
 const getTraceHalfWidth = (srj: SimpleRouteJson, route: HighDensityRoute) =>
   (route.traceThickness ?? srj.minTraceWidth) / 2
+
+const getTraceClearance = (srj: SimpleRouteJson) =>
+  srj.minTraceToPadEdgeClearance ?? DEFAULT_TRACE_CLEARANCE
 
 const getRouteViaDiameter = (srj: SimpleRouteJson, route: HighDensityRoute) =>
   route.viaDiameter ?? srj.minViaDiameter ?? 0.3
@@ -118,6 +122,28 @@ const isSameNetObstacle = (
   obstacleSharesNet(getRootConnectionName(route), obstacle) ||
   obstacleSharesNet(route.connectionName, obstacle)
 
+const pointIsInsideObstacle = (
+  point: Point3D,
+  obstacle: SimpleRouteJson["obstacles"][number],
+) =>
+  point.x >= obstacle.center.x - obstacle.width / 2 - CLEARANCE_EPSILON &&
+  point.x <= obstacle.center.x + obstacle.width / 2 + CLEARANCE_EPSILON &&
+  point.y >= obstacle.center.y - obstacle.height / 2 - CLEARANCE_EPSILON &&
+  point.y <= obstacle.center.y + obstacle.height / 2 + CLEARANCE_EPSILON
+
+const endpointCanSlideWithinSameNetCopper = (
+  srj: SimpleRouteJson,
+  route: HighDensityRoute,
+  point: Point3D,
+) =>
+  !point.pcb_port_id &&
+  srj.obstacles.some(
+    (obstacle) =>
+      isSameNetObstacle(route, obstacle) &&
+      getObstacleZLayers(obstacle, srj.layerCount).includes(point.z) &&
+      pointIsInsideObstacle(point, obstacle),
+  )
+
 const getClearanceBlockersForRoute = (
   srj: SimpleRouteJson,
   routes: HighDensityRoute[],
@@ -166,15 +192,13 @@ const getSignedClearanceToBlocker = (
   if (blocker.kind === "pad") {
     return (
       segmentToBoxMinDistance(start, end, blocker.obstacle) -
-      (srj.minTraceToPadEdgeClearance! +
-        traceHalfWidth +
-        RELAXATION_CLEARANCE_SLACK)
+      (getTraceClearance(srj) + traceHalfWidth + RELAXATION_CLEARANCE_SLACK)
     )
   }
 
   return (
     pointToSegmentDistance(blocker.center, start, end) -
-    (srj.minTraceToPadEdgeClearance! +
+    (getTraceClearance(srj) +
       traceHalfWidth +
       blocker.diameter / 2 +
       RELAXATION_CLEARANCE_SLACK)
@@ -219,8 +243,15 @@ const getPushDirectionForBlocker = (
   return direction
 }
 
-const isFixedRoutePoint = (route: HighDensityRoute, pointIndex: number) => {
-  if (pointIndex <= 0 || pointIndex >= route.route.length - 1) return true
+const isFixedRoutePoint = (
+  srj: SimpleRouteJson,
+  route: HighDensityRoute,
+  pointIndex: number,
+) => {
+  if (pointIndex <= 0 || pointIndex >= route.route.length - 1) {
+    const point = route.route[pointIndex]
+    return !point || !endpointCanSlideWithinSameNetCopper(srj, route, point)
+  }
 
   const point = route.route[pointIndex]
   if (!point || point.insideJumperPad) return true
@@ -311,9 +342,7 @@ const getRouteOtherTraceClearancePenalty = (
           getTraceHalfWidth(srj, route) -
           getTraceHalfWidth(srj, otherRoute)
         const violation =
-          srj.minTraceToPadEdgeClearance! +
-          RELAXATION_CLEARANCE_SLACK -
-          clearance
+          getTraceClearance(srj) + RELAXATION_CLEARANCE_SLACK - clearance
         if (violation > 0) penalty += violation * violation
       }
 
@@ -323,9 +352,7 @@ const getRouteOtherTraceClearancePenalty = (
           getTraceHalfWidth(srj, route) -
           getRouteViaDiameter(srj, otherRoute) / 2
         const violation =
-          srj.minTraceToPadEdgeClearance! +
-          RELAXATION_CLEARANCE_SLACK -
-          clearance
+          getTraceClearance(srj) + RELAXATION_CLEARANCE_SLACK - clearance
         if (violation > 0) penalty += violation * violation
       }
     }
@@ -365,8 +392,8 @@ const computeNudgeForces = (
         continue
       }
 
-      const startMovable = !isFixedRoutePoint(route, i)
-      const endMovable = !isFixedRoutePoint(route, i + 1)
+      const startMovable = !isFixedRoutePoint(srj, route, i)
+      const endMovable = !isFixedRoutePoint(srj, route, i + 1)
       if (!startMovable && !endMovable) continue
 
       const violation = -signedClearance
@@ -425,8 +452,8 @@ const computeNudgeForces = (
           direction = normalizeVector({ x: -dy, y: dx })
         }
 
-        const startMovable = !isFixedRoutePoint(route, i)
-        const endMovable = !isFixedRoutePoint(route, i + 1)
+        const startMovable = !isFixedRoutePoint(srj, route, i)
+        const endMovable = !isFixedRoutePoint(srj, route, i + 1)
         if (!startMovable && !endMovable) continue
 
         const startWeight =
@@ -445,13 +472,14 @@ const computeNudgeForces = (
 }
 
 const applyNudgeForces = (
+  srj: SimpleRouteJson,
   route: HighDensityRoute,
   forces: Point2D[],
   scale: number,
 ): HighDensityRoute => ({
   ...route,
   route: route.route.map((point, pointIndex) => {
-    if (isFixedRoutePoint(route, pointIndex)) return { ...point }
+    if (isFixedRoutePoint(srj, route, pointIndex)) return { ...point }
     const force = limitVector(
       forces[pointIndex] ?? { x: 0, y: 0 },
       MAX_NUDGE_DISTANCE,
@@ -506,7 +534,7 @@ const nudgeRoute = (
     let acceptedPenalty = currentPenalty
 
     for (const scale of CANDIDATE_SCALES) {
-      const candidate = applyNudgeForces(nudgedRoute, forces, scale)
+      const candidate = applyNudgeForces(srj, nudgedRoute, forces, scale)
       const candidatePenalty =
         getRouteClearancePenalty(srj, candidate, blockers) +
         getRouteOtherTraceClearancePenalty(srj, candidate, otherRoutes)

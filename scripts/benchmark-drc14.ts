@@ -450,26 +450,34 @@ const logSamplesWithRemainingDrc = (report: BenchmarkReport) => {
 
   console.log("")
   if (remainingDrcSamples.length === 0) {
-    console.log("Samples with remaining DRC errors: none")
+    console.log("Samples with remaining DRC: none")
     return
   }
 
+  const headers = [
+    "Sample",
+    "ID",
+    "Initial DRC",
+    "Final DRC",
+    "Iterations",
+    "Time",
+  ]
   const rows = remainingDrcSamples.map((result) => [
     String(result.sampleNumber),
     result.sampleId,
-    `${result.initialDrcCount}->${result.finalDrcCount}`,
+    String(result.initialDrcCount),
+    String(result.finalDrcCount),
     String(result.iterations),
     formatMs(result.elapsedMs),
   ])
-  const headers = ["Sample", "ID", "DRC", "Iterations", "Time"]
-  const widths = headers.map((header, columnIndex) =>
-    Math.max(header.length, ...rows.map((row) => row[columnIndex].length)),
+  const widths = headers.map((header, index) =>
+    Math.max(header.length, ...rows.map((row) => row[index].length)),
   )
   const horizontal = `+${widths.map((width) => "-".repeat(width + 2)).join("+")}+`
   const renderRow = (row: string[]) =>
-    `| ${row.map((value, columnIndex) => value.padEnd(widths[columnIndex])).join(" | ")} |`
+    `| ${row.map((value, index) => value.padEnd(widths[index])).join(" | ")} |`
 
-  console.log("Samples with remaining DRC errors")
+  console.log("Samples with remaining DRC")
   console.log(horizontal)
   console.log(renderRow(headers))
   console.log(horizontal)
