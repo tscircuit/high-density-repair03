@@ -443,6 +443,42 @@ const logSummary = (report: BenchmarkReport) => {
   console.log(horizontal)
 }
 
+const logSamplesWithRemainingDrc = (report: BenchmarkReport) => {
+  const remainingDrcSamples = report.sampleResults
+    .map((result, index) => ({ ...result, sampleNumber: index + 1 }))
+    .filter((result) => !result.error && result.finalDrcCount > 0)
+
+  console.log("")
+  if (remainingDrcSamples.length === 0) {
+    console.log("Samples with remaining DRC errors: none")
+    return
+  }
+
+  const rows = remainingDrcSamples.map((result) => [
+    String(result.sampleNumber),
+    result.sampleId,
+    `${result.initialDrcCount}->${result.finalDrcCount}`,
+    String(result.iterations),
+    formatMs(result.elapsedMs),
+  ])
+  const headers = ["Sample", "ID", "DRC", "Iterations", "Time"]
+  const widths = headers.map((header, columnIndex) =>
+    Math.max(header.length, ...rows.map((row) => row[columnIndex].length)),
+  )
+  const horizontal = `+${widths.map((width) => "-".repeat(width + 2)).join("+")}+`
+  const renderRow = (row: string[]) =>
+    `| ${row.map((value, columnIndex) => value.padEnd(widths[columnIndex])).join(" | ")} |`
+
+  console.log("Samples with remaining DRC errors")
+  console.log(horizontal)
+  console.log(renderRow(headers))
+  console.log(horizontal)
+  for (const row of rows) {
+    console.log(renderRow(row))
+  }
+  console.log(horizontal)
+}
+
 const logSampleResult = (
   result: SampleResult,
   sampleNumber: number,
@@ -632,6 +668,7 @@ export const runBenchmark = async (args: string[] = Bun.argv.slice(2)) => {
   })
 
   logSummary(report)
+  logSamplesWithRemainingDrc(report)
 
   if (shouldWriteOutput) {
     writeFileSync(outputPath, `${JSON.stringify(report, null, 2)}\n`)
