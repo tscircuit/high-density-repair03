@@ -41,6 +41,7 @@ export type HighDensityIntraNodeRoute = {
     z: number
     pcb_port_id?: string
     insideJumperPad?: boolean
+    toNextSegmentType?: "through_obstacle"
   }>
   vias: Array<{ x: number; y: number }>
   jumpers?: Jumper[]

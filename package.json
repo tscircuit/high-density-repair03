@@ -13,11 +13,11 @@
     "build:site": "cosmos-export",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
-    "format": "biome format --write .",
-    "formatcheck": "biome format ."
+    "format": "biome format --write --config-path=biome.json package.json README.md benchmark.sh index.html cosmos.config.json vite.config.ts tsconfig.json biome.json lib fixtures fixture-support scripts tests types utils",
+    "formatcheck": "biome format --config-path=biome.json package.json README.md benchmark.sh index.html cosmos.config.json vite.config.ts tsconfig.json biome.json lib fixtures fixture-support scripts tests types utils"
   },
   "dependencies": {
-    "@tscircuit/checks": "^0.0.123",
+    "@tscircuit/checks": "^0.0.126",
     "@tscircuit/circuit-json-util": "^0.0.94",
     "@tscircuit/math-utils": "^0.0.36",
     "circuit-json": "^0.0.422",
