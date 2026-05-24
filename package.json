@@ -20,10 +20,12 @@
     "@tscircuit/checks": "^0.0.126",
     "@tscircuit/circuit-json-util": "^0.0.94",
     "@tscircuit/math-utils": "^0.0.36",
-    "circuit-json": "^0.0.422",
     "graphics-debug": "^0.0.93",
     "react": "^19.2.5",
     "react-dom": "^19.2.5"
+  },
+  "peerDependencies": {
+    "circuit-json": "*"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.13",
@@ -32,6 +34,7 @@
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.1",
+    "circuit-json": "^0.0.422",
     "dataset-drc14": "github:tscircuit/dataset-14#6582f636ca61c7fc8bb237cbcd6195076b9b7628",
     "react-cosmos": "^7.3.0",
     "react-cosmos-plugin-vite": "^7.3.0",

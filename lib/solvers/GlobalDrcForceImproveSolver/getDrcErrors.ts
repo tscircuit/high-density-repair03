@@ -5,17 +5,15 @@ import {
 } from "@tscircuit/checks"
 import type { Point } from "graphics-debug"
 
-type CircuitJson = Parameters<typeof checkEachPcbTraceNonOverlapping>[0]
-type CircuitJsonElement = CircuitJson[number]
+type CircuitJsonElement = Record<string, unknown> & { type?: string }
+type CircuitJson = CircuitJsonElement[]
 
-type TraceError = ReturnType<typeof checkEachPcbTraceNonOverlapping>[number]
-type SameNetViaError = ReturnType<typeof checkSameNetViaSpacing>[number]
-type DifferentNetViaError = ReturnType<
-  typeof checkDifferentNetViaSpacing
->[number]
-type ViaError = SameNetViaError | DifferentNetViaError
-
-type DrcError = TraceError | ViaError
+type DrcError = Record<string, unknown> & {
+  center?: Point
+  pcb_center?: Point
+  pcb_error_id?: string
+  pcb_via_ids?: unknown
+}
 
 type DrcErrorWithCenter = DrcError & { center?: Point }
 
@@ -39,21 +37,28 @@ export const getDrcErrors = (
   circuitJson: CircuitJson,
   options: GetDrcErrorsOptions = {},
 ): GetDrcErrorsResult => {
+  // @tscircuit/checks is typed against the consumer's circuit-json package.
+  // Keep this package's public helper structurally typed and cast only at the
+  // package boundary to avoid leaking a second circuit-json union identity into
+  // downstream source builds.
+  const checksCircuitJson = circuitJson as unknown as Parameters<
+    typeof checkEachPcbTraceNonOverlapping
+  >[0]
   const viaClearance = Math.max(
     options.viaClearance ?? MIN_VIA_TO_VIA_CLEARANCE,
     MIN_VIA_TO_VIA_CLEARANCE,
   )
-  const traceErrors = checkEachPcbTraceNonOverlapping(circuitJson, {
+  const traceErrors = checkEachPcbTraceNonOverlapping(checksCircuitJson, {
     minClearance: options.traceClearance,
-  })
+  }) as unknown as DrcError[]
   const viaErrors = [
-    ...checkSameNetViaSpacing(circuitJson, {
+    ...checkSameNetViaSpacing(checksCircuitJson, {
       minClearance: viaClearance,
     }),
-    ...checkDifferentNetViaSpacing(circuitJson, {
+    ...checkDifferentNetViaSpacing(checksCircuitJson, {
       minClearance: viaClearance,
     }),
-  ]
+  ] as unknown as DrcError[]
 
   const errors: DrcError[] = [...traceErrors, ...viaErrors]
 
