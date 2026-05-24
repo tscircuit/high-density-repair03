@@ -1,11 +1,28 @@
 // @ts-nocheck
-import type { AnyCircuitElement, PcbTrace, PcbVia } from "circuit-json"
 import type { Obstacle, SimpleRouteJson, SimplifiedPcbTrace } from "../types"
 import type { HighDensityRoute } from "../types/high-density-types"
 import { getConnectionPointLayers } from "../types/srj-types"
 import { mapZToLayerName } from "./mapZToLayerName"
 import type { LayerName } from "./mapZToLayerName"
 import { pointToBoxDistance } from "@tscircuit/math-utils"
+
+type AnyCircuitElement = Record<string, unknown> & { type: string }
+type PcbTrace = AnyCircuitElement & {
+  type: "pcb_trace"
+  pcb_trace_id: string
+  source_trace_id: string
+  route: Array<Record<string, unknown>>
+}
+type PcbVia = AnyCircuitElement & {
+  type: "pcb_via"
+  pcb_via_id: string
+  pcb_trace_id: string
+  x: number
+  y: number
+  outer_diameter: number
+  hole_diameter: number
+  layers: LayerName[]
+}
 
 /**
  * Convert a simplified PCB trace from the autorouter to a circuit-json compatible PCB trace

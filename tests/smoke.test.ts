@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { GlobalDrcForceImproveSolver } from "../lib"
 import { getDrcSnapshot } from "../lib/solvers/GlobalDrcForceImproveSolver/drc-snapshot"
-import type { SimpleRouteJson } from "../lib"
+import type { HighDensityRoute, SimpleRouteJson } from "../lib"
 
 test("solves in a single step", () => {
   const solver = new GlobalDrcForceImproveSolver({
@@ -35,7 +35,7 @@ test("improves routes when a DRC evaluator reports conflicts", () => {
     minTraceWidth: 0.1,
     minViaDiameter: 0.3,
   }
-  const hdRoutes = [
+  const hdRoutes: HighDensityRoute[] = [
     {
       connectionName: "A",
       route: [
@@ -99,4 +99,47 @@ test("improves routes when a DRC evaluator reports conflicts", () => {
   const outputDrc = getDrcSnapshot(srj, output, drcEvaluator)
   expect(outputDrc.count).toBe(0)
   expect(output[0]?.route[1]?.y).not.toBe(5)
+})
+
+test("counts different-net trace-to-obstacle clearance as DRC errors", () => {
+  const srj: SimpleRouteJson = {
+    bounds: { minX: -2, minY: -2, maxX: 6, maxY: 6 },
+    connections: [{ name: "A", pointsToConnect: [] }],
+    obstacles: [
+      {
+        type: "rect",
+        center: { x: 1, y: 1 },
+        width: 2,
+        height: 2,
+        layers: ["top", "bottom"],
+        connectedTo: ["pcb_plated_hole_1", "B"],
+      },
+    ],
+    layerCount: 2,
+    minTraceWidth: 0.1,
+    minViaDiameter: 0.3,
+    minTraceToPadEdgeClearance: 0.1,
+  }
+  const hdRoutes: HighDensityRoute[] = [
+    {
+      connectionName: "A",
+      route: [
+        { x: 1.8, y: 0.5, z: 0 },
+        { x: 2.4, y: 0.5, z: 0 },
+        { x: 2.4, y: 1.5, z: 0 },
+      ],
+      vias: [],
+      traceThickness: 0.1,
+      viaDiameter: 0.3,
+    },
+  ]
+
+  const drc = getDrcSnapshot(srj, hdRoutes)
+
+  expect(drc.count).toBe(1)
+  expect(drc.errors[0]).toMatchObject({
+    pcb_error_id: "trace_obstacle_clearance_0:pcb_plated_hole_1:0",
+    pcb_trace_id: "A_0",
+    center: { x: 2.1, y: 0.5 },
+  })
 })

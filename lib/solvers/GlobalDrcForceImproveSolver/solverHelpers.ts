@@ -73,9 +73,11 @@ const createSimplifiedTraces = (
 ): {
   traces: SimplifiedPcbTraces
   traceRouteIndexById: Map<string, number>
+  traceIdByRouteIndex: Map<number, string>
 } => {
   const traces: SimplifiedPcbTraces = []
   const traceRouteIndexById = new Map<string, number>()
+  const traceIdByRouteIndex = new Map<number, string>()
 
   for (const connection of srj.connections) {
     const hdRoutes = routes
@@ -109,10 +111,201 @@ const createSimplifiedTraces = (
         ),
       })
       traceRouteIndexById.set(traceId, hdRoute.routeIndex)
+      traceIdByRouteIndex.set(hdRoute.routeIndex, traceId)
     }
   }
 
-  return { traces, traceRouteIndexById }
+  return { traces, traceRouteIndexById, traceIdByRouteIndex }
+}
+
+const getObstacleStableId = (obstacle: SimpleRouteJson["obstacles"][number]) =>
+  obstacle.connectedTo.find(
+    (id) =>
+      id.startsWith("pcb_plated_hole_") ||
+      id.startsWith("pcb_smtpad_") ||
+      id.startsWith("pcb_hole_"),
+  ) ??
+  `obstacle_${obstacle.center.x.toFixed(3)}_${obstacle.center.y.toFixed(3)}`
+
+const getLayerNameForZ = (z: number, layerCount: number) =>
+  mapZToLayerName(z, layerCount)
+
+const obstacleAppliesToZ = (
+  obstacle: SimpleRouteJson["obstacles"][number],
+  z: number,
+  layerCount: number,
+) =>
+  obstacle.zLayers?.includes(z) ||
+  obstacle.layers.includes(getLayerNameForZ(z, layerCount)) ||
+  obstacle.layers.length === 0
+
+const orientation = (a: Point, b: Point, c: Point) =>
+  (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
+
+const pointOnSegment = (point: Point, start: Point, end: Point) =>
+  point.x >= Math.min(start.x, end.x) - COORDINATE_EPSILON &&
+  point.x <= Math.max(start.x, end.x) + COORDINATE_EPSILON &&
+  point.y >= Math.min(start.y, end.y) - COORDINATE_EPSILON &&
+  point.y <= Math.max(start.y, end.y) + COORDINATE_EPSILON
+
+const segmentsIntersect = (
+  startA: Point,
+  endA: Point,
+  startB: Point,
+  endB: Point,
+) => {
+  const o1 = orientation(startA, endA, startB)
+  const o2 = orientation(startA, endA, endB)
+  const o3 = orientation(startB, endB, startA)
+  const o4 = orientation(startB, endB, endA)
+
+  if (
+    Math.abs(o1) <= COORDINATE_EPSILON &&
+    pointOnSegment(startB, startA, endA)
+  )
+    return true
+  if (Math.abs(o2) <= COORDINATE_EPSILON && pointOnSegment(endB, startA, endA))
+    return true
+  if (
+    Math.abs(o3) <= COORDINATE_EPSILON &&
+    pointOnSegment(startA, startB, endB)
+  )
+    return true
+  if (Math.abs(o4) <= COORDINATE_EPSILON && pointOnSegment(endA, startB, endB))
+    return true
+
+  return o1 > 0 !== o2 > 0 && o3 > 0 !== o4 > 0
+}
+
+const getPointToSegmentDistance = (point: Point, start: Point, end: Point) =>
+  pointToSegmentDistance(point, start, end)
+
+const getSegmentToRectDistance = (
+  start: Point,
+  end: Point,
+  obstacle: SimpleRouteJson["obstacles"][number],
+) => {
+  const halfWidth = obstacle.width / 2
+  const halfHeight = obstacle.height / 2
+  const minX = obstacle.center.x - halfWidth
+  const maxX = obstacle.center.x + halfWidth
+  const minY = obstacle.center.y - halfHeight
+  const maxY = obstacle.center.y + halfHeight
+  const pointInsideRect = (point: Point) =>
+    point.x >= minX && point.x <= maxX && point.y >= minY && point.y <= maxY
+
+  if (pointInsideRect(start) || pointInsideRect(end)) return 0
+
+  const corners: Point[] = [
+    { x: minX, y: minY },
+    { x: maxX, y: minY },
+    { x: maxX, y: maxY },
+    { x: minX, y: maxY },
+  ]
+  const edges: Array<[Point, Point]> = [
+    [corners[0]!, corners[1]!],
+    [corners[1]!, corners[2]!],
+    [corners[2]!, corners[3]!],
+    [corners[3]!, corners[0]!],
+  ]
+
+  if (
+    edges.some(([edgeStart, edgeEnd]) =>
+      segmentsIntersect(start, end, edgeStart, edgeEnd),
+    )
+  ) {
+    return 0
+  }
+
+  return Math.min(
+    ...edges.flatMap(([edgeStart, edgeEnd]) => [
+      getPointToSegmentDistance(start, edgeStart, edgeEnd),
+      getPointToSegmentDistance(end, edgeStart, edgeEnd),
+      getPointToSegmentDistance(edgeStart, start, end),
+      getPointToSegmentDistance(edgeEnd, start, end),
+    ]),
+  )
+}
+
+const getTraceObstacleDrcErrors = (
+  srj: SimpleRouteJson,
+  routes: HighDensityRoute[],
+  traceIdByRouteIndex: Map<number, string>,
+): Array<Record<string, unknown>> => {
+  const errorGroups = new Map<
+    string,
+    {
+      route: HighDensityRoute
+      obstacleId: string
+      traceId: string | undefined
+      sumX: number
+      sumY: number
+      count: number
+      minGap: number
+      requiredClearance: number
+    }
+  >()
+  const requiredClearance =
+    srj.minTraceToPadEdgeClearance ?? RELAXED_DRC_OPTIONS.traceClearance ?? 0.1
+
+  routes.forEach((route, routeIndex) => {
+    for (
+      let pointIndex = 0;
+      pointIndex < route.route.length - 1;
+      pointIndex++
+    ) {
+      const start = route.route[pointIndex]
+      const end = route.route[pointIndex + 1]
+      if (!start || !end || start.z !== end.z) continue
+
+      for (const obstacle of srj.obstacles) {
+        if (!obstacleAppliesToZ(obstacle, start.z, srj.layerCount)) continue
+        if (obstacleSharesNet(getRootConnectionName(route), obstacle)) continue
+
+        const traceRadius =
+          (route.traceThickness ?? srj.minTraceWidth ?? 0.1) / 2
+        const gap = getSegmentToRectDistance(start, end, obstacle) - traceRadius
+        if (gap >= requiredClearance) continue
+
+        const obstacleId = getObstacleStableId(obstacle)
+        const key = `${routeIndex}:${obstacleId}:${start.z}`
+        const segmentCenter = {
+          x: (start.x + end.x) / 2,
+          y: (start.y + end.y) / 2,
+        }
+        const traceId = traceIdByRouteIndex.get(routeIndex)
+        const group = errorGroups.get(key)
+
+        if (group) {
+          group.sumX += segmentCenter.x
+          group.sumY += segmentCenter.y
+          group.count += 1
+          group.minGap = Math.min(group.minGap, gap)
+        } else {
+          errorGroups.set(key, {
+            route,
+            obstacleId,
+            traceId,
+            sumX: segmentCenter.x,
+            sumY: segmentCenter.y,
+            count: 1,
+            minGap: gap,
+            requiredClearance,
+          })
+        }
+      }
+    }
+  })
+
+  return Array.from(errorGroups.entries()).map(([key, group]) => ({
+    pcb_error_id: `trace_obstacle_clearance_${key}`,
+    pcb_trace_id: group.traceId,
+    message: `pcb_trace ${group.traceId ?? group.route.connectionName} is too close to obstacle ${group.obstacleId} (gap: ${group.minGap.toFixed(3)}mm required: ${group.requiredClearance.toFixed(3)}mm)`,
+    center: {
+      x: group.sumX / group.count,
+      y: group.sumY / group.count,
+    },
+  }))
 }
 
 const getDrcErrorSeverity = (error: Record<string, unknown>) => {
@@ -146,7 +339,13 @@ export const getDrcSnapshot = (
   routes: HighDensityRoute[],
   drcEvaluator?: DrcEvaluator,
 ): DrcSnapshot => {
-  const { traces, traceRouteIndexById } = createSimplifiedTraces(srj, routes)
+  const { traces, traceRouteIndexById, traceIdByRouteIndex } =
+    createSimplifiedTraces(srj, routes)
+  const traceObstacleErrors = getTraceObstacleDrcErrors(
+    srj,
+    routes,
+    traceIdByRouteIndex,
+  )
   const drcResult = drcEvaluator?.({
     srj,
     routes,
@@ -154,15 +353,24 @@ export const getDrcSnapshot = (
   })
 
   if (drcResult) {
-    const errors = Array.isArray(drcResult) ? drcResult : drcResult.errors
-    const errorsWithCenters = Array.isArray(drcResult)
+    const evaluatedErrors = Array.isArray(drcResult)
+      ? drcResult
+      : drcResult.errors
+    const errors = [...evaluatedErrors, ...traceObstacleErrors] as Array<
+      Record<string, unknown>
+    >
+    const evaluatedErrorsWithCenters = Array.isArray(drcResult)
       ? drcResult
       : (drcResult.errorsWithCenters ?? drcResult.errors)
+    const errorsWithCenters = [
+      ...evaluatedErrorsWithCenters,
+      ...traceObstacleErrors,
+    ] as Array<Record<string, unknown>>
 
     return {
-      errors: errors as Array<Record<string, unknown>>,
+      errors,
       count: errors.length,
-      issueScore: getDrcIssueScore(errors as Array<Record<string, unknown>>),
+      issueScore: getDrcIssueScore(errorsWithCenters),
       traceRouteIndexById,
     }
   }
@@ -179,16 +387,19 @@ export const getDrcSnapshot = (
   )
 
   return {
-    errors:
-      drc.errorsWithCenters.length > 0
+    errors: [
+      ...(drc.errorsWithCenters.length > 0
         ? (drc.errorsWithCenters as unknown as Array<Record<string, unknown>>)
-        : (drc.errors as unknown as Array<Record<string, unknown>>),
-    count: drc.errors.length,
-    issueScore: getDrcIssueScore(
-      (drc.errorsWithCenters.length > 0
+        : (drc.errors as unknown as Array<Record<string, unknown>>)),
+      ...traceObstacleErrors,
+    ],
+    count: drc.errors.length + traceObstacleErrors.length,
+    issueScore: getDrcIssueScore([
+      ...(drc.errorsWithCenters.length > 0
         ? drc.errorsWithCenters
-        : drc.errors) as unknown as Array<Record<string, unknown>>,
-    ),
+        : drc.errors),
+      ...traceObstacleErrors,
+    ] as unknown as Array<Record<string, unknown>>),
     traceRouteIndexById,
   }
 }

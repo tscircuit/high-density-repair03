@@ -1,6 +1,7 @@
 {
   "$schema": "http://json.schemastore.org/cosmos-config",
   "plugins": ["react-cosmos-plugin-vite"],
+  "ignore": ["tscircuit-autorouter/**"],
   "vite": {
     "configPath": "./vite.config.ts"
   }
