@@ -2212,8 +2212,13 @@ const pushViaViaPair = (
   left: ViaNode,
   right: ViaNode,
   srj: SimpleRouteJson,
+  connMap?: ConnectivityMap,
   maxMove = BROAD_MAX_MOVE,
 ) => {
+  if (sharesNet(left.rootConnectionName, right.rootConnectionName, connMap)) {
+    return false
+  }
+
   const requiredDistance =
     left.radius +
     right.radius +
@@ -2601,7 +2606,7 @@ const applyBroadRepulsionPass = (
       if (rightIndex <= leftIndex) continue
       const right = vias[rightIndex]
       if (!right) continue
-      changed = pushViaViaPair(routes, left, right, srj) || changed
+      changed = pushViaViaPair(routes, left, right, srj, connMap) || changed
     }
   }
 
@@ -2779,6 +2784,7 @@ export const applyDrcErrorForces = (
             nearestViaPair[0],
             nearestViaPair[1],
             srj,
+            connMap,
             VIA_PAIR_REPAIR_MAX_MOVE * Math.abs(scale),
           ) || changed
       } else {
