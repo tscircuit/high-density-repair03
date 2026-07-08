@@ -8,11 +8,7 @@ import {
   segmentToSegmentMinDistance,
 } from "@tscircuit/math-utils"
 import type { ConnectivityMap } from "circuit-json-to-connectivity-map"
-import {
-  getRootConnectionName,
-  obstacleSharesNet,
-  sharesNet,
-} from "./netUtils"
+import { getRootConnectionName, obstacleSharesNet, sharesNet } from "./netUtils"
 import { cloneRoutes } from "./solverHelpers"
 import type { SimpleRouteJson } from "../../types"
 import type { HighDensityRoute } from "../../types/high-density-types"
