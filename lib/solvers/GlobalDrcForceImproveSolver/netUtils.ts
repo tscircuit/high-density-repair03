@@ -1,10 +1,6 @@
+import type { ConnectivityMap as ConnectionMap } from "circuit-json-to-connectivity-map"
 import type { SimpleRouteJson } from "../../types"
 import type { HighDensityRoute } from "../../types/high-density-types"
-
-export type ConnectivityMapLike = {
-  idToNetMap?: Record<string, string | undefined>
-  getNetConnectedToId?: (id: string) => string | undefined
-}
 
 const netAliasCache = new Map<string, readonly string[]>()
 const netAliasSetCache = new Map<string, ReadonlySet<string>>()
@@ -17,20 +13,16 @@ export const getRootConnectionName = (route: HighDensityRoute) =>
   route.rootConnectionName ?? route.connectionName
 
 export const getConnMapNetId = (
-  connMap: ConnectivityMapLike | undefined,
+  connMap: ConnectionMap | undefined,
   id: string | undefined,
 ) => {
   if (!connMap || !id) return undefined
-
-  const netId = connMap.idToNetMap?.[id]
-  if (netId) return netId
-
-  return connMap.getNetConnectedToId?.(id)
+  return connMap.getNetConnectedToId(id)
 }
 
 export const getConnMapAwareSrj = (
   srj: SimpleRouteJson,
-  connMap: ConnectivityMapLike | undefined,
+  connMap: ConnectionMap | undefined,
 ): SimpleRouteJson => {
   if (!connMap) return srj
 
@@ -83,10 +75,11 @@ const getNetAliasSet = (name: string) => {
 export const sharesNet = (
   left: string,
   right: string | undefined,
-  connMap?: ConnectivityMapLike,
+  connMap?: ConnectionMap,
 ) => {
   if (!right) return false
   if (left === right) return true
+  if (connMap?.areIdsConnected(left, right)) return true
 
   const leftNetId = getConnMapNetId(connMap, left)
   const rightNetId = getConnMapNetId(connMap, right)
@@ -124,7 +117,7 @@ const getObstacleConnectedAliasSet = (
 export const obstacleSharesNet = (
   rootConnectionName: string,
   obstacle: SimpleRouteJson["obstacles"][number],
-  connMap?: ConnectivityMapLike,
+  connMap?: ConnectionMap,
 ) =>
   obstacle.connectedTo?.some((connectedTo) =>
     sharesNet(rootConnectionName, connectedTo, connMap),

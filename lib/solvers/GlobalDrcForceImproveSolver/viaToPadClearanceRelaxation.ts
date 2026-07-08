@@ -1,5 +1,6 @@
 import { distance } from "@tscircuit/math-utils"
-import { obstacleSharesNet, type ConnectivityMapLike } from "./netUtils"
+import type { ConnectivityMap as ConnectionMap } from "circuit-json-to-connectivity-map"
+import { obstacleSharesNet } from "./netUtils"
 import {
   cloneRoutes,
   collectViaNodes,
@@ -39,7 +40,7 @@ const viaIsAttachedToSameNetObstacle = (
   via: ViaNode,
   route: HighDensityRoute,
   obstacle: SimpleRouteJson["obstacles"][number],
-  connMap?: ConnectivityMapLike,
+  connMap?: ConnectionMap,
 ) => {
   const isSameNet =
     obstacleSharesNet(via.rootConnectionName, obstacle, connMap) ||
@@ -54,7 +55,7 @@ const getViaPadBlockers = (
   srj: SimpleRouteJson,
   routes: HighDensityRoute[],
   via: ViaNode,
-  connMap?: ConnectivityMapLike,
+  connMap?: ConnectionMap,
 ) => {
   const blockers: ViaPadBlocker[] = []
   const route = routes[via.routeIndex]
@@ -88,7 +89,7 @@ const getViaClearancePenalty = (
   srj: SimpleRouteJson,
   routes: HighDensityRoute[],
   via: ViaNode,
-  connMap?: ConnectivityMapLike,
+  connMap?: ConnectionMap,
 ) => {
   let penalty = 0
   for (const blocker of getViaPadBlockers(srj, routes, via, connMap)) {
@@ -110,7 +111,7 @@ const getRouteViaClearancePenalty = (
   srj: SimpleRouteJson,
   routes: HighDensityRoute[],
   routeIndex: number,
-  connMap?: ConnectivityMapLike,
+  connMap?: ConnectionMap,
 ) =>
   collectViaNodes(routes, srj.minViaDiameter)
     .filter((via) => via.routeIndex === routeIndex)
@@ -124,7 +125,7 @@ const computeViaNudgeForces = (
   srj: SimpleRouteJson,
   routes: HighDensityRoute[],
   routeIndex: number,
-  connMap?: ConnectivityMapLike,
+  connMap?: ConnectionMap,
 ) => {
   const route = routes[routeIndex]
   if (!route) return []
@@ -206,7 +207,7 @@ const nudgeRouteVias = (
   routes: HighDensityRoute[],
   route: HighDensityRoute,
   routeIndex: number,
-  connMap?: ConnectivityMapLike,
+  connMap?: ConnectionMap,
 ) => {
   let nudgedRoute = route
   let currentPenalty = getRouteViaClearancePenalty(
@@ -260,7 +261,7 @@ const nudgeRouteVias = (
 export const applyViaToPadClearanceRelaxation = (
   srj: SimpleRouteJson,
   routes: HighDensityRoute[],
-  connMap?: ConnectivityMapLike,
+  connMap?: ConnectionMap,
 ) => {
   if (
     srj.minViaEdgeToPadEdgeClearance === undefined ||

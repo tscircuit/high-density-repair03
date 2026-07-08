@@ -1,4 +1,5 @@
 import { BaseSolver } from "../BaseSolver"
+import type { ConnectivityMap as ConnectionMap } from "circuit-json-to-connectivity-map"
 import type { GraphicsObject } from "graphics-debug"
 import {
   BROAD_FALLBACK_SMALL_ROUTE_LIMIT,
@@ -32,7 +33,6 @@ import type {
   DrcSnapshot,
   GlobalDrcForceImproveSolverParams,
 } from "./types"
-import type { ConnectivityMapLike } from "./netUtils"
 import type { SimpleRouteJson } from "../../types"
 import type { HighDensityRoute } from "../../types/high-density-types"
 
@@ -51,7 +51,7 @@ export const setGlobalDrcForceImproveSolverVisualizer = (
 export class GlobalDrcForceImproveSolver extends BaseSolver {
   readonly srj: SimpleRouteJson
   readonly inputHdRoutes: HighDensityRoute[]
-  readonly connMap?: ConnectivityMapLike
+  readonly connMap?: ConnectionMap
   readonly effort: number
   readonly drcEvaluator?: DrcEvaluator
   readonly configuredMaxIterations?: number
