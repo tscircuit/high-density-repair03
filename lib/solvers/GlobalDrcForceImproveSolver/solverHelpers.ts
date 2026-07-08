@@ -2,7 +2,7 @@ import {
   pointToSegmentDistance,
   segmentToSegmentMinDistance,
 } from "@tscircuit/math-utils"
-import type { ConnectivityMap as ConnectionMap } from "circuit-json-to-connectivity-map"
+import type { ConnectivityMap } from "circuit-json-to-connectivity-map"
 import { RELAXED_DRC_OPTIONS } from "./drcPresets"
 import { PREFERRED_VIA_TO_VIA_CLEARANCE, getDrcErrors } from "./getDrcErrors"
 import { convertToCircuitJson } from "../utils/convertToCircuitJson"
@@ -151,7 +151,7 @@ export const getDrcSnapshot = (
   srj: SimpleRouteJson,
   routes: HighDensityRoute[],
   drcEvaluator?: DrcEvaluator,
-  connMap?: ConnectionMap,
+  connMap?: ConnectivityMap,
 ): DrcSnapshot => {
   const drcSrj = getConnMapAwareSrj(srj, connMap)
   const { traces, traceRouteIndexById } = createSimplifiedTraces(drcSrj, routes)
@@ -409,7 +409,7 @@ const getSameNetObstacleContainingPoint = (
   srj: SimpleRouteJson,
   route: MutableRoute,
   point: Point & { z: number },
-  connMap?: ConnectionMap,
+  connMap?: ConnectivityMap,
 ) =>
   srj.obstacles.find(
     (obstacle) =>
@@ -1086,7 +1086,7 @@ const getEndpointPointIndexesIfTranslationPreservesConnection = (
   pointIndex: number,
   dx: number,
   dy: number,
-  connMap?: ConnectionMap,
+  connMap?: ConnectivityMap,
 ) => {
   const point = route.route[pointIndex]
   if (
@@ -1122,7 +1122,7 @@ const getMovableOrConnectedEndpointPointIndexes = (
   pointIndex: number,
   dx: number,
   dy: number,
-  connMap?: ConnectionMap,
+  connMap?: ConnectivityMap,
 ) =>
   getMovableCoincidentPointIndexes(route, pointIndex) ??
   getEndpointPointIndexesIfTranslationPreservesConnection(
@@ -1140,7 +1140,7 @@ const moveSegmentByTranslation = (
   dx: number,
   dy: number,
   srj: SimpleRouteJson,
-  connMap?: ConnectionMap,
+  connMap?: ConnectivityMap,
 ) => {
   const route = routes[segment.routeIndex]
   if (!route) return false
@@ -1226,7 +1226,7 @@ const routeEndpointPreservesConnectionAfterTranslation = (
   pointIndex: number,
   dx: number,
   dy: number,
-  connMap?: ConnectionMap,
+  connMap?: ConnectivityMap,
 ) => {
   const point = route.route[pointIndex]
   if (!point) return false
@@ -1250,7 +1250,7 @@ const getEndpointConnectionObstacle = (
   srj: SimpleRouteJson,
   route: MutableRoute,
   pointIndex: number,
-  connMap?: ConnectionMap,
+  connMap?: ConnectivityMap,
 ) => {
   const point = route.route[pointIndex]
   if (!point || point.pcb_port_id) return undefined
@@ -1262,7 +1262,7 @@ const clampTranslationToEndpointConnectionObstacles = (
   route: MutableRoute,
   dx: number,
   dy: number,
-  connMap?: ConnectionMap,
+  connMap?: ConnectivityMap,
 ) => {
   let minDx = Number.NEGATIVE_INFINITY
   let maxDx = Number.POSITIVE_INFINITY
@@ -1300,7 +1300,7 @@ const moveRouteByTranslationPreservingEndpointConnections = (
   dy: number,
   srj: SimpleRouteJson,
   featureRadius: number,
-  connMap?: ConnectionMap,
+  connMap?: ConnectivityMap,
 ) => {
   const route = routes[routeIndex]
   if (!route || route.route.length === 0) return false
@@ -1855,7 +1855,7 @@ const moveSegmentAwayFromObstacle = (
   segment: Segment,
   obstacle: SimpleRouteJson["obstacles"][number],
   srj: SimpleRouteJson,
-  connMap?: ConnectionMap,
+  connMap?: ConnectivityMap,
   scale = 1,
 ) => {
   const requiredDistance =
@@ -2260,7 +2260,7 @@ const pushViaSegmentPair = (
   via: ViaNode,
   segment: Segment,
   srj: SimpleRouteJson,
-  connMap?: ConnectionMap,
+  connMap?: ConnectivityMap,
   maxMove = BROAD_MAX_MOVE,
   moveDivisor = 2,
 ) => {
@@ -2319,7 +2319,7 @@ const pushSegmentSegmentPair = (
   left: Segment,
   right: Segment,
   srj: SimpleRouteJson,
-  connMap?: ConnectionMap,
+  connMap?: ConnectivityMap,
 ) => {
   if (
     left.z !== right.z ||
@@ -2485,7 +2485,7 @@ const pushMovablesAwayFromObstacles = (
   viaSpatialIndex: Map<string, number[]>,
   segmentSpatialIndex: Map<string, number[]>,
   spatialCellSize: number,
-  connMap?: ConnectionMap,
+  connMap?: ConnectivityMap,
 ) => {
   let changed = false
   const requiredTraceObstacleDistance =
@@ -2564,7 +2564,7 @@ const pushMovablesAwayFromObstacles = (
 const applyBroadRepulsionPass = (
   srj: SimpleRouteJson,
   routes: MutableRoute[],
-  connMap?: ConnectionMap,
+  connMap?: ConnectivityMap,
 ) => {
   let changed = false
   const vias = collectViaNodes(routes)
@@ -2657,7 +2657,7 @@ export const applyBroadRepulsionForces = (
   routes: HighDensityRoute[],
   effort: number,
   passMultiplier = 1,
-  connMap?: ConnectionMap,
+  connMap?: ConnectivityMap,
 ) => {
   const mutableRoutes = cloneRoutes(routes)
   const maxPasses = Math.max(
@@ -2757,7 +2757,7 @@ export const applyDrcErrorForces = (
   errors: Array<Record<string, unknown>>,
   traceRouteIndexById: Map<string, number>,
   scale: number,
-  connMap?: ConnectionMap,
+  connMap?: ConnectivityMap,
 ) => {
   let changed = false
   const vias = collectViaNodes(routes)

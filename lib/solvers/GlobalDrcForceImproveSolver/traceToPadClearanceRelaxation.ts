@@ -7,7 +7,7 @@ import {
   segmentToBoxMinDistance,
   segmentToSegmentMinDistance,
 } from "@tscircuit/math-utils"
-import type { ConnectivityMap as ConnectionMap } from "circuit-json-to-connectivity-map"
+import type { ConnectivityMap } from "circuit-json-to-connectivity-map"
 import {
   getRootConnectionName,
   obstacleSharesNet,
@@ -117,7 +117,7 @@ const blockerAppliesToLayer = (blocker: ClearanceBlocker, z: number) =>
 const routesAreConnected = (
   left: HighDensityRoute,
   right: HighDensityRoute,
-  connMap?: ConnectionMap,
+  connMap?: ConnectivityMap,
 ) =>
   sharesNet(
     getRootConnectionName(left),
@@ -131,7 +131,7 @@ const routesAreConnected = (
 const isSameNetObstacle = (
   route: HighDensityRoute,
   obstacle: SimpleRouteJson["obstacles"][number],
-  connMap?: ConnectionMap,
+  connMap?: ConnectivityMap,
 ) =>
   obstacleSharesNet(getRootConnectionName(route), obstacle, connMap) ||
   obstacleSharesNet(route.connectionName, obstacle, connMap)
@@ -149,7 +149,7 @@ const endpointCanSlideWithinSameNetCopper = (
   srj: SimpleRouteJson,
   route: HighDensityRoute,
   point: Point3D,
-  connMap?: ConnectionMap,
+  connMap?: ConnectivityMap,
 ) =>
   !point.pcb_port_id &&
   srj.obstacles.some(
@@ -163,7 +163,7 @@ const getClearanceBlockersForRoute = (
   srj: SimpleRouteJson,
   routes: HighDensityRoute[],
   route: HighDensityRoute,
-  connMap?: ConnectionMap,
+  connMap?: ConnectivityMap,
 ) => {
   const blockers: ClearanceBlocker[] = []
 
@@ -265,7 +265,7 @@ const isFixedRoutePoint = (
   srj: SimpleRouteJson,
   route: HighDensityRoute,
   pointIndex: number,
-  connMap?: ConnectionMap,
+  connMap?: ConnectivityMap,
 ) => {
   if (pointIndex <= 0 || pointIndex >= route.route.length - 1) {
     const point = route.route[pointIndex]
@@ -334,7 +334,7 @@ const getRouteOtherTraceClearancePenalty = (
   srj: SimpleRouteJson,
   route: HighDensityRoute,
   otherRoutes: HighDensityRoute[],
-  connMap?: ConnectionMap,
+  connMap?: ConnectivityMap,
 ) => {
   let penalty = 0
 
@@ -388,7 +388,7 @@ const computeNudgeForces = (
   route: HighDensityRoute,
   blockers: ClearanceBlocker[],
   otherRoutes: HighDensityRoute[],
-  connMap?: ConnectionMap,
+  connMap?: ConnectivityMap,
 ) => {
   const forces = route.route.map(() => ({ x: 0, y: 0 }))
 
@@ -499,7 +499,7 @@ const applyNudgeForces = (
   route: HighDensityRoute,
   forces: Point2D[],
   scale: number,
-  connMap?: ConnectionMap,
+  connMap?: ConnectivityMap,
 ): HighDensityRoute => ({
   ...route,
   route: route.route.map((point, pointIndex) => {
@@ -535,7 +535,7 @@ const nudgeRoute = (
   routes: HighDensityRoute[],
   route: HighDensityRoute,
   routeIndex: number,
-  connMap?: ConnectionMap,
+  connMap?: ConnectivityMap,
 ) => {
   const blockers = getClearanceBlockersForRoute(srj, routes, route, connMap)
   const otherRoutes = routes.filter(
@@ -597,7 +597,7 @@ const nudgeRoute = (
 export const applyTraceToPadClearanceRelaxation = (
   srj: SimpleRouteJson,
   routes: HighDensityRoute[],
-  connMap?: ConnectionMap,
+  connMap?: ConnectivityMap,
 ) => {
   if (
     srj.minTraceToPadEdgeClearance === undefined ||

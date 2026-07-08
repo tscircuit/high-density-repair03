@@ -1,4 +1,4 @@
-import type { ConnectivityMap as ConnectionMap } from "circuit-json-to-connectivity-map"
+import type { ConnectivityMap } from "circuit-json-to-connectivity-map"
 import type { SimpleRouteJson, SimplifiedPcbTraces } from "../../types"
 import type { HighDensityRoute } from "../../types/high-density-types"
 
@@ -21,7 +21,7 @@ export type DrcSnapshot = {
 export type GlobalDrcForceImproveSolverParams = {
   srj: SimpleRouteJson
   hdRoutes: HighDensityRoute[]
-  connMap?: ConnectionMap
+  connMap?: ConnectivityMap
   effort?: number
   drcEvaluator?: DrcEvaluator
   maxIterations?: number

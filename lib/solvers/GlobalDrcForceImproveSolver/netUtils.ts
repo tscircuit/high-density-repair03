@@ -1,4 +1,4 @@
-import type { ConnectivityMap as ConnectionMap } from "circuit-json-to-connectivity-map"
+import type { ConnectivityMap } from "circuit-json-to-connectivity-map"
 import type { SimpleRouteJson } from "../../types"
 import type { HighDensityRoute } from "../../types/high-density-types"
 
@@ -13,7 +13,7 @@ export const getRootConnectionName = (route: HighDensityRoute) =>
   route.rootConnectionName ?? route.connectionName
 
 export const getConnMapNetId = (
-  connMap: ConnectionMap | undefined,
+  connMap: ConnectivityMap | undefined,
   id: string | undefined,
 ) => {
   if (!connMap || !id) return undefined
@@ -22,7 +22,7 @@ export const getConnMapNetId = (
 
 export const getConnMapAwareSrj = (
   srj: SimpleRouteJson,
-  connMap: ConnectionMap | undefined,
+  connMap: ConnectivityMap | undefined,
 ): SimpleRouteJson => {
   if (!connMap) return srj
 
@@ -75,7 +75,7 @@ const getNetAliasSet = (name: string) => {
 export const sharesNet = (
   left: string,
   right: string | undefined,
-  connMap?: ConnectionMap,
+  connMap?: ConnectivityMap,
 ) => {
   if (!right) return false
   if (left === right) return true
@@ -117,7 +117,7 @@ const getObstacleConnectedAliasSet = (
 export const obstacleSharesNet = (
   rootConnectionName: string,
   obstacle: SimpleRouteJson["obstacles"][number],
-  connMap?: ConnectionMap,
+  connMap?: ConnectivityMap,
 ) =>
   obstacle.connectedTo?.some((connectedTo) =>
     sharesNet(rootConnectionName, connectedTo, connMap),
