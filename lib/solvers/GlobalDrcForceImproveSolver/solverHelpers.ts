@@ -5,7 +5,13 @@ import {
 import { RELAXED_DRC_OPTIONS } from "./drcPresets"
 import { PREFERRED_VIA_TO_VIA_CLEARANCE, getDrcErrors } from "./getDrcErrors"
 import { convertToCircuitJson } from "../utils/convertToCircuitJson"
-import { getRootConnectionName, obstacleSharesNet, sharesNet } from "./netUtils"
+import {
+  getConnMapAwareSrj,
+  getRootConnectionName,
+  obstacleSharesNet,
+  sharesNet,
+  type ConnectivityMapLike,
+} from "./netUtils"
 import {
   BROAD_FORCE_PASSES,
   BROAD_MAX_MOVE,
@@ -145,10 +151,12 @@ export const getDrcSnapshot = (
   srj: SimpleRouteJson,
   routes: HighDensityRoute[],
   drcEvaluator?: DrcEvaluator,
+  connMap?: ConnectivityMapLike,
 ): DrcSnapshot => {
-  const { traces, traceRouteIndexById } = createSimplifiedTraces(srj, routes)
+  const drcSrj = getConnMapAwareSrj(srj, connMap)
+  const { traces, traceRouteIndexById } = createSimplifiedTraces(drcSrj, routes)
   const drcResult = drcEvaluator?.({
-    srj,
+    srj: drcSrj,
     routes,
     traces,
   })
@@ -168,13 +176,19 @@ export const getDrcSnapshot = (
   }
 
   const drc = getDrcErrors(
-    convertToCircuitJson(srj, traces, srj.minTraceWidth, srj.minViaDiameter),
+    convertToCircuitJson(
+      drcSrj,
+      traces,
+      drcSrj.minTraceWidth,
+      drcSrj.minViaDiameter,
+    ),
     {
       ...RELAXED_DRC_OPTIONS,
       traceClearance:
-        srj.minTraceToPadEdgeClearance ?? RELAXED_DRC_OPTIONS.traceClearance,
+        drcSrj.minTraceToPadEdgeClearance ??
+        RELAXED_DRC_OPTIONS.traceClearance,
       viaClearance:
-        srj.minTraceToPadEdgeClearance ?? RELAXED_DRC_OPTIONS.viaClearance,
+        drcSrj.minTraceToPadEdgeClearance ?? RELAXED_DRC_OPTIONS.viaClearance,
     },
   )
 
@@ -396,10 +410,11 @@ const getSameNetObstacleContainingPoint = (
   srj: SimpleRouteJson,
   route: MutableRoute,
   point: Point & { z: number },
+  connMap?: ConnectivityMapLike,
 ) =>
   srj.obstacles.find(
     (obstacle) =>
-      obstacleSharesNet(getRootConnectionName(route), obstacle) &&
+      obstacleSharesNet(getRootConnectionName(route), obstacle, connMap) &&
       getObstacleZLayers(obstacle, srj.layerCount).includes(point.z) &&
       pointIsInsideRectObstacle(point, obstacle),
   )
@@ -1072,6 +1087,7 @@ const getEndpointPointIndexesIfTranslationPreservesConnection = (
   pointIndex: number,
   dx: number,
   dy: number,
+  connMap?: ConnectivityMapLike,
 ) => {
   const point = route.route[pointIndex]
   if (
@@ -1086,6 +1102,7 @@ const getEndpointPointIndexesIfTranslationPreservesConnection = (
     srj,
     route,
     point,
+    connMap,
   )
   if (!connectionObstacle) return undefined
 
@@ -1106,6 +1123,7 @@ const getMovableOrConnectedEndpointPointIndexes = (
   pointIndex: number,
   dx: number,
   dy: number,
+  connMap?: ConnectivityMapLike,
 ) =>
   getMovableCoincidentPointIndexes(route, pointIndex) ??
   getEndpointPointIndexesIfTranslationPreservesConnection(
@@ -1114,6 +1132,7 @@ const getMovableOrConnectedEndpointPointIndexes = (
     pointIndex,
     dx,
     dy,
+    connMap,
   )
 
 const moveSegmentByTranslation = (
@@ -1122,6 +1141,7 @@ const moveSegmentByTranslation = (
   dx: number,
   dy: number,
   srj: SimpleRouteJson,
+  connMap?: ConnectivityMapLike,
 ) => {
   const route = routes[segment.routeIndex]
   if (!route) return false
@@ -1132,6 +1152,7 @@ const moveSegmentByTranslation = (
     segment.startIndex,
     dx,
     dy,
+    connMap,
   )
   const endIndexes = getMovableOrConnectedEndpointPointIndexes(
     srj,
@@ -1139,6 +1160,7 @@ const moveSegmentByTranslation = (
     segment.endIndex,
     dx,
     dy,
+    connMap,
   )
   if (!startIndexes || !endIndexes) return false
 
@@ -1205,6 +1227,7 @@ const routeEndpointPreservesConnectionAfterTranslation = (
   pointIndex: number,
   dx: number,
   dy: number,
+  connMap?: ConnectivityMapLike,
 ) => {
   const point = route.route[pointIndex]
   if (!point) return false
@@ -1214,6 +1237,7 @@ const routeEndpointPreservesConnectionAfterTranslation = (
     srj,
     route,
     point,
+    connMap,
   )
   if (!connectionObstacle) return false
 
@@ -1227,10 +1251,11 @@ const getEndpointConnectionObstacle = (
   srj: SimpleRouteJson,
   route: MutableRoute,
   pointIndex: number,
+  connMap?: ConnectivityMapLike,
 ) => {
   const point = route.route[pointIndex]
   if (!point || point.pcb_port_id) return undefined
-  return getSameNetObstacleContainingPoint(srj, route, point)
+  return getSameNetObstacleContainingPoint(srj, route, point, connMap)
 }
 
 const clampTranslationToEndpointConnectionObstacles = (
@@ -1238,6 +1263,7 @@ const clampTranslationToEndpointConnectionObstacles = (
   route: MutableRoute,
   dx: number,
   dy: number,
+  connMap?: ConnectivityMapLike,
 ) => {
   let minDx = Number.NEGATIVE_INFINITY
   let maxDx = Number.POSITIVE_INFINITY
@@ -1246,7 +1272,7 @@ const clampTranslationToEndpointConnectionObstacles = (
 
   for (const pointIndex of [0, route.route.length - 1]) {
     const point = route.route[pointIndex]
-    const obstacle = getEndpointConnectionObstacle(srj, route, pointIndex)
+    const obstacle = getEndpointConnectionObstacle(srj, route, pointIndex, connMap)
     if (!point || !obstacle) return undefined
 
     minDx = Math.max(minDx, obstacle.center.x - obstacle.width / 2 - point.x)
@@ -1270,12 +1296,13 @@ const moveRouteByTranslationPreservingEndpointConnections = (
   dy: number,
   srj: SimpleRouteJson,
   featureRadius: number,
+  connMap?: ConnectivityMapLike,
 ) => {
   const route = routes[routeIndex]
   if (!route || route.route.length === 0) return false
 
   const endpointClippedTranslation =
-    clampTranslationToEndpointConnectionObstacles(srj, route, dx, dy)
+    clampTranslationToEndpointConnectionObstacles(srj, route, dx, dy, connMap)
   if (!endpointClippedTranslation) return false
 
   const pointIndexes = route.route.map((_, pointIndex) => pointIndex)
@@ -1297,6 +1324,7 @@ const moveRouteByTranslationPreservingEndpointConnections = (
       0,
       translation.x,
       translation.y,
+      connMap,
     ) ||
     !routeEndpointPreservesConnectionAfterTranslation(
       srj,
@@ -1304,6 +1332,7 @@ const moveRouteByTranslationPreservingEndpointConnections = (
       lastPointIndex,
       translation.x,
       translation.y,
+      connMap,
     )
   ) {
     return false
@@ -1822,6 +1851,7 @@ const moveSegmentAwayFromObstacle = (
   segment: Segment,
   obstacle: SimpleRouteJson["obstacles"][number],
   srj: SimpleRouteJson,
+  connMap?: ConnectivityMapLike,
   scale = 1,
 ) => {
   const requiredDistance =
@@ -1848,6 +1878,7 @@ const moveSegmentAwayFromObstacle = (
       dy,
       srj,
       segment.radius,
+      connMap,
     )
   ) {
     return true
@@ -1863,7 +1894,7 @@ const moveSegmentAwayFromObstacle = (
       srj,
     ) ||
     moveCollinearSegmentRunByTranslation(routes, segment, dx, dy, srj) ||
-    moveSegmentByTranslation(routes, segment, dx, dy, srj)
+    moveSegmentByTranslation(routes, segment, dx, dy, srj, connMap)
   if (movedSegment) return true
 
   if (
@@ -1875,6 +1906,7 @@ const moveSegmentAwayFromObstacle = (
       dy,
       srj,
       segment.radius,
+      connMap,
     )
   ) {
     return true
@@ -2224,10 +2256,11 @@ const pushViaSegmentPair = (
   via: ViaNode,
   segment: Segment,
   srj: SimpleRouteJson,
+  connMap?: ConnectivityMapLike,
   maxMove = BROAD_MAX_MOVE,
   moveDivisor = 2,
 ) => {
-  if (sharesNet(via.rootConnectionName, segment.rootConnectionName))
+  if (sharesNet(via.rootConnectionName, segment.rootConnectionName, connMap))
     return false
 
   const projection = pointToSegmentProjection(via, segment)
@@ -2282,10 +2315,11 @@ const pushSegmentSegmentPair = (
   left: Segment,
   right: Segment,
   srj: SimpleRouteJson,
+  connMap?: ConnectivityMapLike,
 ) => {
   if (
     left.z !== right.z ||
-    sharesNet(left.rootConnectionName, right.rootConnectionName)
+    sharesNet(left.rootConnectionName, right.rootConnectionName, connMap)
   ) {
     return false
   }
@@ -2447,6 +2481,7 @@ const pushMovablesAwayFromObstacles = (
   viaSpatialIndex: Map<string, number[]>,
   segmentSpatialIndex: Map<string, number[]>,
   spatialCellSize: number,
+  connMap?: ConnectivityMapLike,
 ) => {
   let changed = false
   const requiredTraceObstacleDistance =
@@ -2468,7 +2503,7 @@ const pushMovablesAwayFromObstacles = (
     for (const viaIndex of nearbyViaIndexes) {
       const via = vias[viaIndex]
       if (!via) continue
-      if (obstacleSharesNet(via.rootConnectionName, obstacle)) continue
+      if (obstacleSharesNet(via.rootConnectionName, obstacle, connMap)) continue
       const repulsion = getRectRepulsion(
         via,
         obstacle,
@@ -2495,7 +2530,7 @@ const pushMovablesAwayFromObstacles = (
       const segment = segments[segmentIndex]
       if (!segment) continue
       if (
-        obstacleSharesNet(segment.rootConnectionName, obstacle) ||
+        obstacleSharesNet(segment.rootConnectionName, obstacle, connMap) ||
         !obstacleAppliesToSegment(obstacle, segment)
       ) {
         continue
@@ -2525,6 +2560,7 @@ const pushMovablesAwayFromObstacles = (
 const applyBroadRepulsionPass = (
   srj: SimpleRouteJson,
   routes: MutableRoute[],
+  connMap?: ConnectivityMapLike,
 ) => {
   let changed = false
   const vias = collectViaNodes(routes)
@@ -2576,7 +2612,7 @@ const applyBroadRepulsionPass = (
     for (const segmentIndex of nearbySegmentIndexes) {
       const segment = segments[segmentIndex]
       if (!segment) continue
-      changed = pushViaSegmentPair(routes, via, segment, srj) || changed
+      changed = pushViaSegmentPair(routes, via, segment, srj, connMap) || changed
     }
   }
 
@@ -2592,7 +2628,7 @@ const applyBroadRepulsionPass = (
       if (rightIndex <= leftIndex) continue
       const right = segments[rightIndex]
       if (!right) continue
-      changed = pushSegmentSegmentPair(routes, left, right, srj) || changed
+      changed = pushSegmentSegmentPair(routes, left, right, srj, connMap) || changed
     }
   }
 
@@ -2605,6 +2641,7 @@ const applyBroadRepulsionPass = (
       viaSpatialIndex,
       segmentSpatialIndex,
       spatialCellSize,
+      connMap,
     ) || changed
   )
 }
@@ -2614,6 +2651,7 @@ export const applyBroadRepulsionForces = (
   routes: HighDensityRoute[],
   effort: number,
   passMultiplier = 1,
+  connMap?: ConnectivityMapLike,
 ) => {
   const mutableRoutes = cloneRoutes(routes)
   const maxPasses = Math.max(
@@ -2623,7 +2661,7 @@ export const applyBroadRepulsionForces = (
   let changed = false
 
   for (let pass = 0; pass < maxPasses; pass += 1) {
-    const passChanged = applyBroadRepulsionPass(srj, mutableRoutes)
+    const passChanged = applyBroadRepulsionPass(srj, mutableRoutes, connMap)
     if (!passChanged) break
     changed = true
   }
@@ -2713,6 +2751,7 @@ export const applyDrcErrorForces = (
   errors: Array<Record<string, unknown>>,
   traceRouteIndexById: Map<string, number>,
   scale: number,
+  connMap?: ConnectivityMapLike,
 ) => {
   let changed = false
   const vias = collectViaNodes(routes)
@@ -2758,7 +2797,11 @@ export const applyDrcErrorForces = (
             center,
             0.6,
             (obstacle) =>
-              !obstacleSharesNet(nearestSegment.rootConnectionName, obstacle) &&
+              !obstacleSharesNet(
+                nearestSegment.rootConnectionName,
+                obstacle,
+                connMap,
+              ) &&
               obstacleAppliesToSegment(obstacle, nearestSegment),
           )
         : getNearestObstacleNearPoint(srj, center)
@@ -2774,6 +2817,7 @@ export const applyDrcErrorForces = (
         !sharesNet(
           nearestVia.rootConnectionName,
           nearestSegment.rootConnectionName,
+          connMap,
         ) &&
         Math.hypot(nearestVia.x - center.x, nearestVia.y - center.y) < 0.45
       ) {
@@ -2783,6 +2827,7 @@ export const applyDrcErrorForces = (
             nearestVia,
             nearestSegment,
             srj,
+            connMap,
             TRACE_PAD_REPAIR_MAX_MOVE * Math.abs(scale),
             1,
           ) || changed
@@ -2794,6 +2839,7 @@ export const applyDrcErrorForces = (
           (!obstacleSharesNet(
             nearestSegment.rootConnectionName,
             nearestObstacle,
+            connMap,
           ) &&
             obstacleAppliesToSegment(nearestObstacle, nearestSegment)))
       const movedSegment = shouldUseObstacleMove
@@ -2802,6 +2848,7 @@ export const applyDrcErrorForces = (
             nearestSegment,
             nearestObstacle!,
             srj,
+            connMap,
             scale,
           )
         : moveSegmentAwayFromPoint(

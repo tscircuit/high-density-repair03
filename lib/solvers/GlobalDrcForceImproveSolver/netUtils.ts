@@ -1,6 +1,11 @@
 import type { SimpleRouteJson } from "../../types"
 import type { HighDensityRoute } from "../../types/high-density-types"
 
+export type ConnectivityMapLike = {
+  idToNetMap?: Record<string, string | undefined>
+  getNetConnectedToId?: (id: string) => string | undefined
+}
+
 const netAliasCache = new Map<string, readonly string[]>()
 const netAliasSetCache = new Map<string, ReadonlySet<string>>()
 const obstacleConnectedAliasCache = new WeakMap<
@@ -10,6 +15,48 @@ const obstacleConnectedAliasCache = new WeakMap<
 
 export const getRootConnectionName = (route: HighDensityRoute) =>
   route.rootConnectionName ?? route.connectionName
+
+export const getConnMapNetId = (
+  connMap: ConnectivityMapLike | undefined,
+  id: string | undefined,
+) => {
+  if (!connMap || !id) return undefined
+
+  const netId = connMap.idToNetMap?.[id]
+  if (netId) return netId
+
+  return connMap.getNetConnectedToId?.(id)
+}
+
+export const getConnMapAwareSrj = (
+  srj: SimpleRouteJson,
+  connMap: ConnectivityMapLike | undefined,
+): SimpleRouteJson => {
+  if (!connMap) return srj
+
+  return {
+    ...srj,
+    connections: srj.connections.map((connection) => {
+      const netConnectionName =
+        getConnMapNetId(connMap, connection.name) ??
+        getConnMapNetId(connMap, connection.rootConnectionName) ??
+        connection.netConnectionName
+
+      return netConnectionName
+        ? { ...connection, netConnectionName }
+        : connection
+    }),
+    obstacles: srj.obstacles.map((obstacle) => {
+      const connectedTo = new Set(obstacle.connectedTo)
+      for (const connectedId of obstacle.connectedTo) {
+        const netId = getConnMapNetId(connMap, connectedId)
+        if (netId) connectedTo.add(netId)
+      }
+
+      return { ...obstacle, connectedTo: [...connectedTo] }
+    }),
+  }
+}
 
 const getNetAliases = (name: string | undefined) => {
   if (!name) return []
@@ -33,9 +80,22 @@ const getNetAliasSet = (name: string) => {
   return aliasSet
 }
 
-export const sharesNet = (left: string, right: string | undefined) => {
+export const sharesNet = (
+  left: string,
+  right: string | undefined,
+  connMap?: ConnectivityMapLike,
+) => {
   if (!right) return false
   if (left === right) return true
+
+  const leftNetId = getConnMapNetId(connMap, left)
+  const rightNetId = getConnMapNetId(connMap, right)
+  if (leftNetId && (leftNetId === right || leftNetId === rightNetId)) {
+    return true
+  }
+  if (rightNetId && (rightNetId === left || rightNetId === leftNetId)) {
+    return true
+  }
 
   const leftAliases = getNetAliases(left)
   if (leftAliases.length === 1 && !right.includes("__")) return false
@@ -64,7 +124,11 @@ const getObstacleConnectedAliasSet = (
 export const obstacleSharesNet = (
   rootConnectionName: string,
   obstacle: SimpleRouteJson["obstacles"][number],
+  connMap?: ConnectivityMapLike,
 ) =>
+  obstacle.connectedTo?.some((connectedTo) =>
+    sharesNet(rootConnectionName, connectedTo, connMap),
+  ) ||
   getNetAliases(rootConnectionName).some((alias) =>
     getObstacleConnectedAliasSet(obstacle).has(alias),
   )
