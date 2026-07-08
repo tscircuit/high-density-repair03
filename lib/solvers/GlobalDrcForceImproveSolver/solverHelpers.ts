@@ -185,8 +185,7 @@ export const getDrcSnapshot = (
     {
       ...RELAXED_DRC_OPTIONS,
       traceClearance:
-        drcSrj.minTraceToPadEdgeClearance ??
-        RELAXED_DRC_OPTIONS.traceClearance,
+        drcSrj.minTraceToPadEdgeClearance ?? RELAXED_DRC_OPTIONS.traceClearance,
       viaClearance:
         drcSrj.minTraceToPadEdgeClearance ?? RELAXED_DRC_OPTIONS.viaClearance,
     },
@@ -1272,7 +1271,12 @@ const clampTranslationToEndpointConnectionObstacles = (
 
   for (const pointIndex of [0, route.route.length - 1]) {
     const point = route.route[pointIndex]
-    const obstacle = getEndpointConnectionObstacle(srj, route, pointIndex, connMap)
+    const obstacle = getEndpointConnectionObstacle(
+      srj,
+      route,
+      pointIndex,
+      connMap,
+    )
     if (!point || !obstacle) return undefined
 
     minDx = Math.max(minDx, obstacle.center.x - obstacle.width / 2 - point.x)
@@ -2612,7 +2616,8 @@ const applyBroadRepulsionPass = (
     for (const segmentIndex of nearbySegmentIndexes) {
       const segment = segments[segmentIndex]
       if (!segment) continue
-      changed = pushViaSegmentPair(routes, via, segment, srj, connMap) || changed
+      changed =
+        pushViaSegmentPair(routes, via, segment, srj, connMap) || changed
     }
   }
 
@@ -2628,7 +2633,8 @@ const applyBroadRepulsionPass = (
       if (rightIndex <= leftIndex) continue
       const right = segments[rightIndex]
       if (!right) continue
-      changed = pushSegmentSegmentPair(routes, left, right, srj, connMap) || changed
+      changed =
+        pushSegmentSegmentPair(routes, left, right, srj, connMap) || changed
     }
   }
 
@@ -2801,8 +2807,7 @@ export const applyDrcErrorForces = (
                 nearestSegment.rootConnectionName,
                 obstacle,
                 connMap,
-              ) &&
-              obstacleAppliesToSegment(obstacle, nearestSegment),
+              ) && obstacleAppliesToSegment(obstacle, nearestSegment),
           )
         : getNearestObstacleNearPoint(srj, center)
       if (isObstacleError && !nearestObstacle) {

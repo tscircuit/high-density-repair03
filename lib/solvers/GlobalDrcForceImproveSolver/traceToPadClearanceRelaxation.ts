@@ -119,7 +119,11 @@ const routesAreConnected = (
   right: HighDensityRoute,
   connMap?: ConnectivityMapLike,
 ) =>
-  sharesNet(getRootConnectionName(left), getRootConnectionName(right), connMap) ||
+  sharesNet(
+    getRootConnectionName(left),
+    getRootConnectionName(right),
+    connMap,
+  ) ||
   sharesNet(getRootConnectionName(left), right.connectionName, connMap) ||
   sharesNet(left.connectionName, getRootConnectionName(right), connMap) ||
   sharesNet(left.connectionName, right.connectionName, connMap)
@@ -266,8 +270,7 @@ const isFixedRoutePoint = (
   if (pointIndex <= 0 || pointIndex >= route.route.length - 1) {
     const point = route.route[pointIndex]
     return (
-      !point ||
-      !endpointCanSlideWithinSameNetCopper(srj, route, point, connMap)
+      !point || !endpointCanSlideWithinSameNetCopper(srj, route, point, connMap)
     )
   }
 
