@@ -7,6 +7,7 @@ import {
   segmentToBoxMinDistance,
   segmentToSegmentMinDistance,
 } from "@tscircuit/math-utils"
+import type { ConnectivityMap } from "circuit-json-to-connectivity-map"
 import { getRootConnectionName, obstacleSharesNet, sharesNet } from "./netUtils"
 import { cloneRoutes } from "./solverHelpers"
 import type { SimpleRouteJson } from "../../types"
@@ -109,18 +110,27 @@ const getObstacleZLayers = (
 const blockerAppliesToLayer = (blocker: ClearanceBlocker, z: number) =>
   blocker.zLayers.includes(z)
 
-const routesAreConnected = (left: HighDensityRoute, right: HighDensityRoute) =>
-  sharesNet(getRootConnectionName(left), getRootConnectionName(right)) ||
-  sharesNet(getRootConnectionName(left), right.connectionName) ||
-  sharesNet(left.connectionName, getRootConnectionName(right)) ||
-  sharesNet(left.connectionName, right.connectionName)
+const routesAreConnected = (
+  left: HighDensityRoute,
+  right: HighDensityRoute,
+  connMap?: ConnectivityMap,
+) =>
+  sharesNet(
+    getRootConnectionName(left),
+    getRootConnectionName(right),
+    connMap,
+  ) ||
+  sharesNet(getRootConnectionName(left), right.connectionName, connMap) ||
+  sharesNet(left.connectionName, getRootConnectionName(right), connMap) ||
+  sharesNet(left.connectionName, right.connectionName, connMap)
 
 const isSameNetObstacle = (
   route: HighDensityRoute,
   obstacle: SimpleRouteJson["obstacles"][number],
+  connMap?: ConnectivityMap,
 ) =>
-  obstacleSharesNet(getRootConnectionName(route), obstacle) ||
-  obstacleSharesNet(route.connectionName, obstacle)
+  obstacleSharesNet(getRootConnectionName(route), obstacle, connMap) ||
+  obstacleSharesNet(route.connectionName, obstacle, connMap)
 
 const pointIsInsideObstacle = (
   point: Point3D,
@@ -135,11 +145,12 @@ const endpointCanSlideWithinSameNetCopper = (
   srj: SimpleRouteJson,
   route: HighDensityRoute,
   point: Point3D,
+  connMap?: ConnectivityMap,
 ) =>
   !point.pcb_port_id &&
   srj.obstacles.some(
     (obstacle) =>
-      isSameNetObstacle(route, obstacle) &&
+      isSameNetObstacle(route, obstacle, connMap) &&
       getObstacleZLayers(obstacle, srj.layerCount).includes(point.z) &&
       pointIsInsideObstacle(point, obstacle),
   )
@@ -148,11 +159,13 @@ const getClearanceBlockersForRoute = (
   srj: SimpleRouteJson,
   routes: HighDensityRoute[],
   route: HighDensityRoute,
+  connMap?: ConnectivityMap,
 ) => {
   const blockers: ClearanceBlocker[] = []
 
   for (const obstacle of srj.obstacles) {
-    if (obstacle.isCopperPour || isSameNetObstacle(route, obstacle)) continue
+    if (obstacle.isCopperPour || isSameNetObstacle(route, obstacle, connMap))
+      continue
     blockers.push({
       kind: "pad",
       obstacle,
@@ -162,7 +175,8 @@ const getClearanceBlockersForRoute = (
 
   const allZLayers = Array.from({ length: srj.layerCount }, (_, z) => z)
   for (const otherRoute of routes) {
-    if (otherRoute === route || routesAreConnected(route, otherRoute)) continue
+    if (otherRoute === route || routesAreConnected(route, otherRoute, connMap))
+      continue
 
     for (const via of getRouteViaCenters(otherRoute)) {
       blockers.push({
@@ -247,10 +261,13 @@ const isFixedRoutePoint = (
   srj: SimpleRouteJson,
   route: HighDensityRoute,
   pointIndex: number,
+  connMap?: ConnectivityMap,
 ) => {
   if (pointIndex <= 0 || pointIndex >= route.route.length - 1) {
     const point = route.route[pointIndex]
-    return !point || !endpointCanSlideWithinSameNetCopper(srj, route, point)
+    return (
+      !point || !endpointCanSlideWithinSameNetCopper(srj, route, point, connMap)
+    )
   }
 
   const point = route.route[pointIndex]
@@ -313,6 +330,7 @@ const getRouteOtherTraceClearancePenalty = (
   srj: SimpleRouteJson,
   route: HighDensityRoute,
   otherRoutes: HighDensityRoute[],
+  connMap?: ConnectivityMap,
 ) => {
   let penalty = 0
 
@@ -322,7 +340,7 @@ const getRouteOtherTraceClearancePenalty = (
     if (!start || !end || start.z !== end.z || pointsEqual(start, end)) continue
 
     for (const otherRoute of otherRoutes) {
-      if (routesAreConnected(route, otherRoute)) continue
+      if (routesAreConnected(route, otherRoute, connMap)) continue
 
       for (let j = 0; j < otherRoute.route.length - 1; j += 1) {
         const otherStart = otherRoute.route[j]
@@ -366,6 +384,7 @@ const computeNudgeForces = (
   route: HighDensityRoute,
   blockers: ClearanceBlocker[],
   otherRoutes: HighDensityRoute[],
+  connMap?: ConnectivityMap,
 ) => {
   const forces = route.route.map(() => ({ x: 0, y: 0 }))
 
@@ -392,8 +411,8 @@ const computeNudgeForces = (
         continue
       }
 
-      const startMovable = !isFixedRoutePoint(srj, route, i)
-      const endMovable = !isFixedRoutePoint(srj, route, i + 1)
+      const startMovable = !isFixedRoutePoint(srj, route, i, connMap)
+      const endMovable = !isFixedRoutePoint(srj, route, i + 1, connMap)
       if (!startMovable && !endMovable) continue
 
       const violation = -signedClearance
@@ -408,7 +427,7 @@ const computeNudgeForces = (
     }
 
     for (const otherRoute of otherRoutes) {
-      if (routesAreConnected(route, otherRoute)) continue
+      if (routesAreConnected(route, otherRoute, connMap)) continue
 
       for (let j = 0; j < otherRoute.route.length - 1; j += 1) {
         const otherStart = otherRoute.route[j]
@@ -452,8 +471,8 @@ const computeNudgeForces = (
           direction = normalizeVector({ x: -dy, y: dx })
         }
 
-        const startMovable = !isFixedRoutePoint(srj, route, i)
-        const endMovable = !isFixedRoutePoint(srj, route, i + 1)
+        const startMovable = !isFixedRoutePoint(srj, route, i, connMap)
+        const endMovable = !isFixedRoutePoint(srj, route, i + 1, connMap)
         if (!startMovable && !endMovable) continue
 
         const startWeight =
@@ -476,10 +495,11 @@ const applyNudgeForces = (
   route: HighDensityRoute,
   forces: Point2D[],
   scale: number,
+  connMap?: ConnectivityMap,
 ): HighDensityRoute => ({
   ...route,
   route: route.route.map((point, pointIndex) => {
-    if (isFixedRoutePoint(srj, route, pointIndex)) return { ...point }
+    if (isFixedRoutePoint(srj, route, pointIndex, connMap)) return { ...point }
     const force = limitVector(
       forces[pointIndex] ?? { x: 0, y: 0 },
       MAX_NUDGE_DISTANCE,
@@ -511,8 +531,9 @@ const nudgeRoute = (
   routes: HighDensityRoute[],
   route: HighDensityRoute,
   routeIndex: number,
+  connMap?: ConnectivityMap,
 ) => {
-  const blockers = getClearanceBlockersForRoute(srj, routes, route)
+  const blockers = getClearanceBlockersForRoute(srj, routes, route, connMap)
   const otherRoutes = routes.filter(
     (otherRoute, otherRouteIndex) =>
       otherRouteIndex !== routeIndex && otherRoute !== route,
@@ -520,12 +541,18 @@ const nudgeRoute = (
   let nudgedRoute = route
   let currentPenalty =
     getRouteClearancePenalty(srj, nudgedRoute, blockers) +
-    getRouteOtherTraceClearancePenalty(srj, nudgedRoute, otherRoutes)
+    getRouteOtherTraceClearancePenalty(srj, nudgedRoute, otherRoutes, connMap)
 
   for (let iteration = 0; iteration < RELAXATION_ITERATIONS; iteration += 1) {
     if (currentPenalty <= CLEARANCE_EPSILON) break
 
-    const forces = computeNudgeForces(srj, nudgedRoute, blockers, otherRoutes)
+    const forces = computeNudgeForces(
+      srj,
+      nudgedRoute,
+      blockers,
+      otherRoutes,
+      connMap,
+    )
     if (forces.every((force) => distance(force, { x: 0, y: 0 }) < 1e-9)) {
       break
     }
@@ -534,10 +561,16 @@ const nudgeRoute = (
     let acceptedPenalty = currentPenalty
 
     for (const scale of CANDIDATE_SCALES) {
-      const candidate = applyNudgeForces(srj, nudgedRoute, forces, scale)
+      const candidate = applyNudgeForces(
+        srj,
+        nudgedRoute,
+        forces,
+        scale,
+        connMap,
+      )
       const candidatePenalty =
         getRouteClearancePenalty(srj, candidate, blockers) +
-        getRouteOtherTraceClearancePenalty(srj, candidate, otherRoutes)
+        getRouteOtherTraceClearancePenalty(srj, candidate, otherRoutes, connMap)
 
       if (
         candidatePenalty < currentPenalty - 1e-6 &&
@@ -560,6 +593,7 @@ const nudgeRoute = (
 export const applyTraceToPadClearanceRelaxation = (
   srj: SimpleRouteJson,
   routes: HighDensityRoute[],
+  connMap?: ConnectivityMap,
 ) => {
   if (
     srj.minTraceToPadEdgeClearance === undefined ||
@@ -579,7 +613,13 @@ export const applyTraceToPadClearanceRelaxation = (
     ) {
       const route = relaxedRoutes[routeIndex]
       if (!route) continue
-      const nudgedRoute = nudgeRoute(srj, relaxedRoutes, route, routeIndex)
+      const nudgedRoute = nudgeRoute(
+        srj,
+        relaxedRoutes,
+        route,
+        routeIndex,
+        connMap,
+      )
       if (nudgedRoute !== route) {
         relaxedRoutes[routeIndex] = nudgedRoute
         changed = true

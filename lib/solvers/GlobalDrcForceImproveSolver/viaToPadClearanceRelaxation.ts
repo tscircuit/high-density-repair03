@@ -1,4 +1,5 @@
 import { distance } from "@tscircuit/math-utils"
+import type { ConnectivityMap } from "circuit-json-to-connectivity-map"
 import { obstacleSharesNet } from "./netUtils"
 import {
   cloneRoutes,
@@ -39,10 +40,11 @@ const viaIsAttachedToSameNetObstacle = (
   via: ViaNode,
   route: HighDensityRoute,
   obstacle: SimpleRouteJson["obstacles"][number],
+  connMap?: ConnectivityMap,
 ) => {
   const isSameNet =
-    obstacleSharesNet(via.rootConnectionName, obstacle) ||
-    obstacleSharesNet(route.connectionName, obstacle)
+    obstacleSharesNet(via.rootConnectionName, obstacle, connMap) ||
+    obstacleSharesNet(route.connectionName, obstacle, connMap)
 
   return (
     isSameNet && getPointToObstacleDistance(via, obstacle) <= CLEARANCE_EPSILON
@@ -53,6 +55,7 @@ const getViaPadBlockers = (
   srj: SimpleRouteJson,
   routes: HighDensityRoute[],
   via: ViaNode,
+  connMap?: ConnectivityMap,
 ) => {
   const blockers: ViaPadBlocker[] = []
   const route = routes[via.routeIndex]
@@ -61,7 +64,7 @@ const getViaPadBlockers = (
   for (const obstacle of srj.obstacles) {
     if (
       obstacle.isCopperPour ||
-      viaIsAttachedToSameNetObstacle(via, route, obstacle)
+      viaIsAttachedToSameNetObstacle(via, route, obstacle, connMap)
     ) {
       continue
     }
@@ -86,9 +89,10 @@ const getViaClearancePenalty = (
   srj: SimpleRouteJson,
   routes: HighDensityRoute[],
   via: ViaNode,
+  connMap?: ConnectivityMap,
 ) => {
   let penalty = 0
-  for (const blocker of getViaPadBlockers(srj, routes, via)) {
+  for (const blocker of getViaPadBlockers(srj, routes, via, connMap)) {
     const signedClearance = getSignedClearanceToBlocker(srj, via, blocker)
     if (signedClearance >= 0) continue
 
@@ -107,11 +111,13 @@ const getRouteViaClearancePenalty = (
   srj: SimpleRouteJson,
   routes: HighDensityRoute[],
   routeIndex: number,
+  connMap?: ConnectivityMap,
 ) =>
   collectViaNodes(routes, srj.minViaDiameter)
     .filter((via) => via.routeIndex === routeIndex)
     .reduce(
-      (penalty, via) => penalty + getViaClearancePenalty(srj, routes, via),
+      (penalty, via) =>
+        penalty + getViaClearancePenalty(srj, routes, via, connMap),
       0,
     )
 
@@ -119,6 +125,7 @@ const computeViaNudgeForces = (
   srj: SimpleRouteJson,
   routes: HighDensityRoute[],
   routeIndex: number,
+  connMap?: ConnectivityMap,
 ) => {
   const route = routes[routeIndex]
   if (!route) return []
@@ -130,7 +137,7 @@ const computeViaNudgeForces = (
   for (const via of vias) {
     if (!via.movable) continue
 
-    for (const blocker of getViaPadBlockers(srj, routes, via)) {
+    for (const blocker of getViaPadBlockers(srj, routes, via, connMap)) {
       const requiredDistance =
         via.radius +
         srj.minViaEdgeToPadEdgeClearance! +
@@ -200,14 +207,20 @@ const nudgeRouteVias = (
   routes: HighDensityRoute[],
   route: HighDensityRoute,
   routeIndex: number,
+  connMap?: ConnectivityMap,
 ) => {
   let nudgedRoute = route
-  let currentPenalty = getRouteViaClearancePenalty(srj, routes, routeIndex)
+  let currentPenalty = getRouteViaClearancePenalty(
+    srj,
+    routes,
+    routeIndex,
+    connMap,
+  )
 
   for (let iteration = 0; iteration < RELAXATION_ITERATIONS; iteration += 1) {
     if (currentPenalty <= CLEARANCE_EPSILON) break
 
-    const forces = computeViaNudgeForces(srj, routes, routeIndex)
+    const forces = computeViaNudgeForces(srj, routes, routeIndex, connMap)
     if (forces.every((force) => distance(force, { x: 0, y: 0 }) < 1e-9)) {
       break
     }
@@ -223,6 +236,7 @@ const nudgeRouteVias = (
         srj,
         candidateRoutes,
         routeIndex,
+        connMap,
       )
 
       if (
@@ -247,6 +261,7 @@ const nudgeRouteVias = (
 export const applyViaToPadClearanceRelaxation = (
   srj: SimpleRouteJson,
   routes: HighDensityRoute[],
+  connMap?: ConnectivityMap,
 ) => {
   if (
     srj.minViaEdgeToPadEdgeClearance === undefined ||
@@ -266,7 +281,13 @@ export const applyViaToPadClearanceRelaxation = (
     ) {
       const route = relaxedRoutes[routeIndex]
       if (!route) continue
-      const nudgedRoute = nudgeRouteVias(srj, relaxedRoutes, route, routeIndex)
+      const nudgedRoute = nudgeRouteVias(
+        srj,
+        relaxedRoutes,
+        route,
+        routeIndex,
+        connMap,
+      )
       if (nudgedRoute !== route) {
         relaxedRoutes[routeIndex] = nudgedRoute
         changed = true

@@ -1,4 +1,5 @@
 import { BaseSolver } from "../BaseSolver"
+import type { ConnectivityMap } from "circuit-json-to-connectivity-map"
 import type { GraphicsObject } from "graphics-debug"
 import {
   BROAD_FALLBACK_SMALL_ROUTE_LIMIT,
@@ -50,6 +51,7 @@ export const setGlobalDrcForceImproveSolverVisualizer = (
 export class GlobalDrcForceImproveSolver extends BaseSolver {
   readonly srj: SimpleRouteJson
   readonly inputHdRoutes: HighDensityRoute[]
+  readonly connMap?: ConnectivityMap
   readonly effort: number
   readonly drcEvaluator?: DrcEvaluator
   readonly configuredMaxIterations?: number
@@ -72,6 +74,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     super()
     this.srj = params.srj
     this.inputHdRoutes = params.hdRoutes
+    this.connMap = params.connMap
     this.effort = params.effort ?? 1
     this.drcEvaluator = params.drcEvaluator
     this.configuredMaxIterations = params.maxIterations
@@ -87,6 +90,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       {
         srj: this.srj,
         hdRoutes: this.inputHdRoutes,
+        connMap: this.connMap,
         effort: this.effort,
         drcEvaluator: this.drcEvaluator,
         maxIterations: this.configuredMaxIterations,
@@ -134,15 +138,22 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     const traceRelaxedRoutes = applyTraceToPadClearanceRelaxation(
       this.srj,
       routes,
+      this.connMap,
     )
     const relaxedRoutes = applyViaToPadClearanceRelaxation(
       this.srj,
       traceRelaxedRoutes,
+      this.connMap,
     )
     const relaxedSnapshot =
       relaxedRoutes === routes
         ? snapshot
-        : getDrcSnapshot(this.srj, relaxedRoutes, this.drcEvaluator)
+        : getDrcSnapshot(
+            this.srj,
+            relaxedRoutes,
+            this.drcEvaluator,
+            this.connMap,
+          )
 
     this.outputHdRoutes = relaxedRoutes
     this.outputSnapshot = relaxedSnapshot
@@ -215,7 +226,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     let bestRoutes = this.outputHdRoutes
     let bestSnapshot =
       this.outputSnapshot ??
-      getDrcSnapshot(this.srj, bestRoutes, this.drcEvaluator)
+      getDrcSnapshot(this.srj, bestRoutes, this.drcEvaluator, this.connMap)
     if (this.initialDrcIssueCount === undefined) {
       this.initialDrcIssueCount = bestSnapshot.count
       this.bestDrcIssueCountSeen = bestSnapshot.count
@@ -270,6 +281,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           [error],
           bestSnapshot.traceRouteIndexById,
           scale,
+          this.connMap,
         )
         if (!changed) continue
 
@@ -280,6 +292,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           this.srj,
           materializedCandidateRoutes,
           this.drcEvaluator,
+          this.connMap,
         )
         const candidateViaIssueCount = getViaDrcIssueCount(candidateSnapshot)
 
@@ -335,12 +348,14 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           bestRoutes,
           this.effort,
           passMultiplier,
+          this.connMap,
         )
         if (broadCandidateRoutes === bestRoutes) continue
         const broadCandidateSnapshot = getDrcSnapshot(
           this.srj,
           broadCandidateRoutes,
           this.drcEvaluator,
+          this.connMap,
         )
         const broadCandidateViaIssueCount = getViaDrcIssueCount(
           broadCandidateSnapshot,
@@ -390,7 +405,12 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   override tryFinalAcceptance() {
     const snapshot =
       this.outputSnapshot ??
-      getDrcSnapshot(this.srj, this.outputHdRoutes, this.drcEvaluator)
+      getDrcSnapshot(
+        this.srj,
+        this.outputHdRoutes,
+        this.drcEvaluator,
+        this.connMap,
+      )
     this.acceptSolvedRoutes(this.outputHdRoutes, snapshot)
   }
 
