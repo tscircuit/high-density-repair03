@@ -3,7 +3,7 @@ import { BaseSolver } from "../BaseSolver"
 import type { HighDensityRoute } from "../../types/high-density-types"
 import { GlobalDrcForceImproveSolver } from "./GlobalDrcForceImproveSolver"
 import { getDrcSnapshot } from "./drc-snapshot"
-import { applyBroadRepulsionForces } from "./solverHelpers"
+import { applyBroadRepulsionForces, isBetterDrcSnapshot } from "./solverHelpers"
 import type { DrcSnapshot, GlobalDrcBranchPortfolioSolverParams } from "./types"
 
 type PortfolioPhase = "start" | "baseline" | "broad" | "done"
@@ -97,7 +97,10 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
     this.phase = "baseline"
   }
 
-  private startBroadBranch() {
+  private startBroadBranch(
+    baselineSolver: GlobalDrcForceImproveSolver,
+    baselineSnapshot: DrcSnapshot,
+  ): void {
     const broadInputRoutes = applyBroadRepulsionForces(
       this.params.srj,
       this.inputHdRoutes,
@@ -111,11 +114,11 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       this.params.drcEvaluator,
       this.params.connMap,
     )
-    if (this.broadInputSnapshot.count >= this.baselineSnapshot!.count) {
+    if (!isBetterDrcSnapshot(this.broadInputSnapshot, baselineSnapshot)) {
       this.acceptOutput(
-        this.baselineSolver!.getOutput(),
-        this.baselineSnapshot!,
-        this.baselineSolver,
+        baselineSolver.getOutput(),
+        baselineSnapshot,
+        baselineSolver,
       )
       return
     }
@@ -145,9 +148,13 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
     }
 
     if (this.phase === "baseline") {
-      this.stepBranch(this.baselineSolver!, "baseline")
-      if (!this.baselineSolver!.solved) return
-      const baselineRoutes = this.baselineSolver!.getOutput()
+      const baselineSolver = this.baselineSolver
+      if (!baselineSolver) {
+        throw new Error("Baseline phase is missing its DRC repair solver")
+      }
+      this.stepBranch(baselineSolver, "baseline")
+      if (!baselineSolver.solved) return
+      const baselineRoutes = baselineSolver.getOutput()
       this.baselineSnapshot = getDrcSnapshot(
         this.params.srj,
         baselineRoutes,
@@ -155,35 +162,37 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         this.params.connMap,
       )
       if (this.baselineSnapshot.count === 0) {
-        this.acceptOutput(
-          baselineRoutes,
-          this.baselineSnapshot,
-          this.baselineSolver,
-        )
+        this.acceptOutput(baselineRoutes, this.baselineSnapshot, baselineSolver)
         return
       }
-      this.startBroadBranch()
+      this.startBroadBranch(baselineSolver, this.baselineSnapshot)
       return
     }
 
     if (this.phase === "broad") {
-      this.stepBranch(this.broadSolver!, "broad")
-      if (!this.broadSolver!.solved) return
-      const broadRoutes = this.broadSolver!.getOutput()
+      const broadSolver = this.broadSolver
+      const baselineSolver = this.baselineSolver
+      const baselineSnapshot = this.baselineSnapshot
+      if (!broadSolver || !baselineSolver || !baselineSnapshot) {
+        throw new Error("Broad phase is missing its DRC branch state")
+      }
+      this.stepBranch(broadSolver, "broad")
+      if (!broadSolver.solved) return
+      const broadRoutes = broadSolver.getOutput()
       this.broadSnapshot = getDrcSnapshot(
         this.params.srj,
         broadRoutes,
         this.params.drcEvaluator,
         this.params.connMap,
       )
-      if (this.broadSnapshot.count < this.baselineSnapshot!.count) {
-        this.acceptOutput(broadRoutes, this.broadSnapshot, this.broadSolver)
+      if (isBetterDrcSnapshot(this.broadSnapshot, baselineSnapshot)) {
+        this.acceptOutput(broadRoutes, this.broadSnapshot, broadSolver)
         return
       }
       this.acceptOutput(
-        this.baselineSolver!.getOutput(),
-        this.baselineSnapshot!,
-        this.baselineSolver,
+        baselineSolver.getOutput(),
+        baselineSnapshot,
+        baselineSolver,
       )
     }
   }
