@@ -97,7 +97,9 @@ test("keeps the baseline when the broad candidate has more DRC errors", () => {
 
   solver.solve()
 
-  expect(drcEvaluator({ traces: [], routes: solver.getOutput() })).toHaveLength(1)
+  expect(drcEvaluator({ traces: [], routes: solver.getOutput() })).toHaveLength(
+    1,
+  )
   expect(solver.stats.drcBranchPortfolioBaselineDrcIssueCount).toBe(1)
   expect(solver.stats.drcBranchPortfolioBroadInitialDrcIssueCount).toBe(2)
   expect(solver.stats.drcBranchPortfolioBroadFinalDrcIssueCount).toBeUndefined()

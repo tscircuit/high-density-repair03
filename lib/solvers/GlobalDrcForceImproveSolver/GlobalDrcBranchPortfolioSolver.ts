@@ -4,10 +4,7 @@ import type { HighDensityRoute } from "../../types/high-density-types"
 import { GlobalDrcForceImproveSolver } from "./GlobalDrcForceImproveSolver"
 import { getDrcSnapshot } from "./drc-snapshot"
 import { applyBroadRepulsionForces } from "./solverHelpers"
-import type {
-  DrcSnapshot,
-  GlobalDrcBranchPortfolioSolverParams,
-} from "./types"
+import type { DrcSnapshot, GlobalDrcBranchPortfolioSolverParams } from "./types"
 
 type PortfolioPhase = "start" | "baseline" | "broad" | "done"
 
@@ -56,10 +53,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
     ] as const
   }
 
-  private stepBranch(
-    solver: GlobalDrcForceImproveSolver,
-    branchName: string,
-  ) {
+  private stepBranch(solver: GlobalDrcForceImproveSolver, branchName: string) {
     this.activeSubSolver = solver
     solver.step()
     if (solver.failed) {
@@ -85,8 +79,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         this.baselineSnapshot?.count ?? snapshot.count,
       drcBranchPortfolioBroadInitialDrcIssueCount:
         this.broadInputSnapshot?.count,
-      drcBranchPortfolioBroadFinalDrcIssueCount:
-        this.broadSnapshot?.count,
+      drcBranchPortfolioBroadFinalDrcIssueCount: this.broadSnapshot?.count,
       drcBranchPortfolioBroadMaxIterations: this.broadMaxIterations,
       drcBranchPortfolioBroadBranchAttempted: Boolean(this.broadSolver),
       drcBranchPortfolioBroadBranchAccepted:
