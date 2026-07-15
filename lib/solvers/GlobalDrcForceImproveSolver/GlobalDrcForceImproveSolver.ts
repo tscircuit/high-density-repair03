@@ -22,6 +22,7 @@ import {
   cloneRoutes,
   getCenteredErrors,
   getDrcSnapshot,
+  getTargetedClearanceSweepErrors,
   getViaDrcIssueCount,
   isBetterDrcSnapshot,
   materializeRoutes,
@@ -56,6 +57,8 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   readonly drcEvaluator?: DrcEvaluator
   readonly configuredMaxIterations?: number
   readonly enableLargeBoardBroadFallback: boolean
+  readonly enableTargetedErrorSweep: boolean
+  readonly enablePostSolveClearanceRelaxation: boolean
   outputHdRoutes: HighDensityRoute[]
   private initialDrcIssueCount: number | undefined
   private broadForceAccepted = false
@@ -80,6 +83,9 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     this.configuredMaxIterations = params.maxIterations
     this.enableLargeBoardBroadFallback =
       params.enableLargeBoardBroadFallback ?? true
+    this.enableTargetedErrorSweep = params.enableTargetedErrorSweep ?? false
+    this.enablePostSolveClearanceRelaxation =
+      params.enablePostSolveClearanceRelaxation ?? true
     this.outputHdRoutes = params.hdRoutes
     this.MAX_ITERATIONS =
       this.configuredMaxIterations ?? getBaseMaxIterations(this.effort)
@@ -95,6 +101,9 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         drcEvaluator: this.drcEvaluator,
         maxIterations: this.configuredMaxIterations,
         enableLargeBoardBroadFallback: this.enableLargeBoardBroadFallback,
+        enableTargetedErrorSweep: this.enableTargetedErrorSweep,
+        enablePostSolveClearanceRelaxation:
+          this.enablePostSolveClearanceRelaxation,
       },
     ] as const
   }
@@ -135,16 +144,16 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     routes: HighDensityRoute[],
     snapshot: DrcSnapshot,
   ) {
-    const traceRelaxedRoutes = applyTraceToPadClearanceRelaxation(
-      this.srj,
-      routes,
-      this.connMap,
-    )
-    const relaxedRoutes = applyViaToPadClearanceRelaxation(
-      this.srj,
-      traceRelaxedRoutes,
-      this.connMap,
-    )
+    const traceRelaxedRoutes = this.enablePostSolveClearanceRelaxation
+      ? applyTraceToPadClearanceRelaxation(this.srj, routes, this.connMap)
+      : routes
+    const relaxedRoutes = this.enablePostSolveClearanceRelaxation
+      ? applyViaToPadClearanceRelaxation(
+          this.srj,
+          traceRelaxedRoutes,
+          this.connMap,
+        )
+      : routes
     const relaxedSnapshot =
       relaxedRoutes === routes
         ? snapshot
@@ -259,10 +268,65 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     )
     const startErrorIndex = this.errorCursor % centeredErrors.length
 
+    const targetedSweepErrors = this.enableTargetedErrorSweep
+      ? getTargetedClearanceSweepErrors(centeredErrors, this.effort)
+      : []
+    if (targetedSweepErrors.length >= 2) {
+      const candidateRoutes = cloneRoutes(bestRoutes)
+      let changed = false
+      for (const error of targetedSweepErrors) {
+        changed =
+          applyDrcErrorForces(
+            this.srj,
+            candidateRoutes,
+            [error],
+            bestSnapshot.traceRouteIndexById,
+            1,
+            this.connMap,
+          ) || changed
+      }
+
+      if (changed) {
+        const materializedCandidateRoutes = materializeRoutes(candidateRoutes)
+        candidateAttemptsThisStep += 1
+        this.candidateAttempts += 1
+        const candidateSnapshot = getDrcSnapshot(
+          this.srj,
+          materializedCandidateRoutes,
+          this.drcEvaluator,
+          this.connMap,
+        )
+        const candidateViaIssueCount = getViaDrcIssueCount(candidateSnapshot)
+
+        if (
+          isBetterDrcSnapshot(
+            candidateSnapshot,
+            candidateViaIssueCount,
+            bestIssueCount,
+            bestIssueScore,
+            bestViaIssueCount,
+          )
+        ) {
+          bestRoutes = materializedCandidateRoutes
+          bestSnapshot = candidateSnapshot
+          bestIssueCount = candidateSnapshot.count
+          bestIssueScore = candidateSnapshot.issueScore
+          bestViaIssueCount = candidateViaIssueCount
+          this.targetedForceAccepted = true
+          acceptedCandidate = true
+          if (candidateSnapshot.count === 0) {
+            this.acceptSolvedRoutes(bestRoutes, bestSnapshot)
+            return
+          }
+        }
+      }
+    }
+
     for (
       let errorOffset = 0;
       errorOffset < maxErrorsThisStep &&
-      candidateAttemptsThisStep < maxCandidateAttemptsThisStep;
+      candidateAttemptsThisStep < maxCandidateAttemptsThisStep &&
+      !acceptedCandidate;
       errorOffset += 1
     ) {
       const errorIndex = (startErrorIndex + errorOffset) % centeredErrors.length
