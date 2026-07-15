@@ -30,6 +30,11 @@ export type GlobalDrcForceImproveSolverParams = {
   enablePostSolveClearanceRelaxation?: boolean
 }
 
+export type GlobalDrcBranchPortfolioSolverParams =
+  GlobalDrcForceImproveSolverParams & {
+    broadPassMultiplier: number
+  }
+
 export type SolverDeps = Record<string, unknown>
 
 export type SolverOutput = HighDensityRoute[]

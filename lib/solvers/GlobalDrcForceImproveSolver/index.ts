@@ -2,12 +2,14 @@ export {
   GlobalDrcForceImproveSolver,
   setGlobalDrcForceImproveSolverVisualizer,
 } from "./GlobalDrcForceImproveSolver"
+export { GlobalDrcBranchPortfolioSolver } from "./GlobalDrcBranchPortfolioSolver"
 export type { GlobalDrcForceImproveSolverVisualizer } from "./GlobalDrcForceImproveSolver"
 
 export type {
   DrcError,
   DrcEvaluator,
   DrcSnapshot,
+  GlobalDrcBranchPortfolioSolverParams,
   GlobalDrcForceImproveSolverParams,
   SolverDeps,
   SolverOutput,

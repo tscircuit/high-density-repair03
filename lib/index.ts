@@ -1,4 +1,5 @@
 export {
+  GlobalDrcBranchPortfolioSolver,
   GlobalDrcForceImproveSolver,
   setGlobalDrcForceImproveSolverVisualizer,
 } from "./solvers/GlobalDrcForceImproveSolver"
@@ -7,6 +8,7 @@ export type {
   DrcError,
   DrcEvaluator,
   DrcSnapshot,
+  GlobalDrcBranchPortfolioSolverParams,
   GlobalDrcForceImproveSolverVisualizer,
   GlobalDrcForceImproveSolverParams,
   HighDensityRoute,
