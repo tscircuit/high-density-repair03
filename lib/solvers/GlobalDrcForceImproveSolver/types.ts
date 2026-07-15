@@ -32,6 +32,7 @@ export type GlobalDrcForceImproveSolverParams = {
 
 export type GlobalDrcBranchPortfolioSolverParams =
   GlobalDrcForceImproveSolverParams & {
+    broadMaxIterations: number
     broadPassMultiplier: number
   }
 

@@ -14,6 +14,7 @@ type PortfolioPhase = "start" | "baseline" | "broad" | "done"
 export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
   readonly params: GlobalDrcBranchPortfolioSolverParams
   readonly inputHdRoutes: HighDensityRoute[]
+  readonly broadMaxIterations: number
   readonly broadPassMultiplier: number
   outputHdRoutes: HighDensityRoute[]
   private phase: PortfolioPhase = "start"
@@ -33,8 +34,15 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
     if (params.broadPassMultiplier <= 0) {
       throw new Error("broadPassMultiplier must be greater than zero")
     }
+    if (!Number.isInteger(params.broadMaxIterations)) {
+      throw new Error("broadMaxIterations must be an integer")
+    }
+    if (params.broadMaxIterations <= 0) {
+      throw new Error("broadMaxIterations must be greater than zero")
+    }
     this.params = params
     this.inputHdRoutes = params.hdRoutes
+    this.broadMaxIterations = params.broadMaxIterations
     this.broadPassMultiplier = params.broadPassMultiplier
     this.outputHdRoutes = params.hdRoutes
   }
@@ -79,6 +87,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         this.broadInputSnapshot?.count,
       drcBranchPortfolioBroadFinalDrcIssueCount:
         this.broadSnapshot?.count,
+      drcBranchPortfolioBroadMaxIterations: this.broadMaxIterations,
       drcBranchPortfolioBroadBranchAttempted: Boolean(this.broadSolver),
       drcBranchPortfolioBroadBranchAccepted:
         selectedSolver !== undefined && selectedSolver === this.broadSolver,
@@ -109,7 +118,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       this.params.drcEvaluator,
       this.params.connMap,
     )
-    if (this.broadInputSnapshot.count >= this.inputSnapshot!.count) {
+    if (this.broadInputSnapshot.count >= this.baselineSnapshot!.count) {
       this.acceptOutput(
         this.baselineSolver!.getOutput(),
         this.baselineSnapshot!,
@@ -120,6 +129,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
     this.broadSolver = new GlobalDrcForceImproveSolver({
       ...this.params,
       hdRoutes: broadInputRoutes,
+      maxIterations: this.broadMaxIterations,
     })
     this.activeSubSolver = this.broadSolver
     this.phase = "broad"

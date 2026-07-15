@@ -6,7 +6,7 @@ import {
   type SimpleRouteJson,
 } from "../lib"
 
-test("keeps the baseline when the broad branch finishes with more DRC errors", () => {
+test("keeps the baseline when the broad candidate has more DRC errors", () => {
   const collidingRoutes: HighDensityRoute[] = ["A", "B"].map(
     (connectionName, index) => ({
       connectionName,
@@ -91,6 +91,7 @@ test("keeps the baseline when the broad branch finishes with more DRC errors", (
     maxIterations: 4,
     enableLargeBoardBroadFallback: false,
     enablePostSolveClearanceRelaxation: false,
+    broadMaxIterations: 8,
     broadPassMultiplier: 3,
   })
 
@@ -99,6 +100,7 @@ test("keeps the baseline when the broad branch finishes with more DRC errors", (
   expect(drcEvaluator({ traces: [], routes: solver.getOutput() })).toHaveLength(1)
   expect(solver.stats.drcBranchPortfolioBaselineDrcIssueCount).toBe(1)
   expect(solver.stats.drcBranchPortfolioBroadInitialDrcIssueCount).toBe(2)
-  expect(solver.stats.drcBranchPortfolioBroadFinalDrcIssueCount).toBe(2)
+  expect(solver.stats.drcBranchPortfolioBroadFinalDrcIssueCount).toBeUndefined()
+  expect(solver.stats.drcBranchPortfolioBroadBranchAttempted).toBe(false)
   expect(solver.stats.drcBranchPortfolioBroadBranchAccepted).toBe(false)
 })

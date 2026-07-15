@@ -66,6 +66,7 @@ test("uses a broad branch only when it lowers the exact DRC count", () => {
     maxIterations: 2,
     enableLargeBoardBroadFallback: false,
     enablePostSolveClearanceRelaxation: false,
+    broadMaxIterations: 8,
     broadPassMultiplier: 3,
   })
 
