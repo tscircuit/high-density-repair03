@@ -26,7 +26,15 @@ export type GlobalDrcForceImproveSolverParams = {
   drcEvaluator?: DrcEvaluator
   maxIterations?: number
   enableLargeBoardBroadFallback?: boolean
+  enableTargetedErrorSweep?: boolean
+  enablePostSolveClearanceRelaxation?: boolean
 }
+
+export type GlobalDrcBranchPortfolioSolverParams =
+  GlobalDrcForceImproveSolverParams & {
+    broadMaxIterations: number
+    broadPassMultiplier: number
+  }
 
 export type SolverDeps = Record<string, unknown>
 

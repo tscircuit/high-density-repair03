@@ -64,6 +64,13 @@ const OBSTACLE_TRACE_ERROR_TYPES = [
   "pcb_keepout",
 ]
 
+const getDrcErrorType = (error: Record<string, unknown>) =>
+  typeof error.type === "string"
+    ? error.type
+    : typeof error.error_type === "string"
+      ? error.error_type
+      : undefined
+
 const isTraceObstacleDrcError = (error: Record<string, unknown>) => {
   const message =
     typeof error.message === "string" ? error.message.toLowerCase() : ""
@@ -2723,6 +2730,16 @@ const getErrorCenter = (error: Record<string, unknown>): Point | undefined => {
 
 export const getCenteredErrors = (errors: Array<Record<string, unknown>>) =>
   errors.filter((error) => Boolean(getErrorCenter(error)))
+
+export const getTargetedClearanceSweepErrors = (
+  errors: Array<Record<string, unknown>>,
+  effort: number,
+) => {
+  const maxErrors = Math.max(2, Math.round(12 * Math.max(1, effort)))
+  return errors
+    .filter((error) => getDrcErrorType(error) === "pcb_trace_error")
+    .slice(0, maxErrors)
+}
 
 const isViaDrcError = (error: Record<string, unknown>) =>
   Array.isArray(error.pcb_via_ids) ||
