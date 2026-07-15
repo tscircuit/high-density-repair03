@@ -130,8 +130,10 @@ const createSimplifiedTraces = (
 
 const getDrcErrorSeverity = (error: Record<string, unknown>) => {
   const message = typeof error.message === "string" ? error.message : ""
-  const gapMatch = message.match(/gap: (-?\d+(?:\.\d+)?)mm/)
-  const requiredMatch = message.match(/required: (-?\d+(?:\.\d+)?)mm/)
+  const gapMatch = message.match(/(?:gap|clearance): (-?\d+(?:\.\d+)?)mm/)
+  const requiredMatch = message.match(
+    /(?:required|minimum): (-?\d+(?:\.\d+)?)mm/,
+  )
   if (gapMatch && requiredMatch) {
     const gap = Number.parseFloat(gapMatch[1]!)
     const required = Number.parseFloat(requiredMatch[1]!)
@@ -178,6 +180,11 @@ export const getDrcSnapshot = (
       errors: errors as Array<Record<string, unknown>>,
       count: errors.length,
       issueScore: getDrcIssueScore(errors as Array<Record<string, unknown>>),
+      maxIssueSeverity: errors.reduce(
+        (maxSeverity, error) =>
+          Math.max(maxSeverity, getDrcErrorSeverity(error)),
+        0,
+      ),
       traceRouteIndexById,
     }
   }
@@ -208,6 +215,14 @@ export const getDrcSnapshot = (
       (drc.errorsWithCenters.length > 0
         ? drc.errorsWithCenters
         : drc.errors) as unknown as Array<Record<string, unknown>>,
+    ),
+    maxIssueSeverity: drc.errors.reduce(
+      (maxSeverity, error) =>
+        Math.max(
+          maxSeverity,
+          getDrcErrorSeverity(error as unknown as Record<string, unknown>),
+        ),
+      0,
     ),
     traceRouteIndexById,
   }
@@ -2747,8 +2762,13 @@ const isViaDrcError = (error: Record<string, unknown>) =>
     (error.pcb_error_id.startsWith("same_net_vias_close_") ||
       error.pcb_error_id.startsWith("different_net_vias_close_")))
 
-export const getViaDrcIssueCount = (snapshot: DrcSnapshot) =>
-  snapshot.errors.filter(isViaDrcError).length
+export const getViaDrcIssueCount = (snapshot: DrcSnapshot): number => {
+  let count = 0
+  for (const error of snapshot.errors) {
+    if (isViaDrcError(error)) count += 1
+  }
+  return count
+}
 
 const getTraceRouteIndexForError = (
   error: Record<string, unknown>,
@@ -2970,16 +2990,21 @@ export const applyTerminalViaRelocationForError = (
 
 export const isBetterDrcSnapshot = (
   candidateSnapshot: DrcSnapshot,
-  candidateViaIssueCount: number,
-  bestIssueCount: number,
-  bestIssueScore: number,
-  bestViaIssueCount: number,
-) =>
-  candidateSnapshot.count < bestIssueCount ||
-  (candidateSnapshot.count === bestIssueCount &&
-    candidateSnapshot.issueScore < bestIssueScore) ||
-  (candidateSnapshot.count === bestIssueCount &&
-    candidateViaIssueCount < bestViaIssueCount)
+  bestSnapshot: DrcSnapshot,
+): boolean => {
+  if (candidateSnapshot.maxIssueSeverity !== bestSnapshot.maxIssueSeverity) {
+    return candidateSnapshot.maxIssueSeverity < bestSnapshot.maxIssueSeverity
+  }
+  if (candidateSnapshot.issueScore !== bestSnapshot.issueScore) {
+    return candidateSnapshot.issueScore < bestSnapshot.issueScore
+  }
+  if (candidateSnapshot.count !== bestSnapshot.count) {
+    return candidateSnapshot.count < bestSnapshot.count
+  }
+  return (
+    getViaDrcIssueCount(candidateSnapshot) < getViaDrcIssueCount(bestSnapshot)
+  )
+}
 
 export const applyDrcErrorForces = (
   srj: SimpleRouteJson,
