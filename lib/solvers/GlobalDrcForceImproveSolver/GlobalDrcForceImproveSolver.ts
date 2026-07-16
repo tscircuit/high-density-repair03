@@ -4,7 +4,6 @@ import type { GraphicsObject } from "graphics-debug"
 import {
   BROAD_FALLBACK_SMALL_ROUTE_LIMIT,
   EXTENDED_BROAD_FORCE_PASS_MULTIPLIER,
-  LARGE_DRC_COUNT_THRESHOLD,
   MAX_DRC_COUNT_PLATEAU_CHECKS,
   MAX_LARGE_BOARD_BROAD_FALLBACK_MISSES,
   MIN_ITERATIONS_FOR_LARGE_BOARD_BROAD_FALLBACK,
@@ -187,8 +186,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       this.MAX_ITERATIONS >= MIN_ITERATIONS_FOR_LARGE_BOARD_BROAD_FALLBACK
 
     if (
-      (initialDrcIssueCount >= LARGE_DRC_COUNT_THRESHOLD ||
-        needsLargeBoardBroadFallbackWindow) &&
+      needsLargeBoardBroadFallbackWindow &&
       this.iterations < MIN_ITERATIONS_FOR_LARGE_BOARD_BROAD_FALLBACK
     ) {
       if (
