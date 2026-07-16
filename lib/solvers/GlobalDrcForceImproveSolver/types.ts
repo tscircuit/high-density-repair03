@@ -24,6 +24,7 @@ export type GlobalDrcForceImproveSolverParams = {
   connMap?: ConnectivityMap
   effort?: number
   drcEvaluator?: DrcEvaluator
+  viaHoleDiameter?: number
   maxIterations?: number
   enableLargeBoardBroadFallback?: boolean
   enableTargetedErrorSweep?: boolean

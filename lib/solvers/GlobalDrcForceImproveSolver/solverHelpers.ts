@@ -2765,10 +2765,13 @@ const isRouteEndpointEligibleForViaInPad = (
   route: MutableRoute,
   endpoint: MutableRoute["route"][number],
   connMap?: ConnectivityMap,
+  viaHoleDiameter?: number,
 ) => {
   const pcbPortId = endpoint.pcb_port_id
   if (!pcbPortId) return false
-  const viaRadius = route.viaDiameter / 2
+  // The same-net via land can extend past the terminal pad; the drilled hole
+  // must remain inside the pad copper for a valid via-in-pad transition.
+  const viaHoleRadius = (viaHoleDiameter ?? route.viaDiameter) / 2
 
   return srj.obstacles.some((obstacle) => {
     const obstacleZLayers = getObstacleZLayers(obstacle, srj.layerCount)
@@ -2776,13 +2779,13 @@ const isRouteEndpointEligibleForViaInPad = (
       obstacleZLayers.length !== 1 ||
       obstacleZLayers[0] !== endpoint.z ||
       !obstacle.connectedTo.includes(pcbPortId) ||
-      endpoint.x - viaRadius <
+      endpoint.x - viaHoleRadius <
         obstacle.center.x - obstacle.width / 2 - POSITION_EPSILON ||
-      endpoint.x + viaRadius >
+      endpoint.x + viaHoleRadius >
         obstacle.center.x + obstacle.width / 2 + POSITION_EPSILON ||
-      endpoint.y - viaRadius <
+      endpoint.y - viaHoleRadius <
         obstacle.center.y - obstacle.height / 2 - POSITION_EPSILON ||
-      endpoint.y + viaRadius >
+      endpoint.y + viaHoleRadius >
         obstacle.center.y + obstacle.height / 2 + POSITION_EPSILON
     ) {
       return false
@@ -2806,6 +2809,7 @@ export const applyViaInPadLayerMoveForError = (
   traceRouteIndexById: Map<string, number>,
   targetZ: number,
   connMap?: ConnectivityMap,
+  viaHoleDiameter?: number,
 ) => {
   if (getDrcErrorType(error) !== "pcb_pad_trace_clearance_error") return false
   if (targetZ < 0 || targetZ >= srj.layerCount) return false
@@ -2822,8 +2826,20 @@ export const applyViaInPadLayerMoveForError = (
   if (!first.pcb_port_id || !last.pcb_port_id) return false
 
   if (
-    !isRouteEndpointEligibleForViaInPad(srj, route, first, connMap) ||
-    !isRouteEndpointEligibleForViaInPad(srj, route, last, connMap)
+    !isRouteEndpointEligibleForViaInPad(
+      srj,
+      route,
+      first,
+      connMap,
+      viaHoleDiameter,
+    ) ||
+    !isRouteEndpointEligibleForViaInPad(
+      srj,
+      route,
+      last,
+      connMap,
+      viaHoleDiameter,
+    )
   ) {
     return false
   }
@@ -2850,6 +2866,7 @@ export const applyTerminalViaRelocationForError = (
   traceRouteIndexById: Map<string, number>,
   endpointSide: "start" | "end",
   connMap?: ConnectivityMap,
+  viaHoleDiameter?: number,
 ) => {
   if (getDrcErrorType(error) !== "pcb_pad_trace_clearance_error") return false
   const routeIndex = getTraceRouteIndexForError(error, traceRouteIndexById)
@@ -2860,7 +2877,15 @@ export const applyTerminalViaRelocationForError = (
   const originalPoints = route.route.map((point) => ({ ...point }))
   if (endpointSide === "start") {
     const endpoint = originalPoints[0]!
-    if (!isRouteEndpointEligibleForViaInPad(srj, route, endpoint, connMap)) {
+    if (
+      !isRouteEndpointEligibleForViaInPad(
+        srj,
+        route,
+        endpoint,
+        connMap,
+        viaHoleDiameter,
+      )
+    ) {
       return false
     }
 
@@ -2913,7 +2938,15 @@ export const applyTerminalViaRelocationForError = (
   }
 
   const endpoint = originalPoints.at(-1)!
-  if (!isRouteEndpointEligibleForViaInPad(srj, route, endpoint, connMap)) {
+  if (
+    !isRouteEndpointEligibleForViaInPad(
+      srj,
+      route,
+      endpoint,
+      connMap,
+      viaHoleDiameter,
+    )
+  ) {
     return false
   }
   let firstChangedZIndex = -1

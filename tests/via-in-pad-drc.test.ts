@@ -156,7 +156,7 @@ test("via-in-pad layer move lowers full DRC on a terminal route", () => {
   expect(materialized[0]?.route.map((point) => point.z)).toEqual([0, 1, 1, 0])
 })
 
-test("via-in-pad repairs reject terminal pads that cannot contain the via", () => {
+test("via-in-pad repairs require the drill to fit inside the terminal pad", () => {
   const srj: SimpleRouteJson = {
     layerCount: 2,
     minTraceWidth: 0.1,
@@ -196,49 +196,84 @@ test("via-in-pad repairs reject terminal pads that cannot contain the via", () =
     center: { x: 0, y: 0 },
   }
   const traceRouteIndexById = new Map([["trace_0", 0]])
-  const layerMoveRoutes = cloneRoutes([
-    {
-      connectionName: "trace",
-      traceThickness: 0.1,
-      viaDiameter: 0.3,
-      route: [
-        { x: -1.5, y: 0, z: 0, pcb_port_id: "start" },
-        { x: 1.5, y: 0, z: 0, pcb_port_id: "end" },
-      ],
-      vias: [],
-    },
-  ])
-  const relocationRoutes = cloneRoutes([
-    {
-      connectionName: "trace",
-      traceThickness: 0.1,
-      viaDiameter: 0.3,
-      route: [
-        { x: -1.5, y: 0, z: 0, pcb_port_id: "start" },
-        { x: 0, y: 0, z: 0 },
-        { x: 0, y: 0, z: 1 },
-        { x: 1.5, y: 0, z: 1, pcb_port_id: "end" },
-      ],
-      vias: [{ x: 0, y: 0 }],
-    },
-  ])
+  const layerMoveRoute: HighDensityRoute = {
+    connectionName: "trace",
+    traceThickness: 0.1,
+    viaDiameter: 0.3,
+    route: [
+      { x: -1.5, y: 0, z: 0, pcb_port_id: "start" },
+      { x: 1.5, y: 0, z: 0, pcb_port_id: "end" },
+    ],
+    vias: [],
+  }
+  const relocationRoute: HighDensityRoute = {
+    connectionName: "trace",
+    traceThickness: 0.1,
+    viaDiameter: 0.3,
+    route: [
+      { x: -1.5, y: 0, z: 0, pcb_port_id: "start" },
+      { x: 0, y: 0, z: 0 },
+      { x: 0, y: 0, z: 1 },
+      { x: 1.5, y: 0, z: 1, pcb_port_id: "end" },
+    ],
+    vias: [{ x: 0, y: 0 }],
+  }
 
   expect(
     applyViaInPadLayerMoveForError(
       srj,
-      layerMoveRoutes,
+      cloneRoutes([layerMoveRoute]),
       error,
       traceRouteIndexById,
       1,
+      undefined,
+      0.15,
+    ),
+  ).toBe(true)
+  expect(
+    applyTerminalViaRelocationForError(
+      srj,
+      cloneRoutes([relocationRoute]),
+      error,
+      traceRouteIndexById,
+      "start",
+      undefined,
+      0.15,
+    ),
+  ).toBe(true)
+
+  const undersizedPadSrj: SimpleRouteJson = {
+    ...srj,
+    obstacles: [
+      {
+        ...srj.obstacles[0]!,
+        width: 0.1,
+        height: 0.1,
+      },
+      srj.obstacles[1]!,
+    ],
+  }
+
+  expect(
+    applyViaInPadLayerMoveForError(
+      undersizedPadSrj,
+      cloneRoutes([layerMoveRoute]),
+      error,
+      traceRouteIndexById,
+      1,
+      undefined,
+      0.15,
     ),
   ).toBe(false)
   expect(
     applyTerminalViaRelocationForError(
-      srj,
-      relocationRoutes,
+      undersizedPadSrj,
+      cloneRoutes([relocationRoute]),
       error,
       traceRouteIndexById,
       "start",
+      undefined,
+      0.15,
     ),
   ).toBe(false)
 })
@@ -260,8 +295,8 @@ test("the branch portfolio runs via-in-pad repair as its final phase", () => {
         type: "rect",
         layers: ["top"],
         center: { x: -1.5, y: 0 },
-        width: 0.4,
-        height: 0.4,
+        width: 0.2,
+        height: 0.2,
         connectedTo: ["trace", "start"],
       },
       {
@@ -276,8 +311,8 @@ test("the branch portfolio runs via-in-pad repair as its final phase", () => {
         type: "rect",
         layers: ["top"],
         center: { x: 1.5, y: 0 },
-        width: 0.4,
-        height: 0.4,
+        width: 0.2,
+        height: 0.2,
         connectedTo: ["trace", "end"],
       },
     ],
@@ -316,6 +351,7 @@ test("the branch portfolio runs via-in-pad repair as its final phase", () => {
     hdRoutes: [route],
     drcEvaluator,
     viaInPadDrcEvaluator,
+    viaHoleDiameter: 0.15,
     enableViaInPadLayerMoves: true,
     enableLargeBoardBroadFallback: false,
     enablePostSolveClearanceRelaxation: false,

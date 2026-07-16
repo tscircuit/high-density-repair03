@@ -57,6 +57,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   readonly connMap?: ConnectivityMap
   readonly effort: number
   readonly drcEvaluator?: DrcEvaluator
+  readonly viaHoleDiameter?: number
   readonly configuredMaxIterations?: number
   readonly enableLargeBoardBroadFallback: boolean
   readonly enableTargetedErrorSweep: boolean
@@ -86,6 +87,13 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     this.connMap = params.connMap
     this.effort = params.effort ?? 1
     this.drcEvaluator = params.drcEvaluator
+    if (
+      params.viaHoleDiameter !== undefined &&
+      (!Number.isFinite(params.viaHoleDiameter) || params.viaHoleDiameter <= 0)
+    ) {
+      throw new Error("viaHoleDiameter must be a positive finite number")
+    }
+    this.viaHoleDiameter = params.viaHoleDiameter
     this.configuredMaxIterations = params.maxIterations
     this.enableLargeBoardBroadFallback =
       params.enableLargeBoardBroadFallback ?? true
@@ -106,6 +114,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         connMap: this.connMap,
         effort: this.effort,
         drcEvaluator: this.drcEvaluator,
+        viaHoleDiameter: this.viaHoleDiameter,
         maxIterations: this.configuredMaxIterations,
         enableLargeBoardBroadFallback: this.enableLargeBoardBroadFallback,
         enableTargetedErrorSweep: this.enableTargetedErrorSweep,
@@ -322,6 +331,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           bestSnapshot.traceRouteIndexById,
           endpointSide,
           this.connMap,
+          this.viaHoleDiameter,
         )
         if (!changed) continue
 
@@ -369,6 +379,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           bestSnapshot.traceRouteIndexById,
           targetZ,
           this.connMap,
+          this.viaHoleDiameter,
         )
         if (!changed) continue
 
