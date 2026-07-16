@@ -8,7 +8,11 @@ import {
   getDrcSnapshot,
   getViaDrcIssueCount,
 } from "./solverHelpers"
-import type { DrcSnapshot, GlobalDrcBranchPortfolioSolverParams } from "./types"
+import type {
+  DrcEvaluator,
+  DrcSnapshot,
+  GlobalDrcBranchPortfolioSolverParams,
+} from "./types"
 
 type PortfolioPhase = "start" | "branch" | "done"
 
@@ -191,6 +195,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
   readonly broadPassMultiplier: number
   readonly branchStrategies: BranchStrategy[]
   readonly maxConsecutiveNonImprovingBranches: number
+  readonly validationDrcEvaluator?: DrcEvaluator
   outputHdRoutes: HighDensityRoute[]
   private phase: PortfolioPhase = "start"
   private inputSnapshot?: DrcSnapshot
@@ -226,6 +231,8 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
     this.inputHdRoutes = params.hdRoutes
     this.broadMaxIterations = params.broadMaxIterations
     this.broadPassMultiplier = params.broadPassMultiplier
+    this.validationDrcEvaluator =
+      params.validationDrcEvaluator ?? params.drcEvaluator
     this.branchStrategies = getBranchStrategies(
       params.effort ?? 1,
       params.broadPassMultiplier,
@@ -288,7 +295,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
     this.inputSnapshot = getDrcSnapshot(
       this.params.srj,
       this.inputHdRoutes,
-      this.params.drcEvaluator,
+      this.validationDrcEvaluator,
       this.params.connMap,
     )
     this.bestSnapshot = this.inputSnapshot
@@ -299,7 +306,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       const candidateSnapshot = getDrcSnapshot(
         this.params.srj,
         candidateRoutes,
-        this.params.drcEvaluator,
+        this.validationDrcEvaluator,
         this.params.connMap,
       )
       if (
@@ -337,7 +344,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       const branchInputSnapshot = getDrcSnapshot(
         this.params.srj,
         branchInputRoutes,
-        this.params.drcEvaluator,
+        this.validationDrcEvaluator,
         this.params.connMap,
       )
       this.broadInputSnapshot ??= branchInputSnapshot
@@ -353,6 +360,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
 
     const {
       additionalCandidateHdRoutes: _additionalCandidateHdRoutes,
+      validationDrcEvaluator: _validationDrcEvaluator,
       broadMaxIterations: _broadMaxIterations,
       broadPassMultiplier: _broadPassMultiplier,
       ...solverParams
@@ -384,7 +392,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
     const snapshot = getDrcSnapshot(
       this.params.srj,
       routes,
-      this.params.drcEvaluator,
+      this.validationDrcEvaluator,
       this.params.connMap,
     )
     if (strategy.name === "baseline") {

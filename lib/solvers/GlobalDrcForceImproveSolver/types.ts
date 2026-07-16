@@ -38,6 +38,11 @@ export type GlobalDrcBranchPortfolioSolverParams =
     broadMaxIterations: number
     broadPassMultiplier: number
     additionalCandidateHdRoutes?: readonly HighDensityRoute[][]
+    /**
+     * Optional stricter evaluator used only to rank portfolio checkpoints.
+     * Branch solvers continue to use drcEvaluator for movable repair targets.
+     */
+    validationDrcEvaluator?: DrcEvaluator
   }
 
 export type SolverDeps = Record<string, unknown>
