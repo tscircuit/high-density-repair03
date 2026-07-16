@@ -6,7 +6,7 @@ import { getDrcSnapshot } from "./drc-snapshot"
 import { applyBroadRepulsionForces } from "./solverHelpers"
 import type { DrcSnapshot, GlobalDrcBranchPortfolioSolverParams } from "./types"
 
-type PortfolioPhase = "start" | "baseline" | "broad" | "done"
+type PortfolioPhase = "start" | "baseline" | "broad" | "viaInPad" | "done"
 
 export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
   readonly params: GlobalDrcBranchPortfolioSolverParams
@@ -21,6 +21,8 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
   private broadInputSnapshot?: DrcSnapshot
   private broadSnapshot?: DrcSnapshot
   private broadSolver?: GlobalDrcForceImproveSolver
+  private viaInPadSolver?: GlobalDrcForceImproveSolver
+  private portfolioSelectedSolver?: GlobalDrcForceImproveSolver
   private selectedSolver?: GlobalDrcForceImproveSolver
 
   constructor(params: GlobalDrcBranchPortfolioSolverParams) {
@@ -36,6 +38,18 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
     }
     if (params.broadMaxIterations <= 0) {
       throw new Error("broadMaxIterations must be greater than zero")
+    }
+    if (
+      params.viaInPadMaxIterations !== undefined &&
+      !Number.isInteger(params.viaInPadMaxIterations)
+    ) {
+      throw new Error("viaInPadMaxIterations must be an integer")
+    }
+    if (
+      params.viaInPadMaxIterations !== undefined &&
+      params.viaInPadMaxIterations <= 0
+    ) {
+      throw new Error("viaInPadMaxIterations must be greater than zero")
     }
     this.params = params
     this.inputHdRoutes = params.hdRoutes
@@ -61,7 +75,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
     }
   }
 
-  private acceptOutput(
+  private finishWithOutput(
     routes: HighDensityRoute[],
     snapshot: DrcSnapshot,
     selectedSolver?: GlobalDrcForceImproveSolver,
@@ -72,6 +86,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
     this.phase = "done"
     this.progress = 1
     this.stats = {
+      ...(this.portfolioSelectedSolver?.stats ?? {}),
       ...(selectedSolver?.stats ?? {}),
       drcBranchPortfolioInitialDrcIssueCount:
         this.inputSnapshot?.count ?? snapshot.count,
@@ -83,7 +98,11 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       drcBranchPortfolioBroadMaxIterations: this.broadMaxIterations,
       drcBranchPortfolioBroadBranchAttempted: Boolean(this.broadSolver),
       drcBranchPortfolioBroadBranchAccepted:
-        selectedSolver !== undefined && selectedSolver === this.broadSolver,
+        this.portfolioSelectedSolver !== undefined &&
+        this.portfolioSelectedSolver === this.broadSolver,
+      drcBranchPortfolioViaInPadPhaseAttempted: Boolean(this.viaInPadSolver),
+      drcBranchPortfolioViaInPadMaxIterations:
+        this.params.viaInPadMaxIterations,
     }
     this.solved = true
   }
@@ -92,9 +111,40 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
     this.baselineSolver = new GlobalDrcForceImproveSolver({
       ...this.params,
       hdRoutes: this.inputHdRoutes,
+      enableViaInPadLayerMoves: false,
     })
     this.activeSubSolver = this.baselineSolver
     this.phase = "baseline"
+  }
+
+  private startViaInPadPhase(
+    routes: HighDensityRoute[],
+    snapshot: DrcSnapshot,
+    portfolioSelectedSolver?: GlobalDrcForceImproveSolver,
+  ) {
+    this.portfolioSelectedSolver = portfolioSelectedSolver
+    if (
+      !this.params.enableViaInPadLayerMoves ||
+      !this.params.viaInPadDrcEvaluator
+    ) {
+      this.finishWithOutput(routes, snapshot, portfolioSelectedSolver)
+      return
+    }
+
+    this.viaInPadSolver = new GlobalDrcForceImproveSolver({
+      ...this.params,
+      srj: this.params.viaInPadSrj ?? this.params.srj,
+      hdRoutes: routes,
+      drcEvaluator: this.params.viaInPadDrcEvaluator,
+      maxIterations:
+        this.params.viaInPadMaxIterations ?? this.params.maxIterations,
+      enableLargeBoardBroadFallback: false,
+      enableTargetedErrorSweep: false,
+      enablePostSolveClearanceRelaxation: false,
+      enableViaInPadLayerMoves: true,
+    })
+    this.activeSubSolver = this.viaInPadSolver
+    this.phase = "viaInPad"
   }
 
   private startBroadBranch() {
@@ -112,7 +162,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       this.params.connMap,
     )
     if (this.broadInputSnapshot.count >= this.baselineSnapshot!.count) {
-      this.acceptOutput(
+      this.startViaInPadPhase(
         this.baselineSolver!.getOutput(),
         this.baselineSnapshot!,
         this.baselineSolver,
@@ -123,6 +173,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       ...this.params,
       hdRoutes: broadInputRoutes,
       maxIterations: this.broadMaxIterations,
+      enableViaInPadLayerMoves: false,
     })
     this.activeSubSolver = this.broadSolver
     this.phase = "broad"
@@ -137,7 +188,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         this.params.connMap,
       )
       if (this.inputSnapshot.count === 0) {
-        this.acceptOutput(this.inputHdRoutes, this.inputSnapshot)
+        this.startViaInPadPhase(this.inputHdRoutes, this.inputSnapshot)
         return
       }
       this.startBaselineBranch()
@@ -155,7 +206,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         this.params.connMap,
       )
       if (this.baselineSnapshot.count === 0) {
-        this.acceptOutput(
+        this.startViaInPadPhase(
           baselineRoutes,
           this.baselineSnapshot,
           this.baselineSolver,
@@ -177,13 +228,35 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         this.params.connMap,
       )
       if (this.broadSnapshot.count < this.baselineSnapshot!.count) {
-        this.acceptOutput(broadRoutes, this.broadSnapshot, this.broadSolver)
+        this.startViaInPadPhase(
+          broadRoutes,
+          this.broadSnapshot,
+          this.broadSolver,
+        )
         return
       }
-      this.acceptOutput(
+      this.startViaInPadPhase(
         this.baselineSolver!.getOutput(),
         this.baselineSnapshot!,
         this.baselineSolver,
+      )
+      return
+    }
+
+    if (this.phase === "viaInPad") {
+      this.stepBranch(this.viaInPadSolver!, "via-in-pad")
+      if (!this.viaInPadSolver!.solved) return
+      const viaInPadRoutes = this.viaInPadSolver!.getOutput()
+      const viaInPadSnapshot = getDrcSnapshot(
+        this.params.viaInPadSrj ?? this.params.srj,
+        viaInPadRoutes,
+        this.params.viaInPadDrcEvaluator,
+        this.params.connMap,
+      )
+      this.finishWithOutput(
+        viaInPadRoutes,
+        viaInPadSnapshot,
+        this.viaInPadSolver,
       )
     }
   }

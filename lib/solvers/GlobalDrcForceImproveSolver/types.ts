@@ -24,7 +24,6 @@ export type GlobalDrcForceImproveSolverParams = {
   connMap?: ConnectivityMap
   effort?: number
   drcEvaluator?: DrcEvaluator
-  viaInPadDrcEvaluator?: DrcEvaluator
   maxIterations?: number
   enableLargeBoardBroadFallback?: boolean
   enableTargetedErrorSweep?: boolean
@@ -36,6 +35,9 @@ export type GlobalDrcBranchPortfolioSolverParams =
   GlobalDrcForceImproveSolverParams & {
     broadMaxIterations: number
     broadPassMultiplier: number
+    viaInPadDrcEvaluator?: DrcEvaluator
+    viaInPadMaxIterations?: number
+    viaInPadSrj?: SimpleRouteJson
   }
 
 export type SolverDeps = Record<string, unknown>

@@ -6,7 +6,7 @@ import {
   getDrcSnapshot,
   materializeRoutes,
 } from "../lib/solvers/GlobalDrcForceImproveSolver/solverHelpers"
-import { GlobalDrcForceImproveSolver } from "../lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcForceImproveSolver"
+import { GlobalDrcBranchPortfolioSolver } from "../lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcBranchPortfolioSolver"
 import type { DrcEvaluator } from "../lib/solvers/GlobalDrcForceImproveSolver/types"
 import type { SimpleRouteJson } from "../lib/types"
 import type { HighDensityRoute } from "../types/high-density-types"
@@ -156,7 +156,7 @@ test("via-in-pad layer move lowers full DRC on a terminal route", () => {
   expect(materialized[0]?.route.map((point) => point.z)).toEqual([0, 1, 1, 0])
 })
 
-test("via-in-pad candidates can use a dedicated acceptance evaluator", () => {
+test("the branch portfolio runs via-in-pad repair as its final phase", () => {
   const padTraceError = {
     type: "pcb_pad_trace_clearance_error",
     pcb_pad_id: "pcb_smtpad_foreign",
@@ -224,15 +224,19 @@ test("via-in-pad candidates can use a dedicated acceptance evaluator", () => {
       ? { errors: [], errorsWithCenters: [] }
       : { errors: [padTraceError], errorsWithCenters: [padTraceError] }
   }
-  const solver = new GlobalDrcForceImproveSolver({
+  const solver = new GlobalDrcBranchPortfolioSolver({
     srj,
     hdRoutes: [route],
     drcEvaluator,
     viaInPadDrcEvaluator,
+    viaInPadSrj: srj,
     enableViaInPadLayerMoves: true,
     enableLargeBoardBroadFallback: false,
     enablePostSolveClearanceRelaxation: false,
     maxIterations: 1,
+    broadMaxIterations: 1,
+    broadPassMultiplier: 1,
+    viaInPadMaxIterations: 1,
   })
 
   solver.solve()
