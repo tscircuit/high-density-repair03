@@ -178,7 +178,10 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     const isLargeRouteBoard =
       this.inputHdRoutes.length > BROAD_FALLBACK_SMALL_ROUTE_LIMIT &&
       initialDrcIssueCount > 0
-    const needsLargeBoardBroadFallbackWindow = isLargeRouteBoard
+    const needsLargeBoardBroadFallbackWindow =
+      isLargeRouteBoard &&
+      this.enableLargeBoardBroadFallback &&
+      this.MAX_ITERATIONS >= MIN_ITERATIONS_FOR_LARGE_BOARD_BROAD_FALLBACK
 
     if (
       (initialDrcIssueCount >= LARGE_DRC_COUNT_THRESHOLD ||
