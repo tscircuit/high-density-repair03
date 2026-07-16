@@ -59,13 +59,16 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   readonly enableLargeBoardBroadFallback: boolean
   readonly enableTargetedErrorSweep: boolean
   readonly enablePostSolveClearanceRelaxation: boolean
+  readonly targetedErrorStartOffset: number
+  readonly forceScales?: readonly number[]
+  readonly targetedSweepScale: number
   outputHdRoutes: HighDensityRoute[]
   private initialDrcIssueCount: number | undefined
   private broadForceAccepted = false
   private broadForceAttempts = 0
   private targetedForceAccepted = false
   private candidateAttempts = 0
-  private errorCursor = 0
+  private errorCursor: number
   private stalledIterations = 0
   private bestDrcIssueCountSeen: number | undefined
   private bestDrcIssueScoreSeen: number | undefined
@@ -87,6 +90,33 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     this.enableTargetedErrorSweep = params.enableTargetedErrorSweep ?? false
     this.enablePostSolveClearanceRelaxation =
       params.enablePostSolveClearanceRelaxation ?? true
+    if (
+      params.targetedErrorStartOffset !== undefined &&
+      (!Number.isInteger(params.targetedErrorStartOffset) ||
+        params.targetedErrorStartOffset < 0)
+    ) {
+      throw new Error("targetedErrorStartOffset must be a non-negative integer")
+    }
+    if (
+      params.forceScales !== undefined &&
+      (params.forceScales.length === 0 ||
+        params.forceScales.some(
+          (scale) => !Number.isFinite(scale) || scale === 0,
+        ))
+    ) {
+      throw new Error("forceScales must contain finite non-zero values")
+    }
+    if (
+      params.targetedSweepScale !== undefined &&
+      (!Number.isFinite(params.targetedSweepScale) ||
+        params.targetedSweepScale === 0)
+    ) {
+      throw new Error("targetedSweepScale must be a finite non-zero number")
+    }
+    this.targetedErrorStartOffset = params.targetedErrorStartOffset ?? 0
+    this.errorCursor = this.targetedErrorStartOffset
+    this.forceScales = params.forceScales
+    this.targetedSweepScale = params.targetedSweepScale ?? 1
     this.outputHdRoutes = params.hdRoutes
     this.MAX_ITERATIONS =
       this.configuredMaxIterations ?? getBaseMaxIterations(this.effort)
@@ -105,6 +135,9 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         enableTargetedErrorSweep: this.enableTargetedErrorSweep,
         enablePostSolveClearanceRelaxation:
           this.enablePostSolveClearanceRelaxation,
+        targetedErrorStartOffset: this.targetedErrorStartOffset,
+        forceScales: this.forceScales,
+        targetedSweepScale: this.targetedSweepScale,
       },
     ] as const
   }
@@ -285,7 +318,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
             candidateRoutes,
             [error],
             bestSnapshot.traceRouteIndexById,
-            1,
+            this.targetedSweepScale,
             this.connMap,
           ) || changed
       }
@@ -339,7 +372,8 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
 
       this.errorCursor = (errorIndex + 1) % centeredErrors.length
 
-      for (const scale of getForceScalesForEffort(this.effort)) {
+      for (const scale of this.forceScales ??
+        getForceScalesForEffort(this.effort)) {
         if (candidateAttemptsThisStep >= maxCandidateAttemptsThisStep) break
 
         const candidateRoutes = cloneRoutes(bestRoutes)

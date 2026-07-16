@@ -28,12 +28,16 @@ export type GlobalDrcForceImproveSolverParams = {
   enableLargeBoardBroadFallback?: boolean
   enableTargetedErrorSweep?: boolean
   enablePostSolveClearanceRelaxation?: boolean
+  targetedErrorStartOffset?: number
+  forceScales?: readonly number[]
+  targetedSweepScale?: number
 }
 
 export type GlobalDrcBranchPortfolioSolverParams =
   GlobalDrcForceImproveSolverParams & {
     broadMaxIterations: number
     broadPassMultiplier: number
+    additionalCandidateHdRoutes?: HighDensityRoute[][]
   }
 
 export type SolverDeps = Record<string, unknown>

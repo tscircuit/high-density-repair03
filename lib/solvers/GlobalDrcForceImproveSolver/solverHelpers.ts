@@ -2772,6 +2772,8 @@ export const isBetterDrcSnapshot = (
   (candidateSnapshot.count === bestIssueCount &&
     candidateSnapshot.issueScore < bestIssueScore) ||
   (candidateSnapshot.count === bestIssueCount &&
+    Math.abs(candidateSnapshot.issueScore - bestIssueScore) <=
+      POSITION_EPSILON &&
     candidateViaIssueCount < bestViaIssueCount)
 
 export const applyDrcErrorForces = (
