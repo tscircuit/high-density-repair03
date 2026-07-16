@@ -57,6 +57,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   readonly connMap?: ConnectivityMap
   readonly effort: number
   readonly drcEvaluator?: DrcEvaluator
+  readonly viaInPadDrcEvaluator?: DrcEvaluator
   readonly configuredMaxIterations?: number
   readonly enableLargeBoardBroadFallback: boolean
   readonly enableTargetedErrorSweep: boolean
@@ -86,6 +87,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     this.connMap = params.connMap
     this.effort = params.effort ?? 1
     this.drcEvaluator = params.drcEvaluator
+    this.viaInPadDrcEvaluator = params.viaInPadDrcEvaluator
     this.configuredMaxIterations = params.maxIterations
     this.enableLargeBoardBroadFallback =
       params.enableLargeBoardBroadFallback ?? true
@@ -106,6 +108,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         connMap: this.connMap,
         effort: this.effort,
         drcEvaluator: this.drcEvaluator,
+        viaInPadDrcEvaluator: this.viaInPadDrcEvaluator,
         maxIterations: this.configuredMaxIterations,
         enableLargeBoardBroadFallback: this.enableLargeBoardBroadFallback,
         enableTargetedErrorSweep: this.enableTargetedErrorSweep,
@@ -292,6 +295,22 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           (this.padTopologyErrorCursor + offset) % padTraceErrors.length
         ]!,
     )
+    const viaInPadBaselineSnapshot =
+      this.enableViaInPadLayerMoves &&
+      orderedPadTopologyErrors.length > 0 &&
+      this.viaInPadDrcEvaluator
+        ? getDrcSnapshot(
+            this.srj,
+            bestRoutes,
+            this.viaInPadDrcEvaluator,
+            this.connMap,
+          )
+        : bestSnapshot
+    const viaInPadBaselineIssueCount = viaInPadBaselineSnapshot.count
+    const viaInPadBaselineIssueScore = viaInPadBaselineSnapshot.issueScore
+    const viaInPadBaselineViaIssueCount = getViaDrcIssueCount(
+      viaInPadBaselineSnapshot,
+    )
     for (const error of this.enableViaInPadLayerMoves
       ? orderedPadTopologyErrors
       : []) {
@@ -309,6 +328,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         | {
             routes: HighDensityRoute[]
             snapshot: DrcSnapshot
+            acceptanceSnapshot: DrcSnapshot
             viaIssueCount: number
           }
         | undefined
@@ -335,17 +355,29 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           this.drcEvaluator,
           this.connMap,
         )
-        const candidateViaIssueCount = getViaDrcIssueCount(candidateSnapshot)
+        const candidateAcceptanceSnapshot = this.viaInPadDrcEvaluator
+          ? getDrcSnapshot(
+              this.srj,
+              materializedCandidateRoutes,
+              this.viaInPadDrcEvaluator,
+              this.connMap,
+            )
+          : candidateSnapshot
+        const candidateViaIssueCount = getViaDrcIssueCount(
+          candidateAcceptanceSnapshot,
+        )
         const comparisonCount =
-          bestViaInPadCandidate?.snapshot.count ?? bestIssueCount
+          bestViaInPadCandidate?.acceptanceSnapshot.count ??
+          viaInPadBaselineIssueCount
         const comparisonScore =
-          bestViaInPadCandidate?.snapshot.issueScore ?? bestIssueScore
+          bestViaInPadCandidate?.acceptanceSnapshot.issueScore ??
+          viaInPadBaselineIssueScore
         const comparisonViaIssueCount =
-          bestViaInPadCandidate?.viaIssueCount ?? bestViaIssueCount
+          bestViaInPadCandidate?.viaIssueCount ?? viaInPadBaselineViaIssueCount
 
         if (
           isBetterDrcSnapshot(
-            candidateSnapshot,
+            candidateAcceptanceSnapshot,
             candidateViaIssueCount,
             comparisonCount,
             comparisonScore,
@@ -355,6 +387,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           bestViaInPadCandidate = {
             routes: materializedCandidateRoutes,
             snapshot: candidateSnapshot,
+            acceptanceSnapshot: candidateAcceptanceSnapshot,
             viaIssueCount: candidateViaIssueCount,
           }
         }
@@ -382,17 +415,29 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           this.drcEvaluator,
           this.connMap,
         )
-        const candidateViaIssueCount = getViaDrcIssueCount(candidateSnapshot)
+        const candidateAcceptanceSnapshot = this.viaInPadDrcEvaluator
+          ? getDrcSnapshot(
+              this.srj,
+              materializedCandidateRoutes,
+              this.viaInPadDrcEvaluator,
+              this.connMap,
+            )
+          : candidateSnapshot
+        const candidateViaIssueCount = getViaDrcIssueCount(
+          candidateAcceptanceSnapshot,
+        )
         const comparisonCount =
-          bestViaInPadCandidate?.snapshot.count ?? bestIssueCount
+          bestViaInPadCandidate?.acceptanceSnapshot.count ??
+          viaInPadBaselineIssueCount
         const comparisonScore =
-          bestViaInPadCandidate?.snapshot.issueScore ?? bestIssueScore
+          bestViaInPadCandidate?.acceptanceSnapshot.issueScore ??
+          viaInPadBaselineIssueScore
         const comparisonViaIssueCount =
-          bestViaInPadCandidate?.viaIssueCount ?? bestViaIssueCount
+          bestViaInPadCandidate?.viaIssueCount ?? viaInPadBaselineViaIssueCount
 
         if (
           isBetterDrcSnapshot(
-            candidateSnapshot,
+            candidateAcceptanceSnapshot,
             candidateViaIssueCount,
             comparisonCount,
             comparisonScore,
@@ -402,6 +447,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           bestViaInPadCandidate = {
             routes: materializedCandidateRoutes,
             snapshot: candidateSnapshot,
+            acceptanceSnapshot: candidateAcceptanceSnapshot,
             viaIssueCount: candidateViaIssueCount,
           }
         }
@@ -412,7 +458,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         bestSnapshot = bestViaInPadCandidate.snapshot
         bestIssueCount = bestSnapshot.count
         bestIssueScore = bestSnapshot.issueScore
-        bestViaIssueCount = bestViaInPadCandidate.viaIssueCount
+        bestViaIssueCount = getViaDrcIssueCount(bestSnapshot)
         this.targetedForceAccepted = true
         this.viaInPadCandidatesAccepted += 1
         acceptedCandidate = true
