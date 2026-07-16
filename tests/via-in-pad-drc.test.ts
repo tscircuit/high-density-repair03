@@ -156,6 +156,93 @@ test("via-in-pad layer move lowers full DRC on a terminal route", () => {
   expect(materialized[0]?.route.map((point) => point.z)).toEqual([0, 1, 1, 0])
 })
 
+test("via-in-pad repairs reject terminal pads that cannot contain the via", () => {
+  const srj: SimpleRouteJson = {
+    layerCount: 2,
+    minTraceWidth: 0.1,
+    minViaDiameter: 0.3,
+    bounds: { minX: -2, minY: -2, maxX: 2, maxY: 2 },
+    obstacles: [
+      {
+        type: "rect",
+        layers: ["top"],
+        center: { x: -1.5, y: 0 },
+        width: 0.2,
+        height: 0.2,
+        connectedTo: ["trace", "start"],
+      },
+      {
+        type: "rect",
+        layers: ["top"],
+        center: { x: 1.5, y: 0 },
+        width: 0.4,
+        height: 0.4,
+        connectedTo: ["trace", "end"],
+      },
+    ],
+    connections: [
+      {
+        name: "trace",
+        pointsToConnect: [
+          { x: -1.5, y: 0, layer: "top", pointId: "start" },
+          { x: 1.5, y: 0, layer: "top", pointId: "end" },
+        ],
+      },
+    ],
+  }
+  const error = {
+    type: "pcb_pad_trace_clearance_error",
+    pcb_trace_id: "trace_0",
+    center: { x: 0, y: 0 },
+  }
+  const traceRouteIndexById = new Map([["trace_0", 0]])
+  const layerMoveRoutes = cloneRoutes([
+    {
+      connectionName: "trace",
+      traceThickness: 0.1,
+      viaDiameter: 0.3,
+      route: [
+        { x: -1.5, y: 0, z: 0, pcb_port_id: "start" },
+        { x: 1.5, y: 0, z: 0, pcb_port_id: "end" },
+      ],
+      vias: [],
+    },
+  ])
+  const relocationRoutes = cloneRoutes([
+    {
+      connectionName: "trace",
+      traceThickness: 0.1,
+      viaDiameter: 0.3,
+      route: [
+        { x: -1.5, y: 0, z: 0, pcb_port_id: "start" },
+        { x: 0, y: 0, z: 0 },
+        { x: 0, y: 0, z: 1 },
+        { x: 1.5, y: 0, z: 1, pcb_port_id: "end" },
+      ],
+      vias: [{ x: 0, y: 0 }],
+    },
+  ])
+
+  expect(
+    applyViaInPadLayerMoveForError(
+      srj,
+      layerMoveRoutes,
+      error,
+      traceRouteIndexById,
+      1,
+    ),
+  ).toBe(false)
+  expect(
+    applyTerminalViaRelocationForError(
+      srj,
+      relocationRoutes,
+      error,
+      traceRouteIndexById,
+      "start",
+    ),
+  ).toBe(false)
+})
+
 test("the branch portfolio runs via-in-pad repair as its final phase", () => {
   const padTraceError = {
     type: "pcb_pad_trace_clearance_error",
@@ -229,7 +316,6 @@ test("the branch portfolio runs via-in-pad repair as its final phase", () => {
     hdRoutes: [route],
     drcEvaluator,
     viaInPadDrcEvaluator,
-    viaInPadSrj: srj,
     enableViaInPadLayerMoves: true,
     enableLargeBoardBroadFallback: false,
     enablePostSolveClearanceRelaxation: false,

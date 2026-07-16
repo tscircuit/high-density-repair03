@@ -2760,7 +2760,7 @@ const getTraceRouteIndexForError = (
     : parseTraceRouteIndex(error)
 }
 
-const isRouteEndpointOnConnectedSingleLayerPad = (
+const isRouteEndpointEligibleForViaInPad = (
   srj: SimpleRouteJson,
   route: MutableRoute,
   endpoint: MutableRoute["route"][number],
@@ -2768,6 +2768,7 @@ const isRouteEndpointOnConnectedSingleLayerPad = (
 ) => {
   const pcbPortId = endpoint.pcb_port_id
   if (!pcbPortId) return false
+  const viaRadius = route.viaDiameter / 2
 
   return srj.obstacles.some((obstacle) => {
     const obstacleZLayers = getObstacleZLayers(obstacle, srj.layerCount)
@@ -2775,10 +2776,14 @@ const isRouteEndpointOnConnectedSingleLayerPad = (
       obstacleZLayers.length !== 1 ||
       obstacleZLayers[0] !== endpoint.z ||
       !obstacle.connectedTo.includes(pcbPortId) ||
-      endpoint.x < obstacle.center.x - obstacle.width / 2 - POSITION_EPSILON ||
-      endpoint.x > obstacle.center.x + obstacle.width / 2 + POSITION_EPSILON ||
-      endpoint.y < obstacle.center.y - obstacle.height / 2 - POSITION_EPSILON ||
-      endpoint.y > obstacle.center.y + obstacle.height / 2 + POSITION_EPSILON
+      endpoint.x - viaRadius <
+        obstacle.center.x - obstacle.width / 2 - POSITION_EPSILON ||
+      endpoint.x + viaRadius >
+        obstacle.center.x + obstacle.width / 2 + POSITION_EPSILON ||
+      endpoint.y - viaRadius <
+        obstacle.center.y - obstacle.height / 2 - POSITION_EPSILON ||
+      endpoint.y + viaRadius >
+        obstacle.center.y + obstacle.height / 2 + POSITION_EPSILON
     ) {
       return false
     }
@@ -2817,8 +2822,8 @@ export const applyViaInPadLayerMoveForError = (
   if (!first.pcb_port_id || !last.pcb_port_id) return false
 
   if (
-    !isRouteEndpointOnConnectedSingleLayerPad(srj, route, first, connMap) ||
-    !isRouteEndpointOnConnectedSingleLayerPad(srj, route, last, connMap)
+    !isRouteEndpointEligibleForViaInPad(srj, route, first, connMap) ||
+    !isRouteEndpointEligibleForViaInPad(srj, route, last, connMap)
   ) {
     return false
   }
@@ -2855,9 +2860,7 @@ export const applyTerminalViaRelocationForError = (
   const originalPoints = route.route.map((point) => ({ ...point }))
   if (endpointSide === "start") {
     const endpoint = originalPoints[0]!
-    if (
-      !isRouteEndpointOnConnectedSingleLayerPad(srj, route, endpoint, connMap)
-    ) {
+    if (!isRouteEndpointEligibleForViaInPad(srj, route, endpoint, connMap)) {
       return false
     }
 
@@ -2910,9 +2913,7 @@ export const applyTerminalViaRelocationForError = (
   }
 
   const endpoint = originalPoints.at(-1)!
-  if (
-    !isRouteEndpointOnConnectedSingleLayerPad(srj, route, endpoint, connMap)
-  ) {
+  if (!isRouteEndpointEligibleForViaInPad(srj, route, endpoint, connMap)) {
     return false
   }
   let firstChangedZIndex = -1

@@ -37,7 +37,6 @@ export type GlobalDrcBranchPortfolioSolverParams =
     broadPassMultiplier: number
     viaInPadDrcEvaluator?: DrcEvaluator
     viaInPadMaxIterations?: number
-    viaInPadSrj?: SimpleRouteJson
   }
 
 export type SolverDeps = Record<string, unknown>

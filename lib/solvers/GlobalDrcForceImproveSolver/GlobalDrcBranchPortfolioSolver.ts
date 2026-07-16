@@ -133,7 +133,6 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
 
     this.viaInPadSolver = new GlobalDrcForceImproveSolver({
       ...this.params,
-      srj: this.params.viaInPadSrj ?? this.params.srj,
       hdRoutes: routes,
       drcEvaluator: this.params.viaInPadDrcEvaluator,
       maxIterations:
@@ -248,7 +247,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       if (!this.viaInPadSolver!.solved) return
       const viaInPadRoutes = this.viaInPadSolver!.getOutput()
       const viaInPadSnapshot = getDrcSnapshot(
-        this.params.viaInPadSrj ?? this.params.srj,
+        this.params.srj,
         viaInPadRoutes,
         this.params.viaInPadDrcEvaluator,
         this.params.connMap,
