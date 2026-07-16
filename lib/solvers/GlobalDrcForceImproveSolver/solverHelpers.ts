@@ -2736,10 +2736,7 @@ export const getTargetedClearanceSweepErrors = (
   errors: Array<Record<string, unknown>>,
   effort: number,
 ) => {
-  const maxErrors = Math.max(
-    2,
-    getMaxTargetedSweepErrorsForEffort(effort),
-  )
+  const maxErrors = Math.max(2, getMaxTargetedSweepErrorsForEffort(effort))
   return errors
     .filter((error) => getDrcErrorType(error) === "pcb_trace_error")
     .slice(0, maxErrors)
