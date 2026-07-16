@@ -104,9 +104,7 @@ test("keeps the baseline when exploratory branches do not improve it", () => {
   expect(
     solver.stats.drcBranchPortfolioBroadInitialDrcIssueCount,
   ).toBeGreaterThanOrEqual(1)
-  expect(
-    solver.stats.drcBranchPortfolioBroadFinalDrcIssueCount,
-  ).toBeGreaterThanOrEqual(1)
-  expect(solver.stats.drcBranchPortfolioBroadBranchAttempted).toBe(true)
+  expect(solver.stats.drcBranchPortfolioBroadFinalDrcIssueCount).toBeUndefined()
+  expect(solver.stats.drcBranchPortfolioBroadBranchAttempted).toBe(false)
   expect(solver.stats.drcBranchPortfolioBroadBranchAccepted).toBe(false)
 })

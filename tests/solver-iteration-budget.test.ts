@@ -92,6 +92,8 @@ test("plateau-stops high DRC boards when no candidate improves them", () => {
       minViaDiameter: 0.3,
     },
     hdRoutes: [],
+    effort: 5,
+    maxIterations: 96,
     drcEvaluator: () =>
       Array.from({ length: 36 }, (_, index) => ({
         message: `synthetic centered DRC ${index}`,

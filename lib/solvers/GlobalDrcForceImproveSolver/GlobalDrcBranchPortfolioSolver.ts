@@ -114,6 +114,19 @@ const getBranchStrategies = (
   broadPassMultiplier: number,
 ): BranchStrategy[] => {
   const effortScale = Number.isFinite(effort) ? Math.max(1, effort) : 1
+  if (effortScale <= 1) {
+    return [
+      {
+        name: "baseline",
+        targetedErrorStartOffset: 0,
+      },
+      {
+        name: "broad",
+        broadPassMultiplier,
+        targetedErrorStartOffset: 0,
+      },
+    ]
+  }
   const branchLimit = Math.min(8, 2 + Math.ceil(Math.log2(effortScale)))
   const strategies: BranchStrategy[] = [
     {
@@ -266,7 +279,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       drcBranchPortfolioSelectedBranch: this.selectedBranchName,
       drcBranchPortfolioBroadBranchAttempted: this.broadBranchesAttempted > 0,
       drcBranchPortfolioBroadBranchAccepted:
-        this.selectedBranchName.startsWith("broad-"),
+        this.selectedBranchName.startsWith("broad"),
     }
     this.solved = true
   }
@@ -328,6 +341,13 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         this.params.connMap,
       )
       this.broadInputSnapshot ??= branchInputSnapshot
+      if (
+        strategy.name === "broad" &&
+        branchInputSnapshot.count >= this.bestSnapshot!.count
+      ) {
+        this.finishPortfolio()
+        return
+      }
       this.broadBranchesAttempted += 1
     }
 

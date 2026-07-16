@@ -22,6 +22,7 @@ test("large boards still plateau-stop when broad fallback is disabled", () => {
       minViaDiameter: 0.3,
     },
     hdRoutes,
+    effort: 5,
     maxIterations: 160,
     enableLargeBoardBroadFallback: false,
     drcEvaluator: () => [
