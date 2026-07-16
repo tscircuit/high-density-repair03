@@ -13,7 +13,6 @@ import {
   sharesNet,
 } from "./netUtils"
 import {
-  BROAD_FORCE_PASSES,
   BROAD_MAX_MOVE,
   BROAD_SPATIAL_CELL_SIZE_MIN,
   CLEARANCE_SLACK,
@@ -23,6 +22,8 @@ import {
   PREFERRED_TRACE_TO_PAD_CLEARANCE,
   TRACE_PAD_REPAIR_MAX_MOVE,
   VIA_PAIR_REPAIR_MAX_MOVE,
+  getBroadForcePassesForEffort,
+  getMaxTargetedSweepErrorsForEffort,
   getTraceToPadEdgeClearance,
   getViaEdgeToPadEdgeClearance,
 } from "./solverConfig"
@@ -2674,7 +2675,7 @@ export const applyBroadRepulsionForces = (
   const mutableRoutes = cloneRoutes(routes)
   const maxPasses = Math.max(
     2,
-    Math.round(BROAD_FORCE_PASSES * Math.max(1, effort) * passMultiplier),
+    getBroadForcePassesForEffort(effort, passMultiplier),
   )
   let changed = false
 
@@ -2735,7 +2736,10 @@ export const getTargetedClearanceSweepErrors = (
   errors: Array<Record<string, unknown>>,
   effort: number,
 ) => {
-  const maxErrors = Math.max(2, Math.round(12 * Math.max(1, effort)))
+  const maxErrors = Math.max(
+    2,
+    getMaxTargetedSweepErrorsForEffort(effort),
+  )
   return errors
     .filter((error) => getDrcErrorType(error) === "pcb_trace_error")
     .slice(0, maxErrors)

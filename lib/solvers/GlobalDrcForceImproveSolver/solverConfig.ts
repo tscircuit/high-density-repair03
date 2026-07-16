@@ -1,6 +1,8 @@
 import type { SimpleRouteJson } from "../../types"
 
 const BASE_MAX_TARGETED_CANDIDATE_ATTEMPTS = 3
+const BASE_MAX_TARGETED_ERRORS_PER_STEP = 1
+const BASE_MAX_TARGETED_SWEEP_ERRORS = 12
 const BASE_MAX_ITERATIONS_PER_EFFORT = 48
 const DEEP_ERROR_FORCE_SCALES = [1, 1.75, -1] as const
 const FAST_ERROR_FORCE_SCALES = [1, 1.75, -1] as const
@@ -73,8 +75,16 @@ export const getDrcCountImprovementCheckInterval = (
 export const getForceScalesForEffort = (effort: number) =>
   effort >= 2 ? DEEP_ERROR_FORCE_SCALES : FAST_ERROR_FORCE_SCALES
 
-export const getMaxTargetedCandidateAttemptsForEffort = (effort: number) =>
-  Math.max(
-    1,
-    Math.round(BASE_MAX_TARGETED_CANDIDATE_ATTEMPTS * Math.max(1, effort)),
-  )
+export const getMaxTargetedCandidateAttemptsForEffort = (_effort: number) =>
+  BASE_MAX_TARGETED_CANDIDATE_ATTEMPTS
+
+export const getMaxTargetedErrorsPerStepForEffort = (_effort: number) =>
+  BASE_MAX_TARGETED_ERRORS_PER_STEP
+
+export const getMaxTargetedSweepErrorsForEffort = (_effort: number) =>
+  BASE_MAX_TARGETED_SWEEP_ERRORS
+
+export const getBroadForcePassesForEffort = (
+  _effort: number,
+  passMultiplier: number,
+) => Math.max(2, Math.round(BROAD_FORCE_PASSES * passMultiplier))

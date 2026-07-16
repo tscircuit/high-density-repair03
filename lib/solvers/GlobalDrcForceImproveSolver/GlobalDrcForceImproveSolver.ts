@@ -14,6 +14,7 @@ import {
   getForceScalesForEffort,
   getLargeBoardBroadFallbackCadence,
   getMaxTargetedCandidateAttemptsForEffort,
+  getMaxTargetedErrorsPerStepForEffort,
   getRouteComplexityMinIterations,
 } from "./solverConfig"
 import {
@@ -62,6 +63,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   outputHdRoutes: HighDensityRoute[]
   private initialDrcIssueCount: number | undefined
   private broadForceAccepted = false
+  private broadForceAttempts = 0
   private targetedForceAccepted = false
   private candidateAttempts = 0
   private errorCursor = 0
@@ -114,6 +116,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       finalDrcIssueCount: snapshot.count,
       globalDrcForceImproveMaxIterations: this.MAX_ITERATIONS,
       globalDrcForceImproveBroadForceAccepted: this.broadForceAccepted,
+      globalDrcForceImproveBroadForceAttempts: this.broadForceAttempts,
       globalDrcForceImproveTargetedForceAccepted: this.targetedForceAccepted,
       globalDrcForceImproveCandidateAttempts: this.candidateAttempts,
       globalDrcForceImproveStalledIterations: this.stalledIterations,
@@ -267,7 +270,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     let attemptedPeriodicLargeBoardBroadFallback = false
     const maxErrorsThisStep = Math.min(
       centeredErrors.length,
-      Math.max(1, Math.ceil(this.effort)),
+      getMaxTargetedErrorsPerStepForEffort(this.effort),
     )
     const startErrorIndex = this.errorCursor % centeredErrors.length
 
@@ -404,12 +407,15 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     if (
       !acceptedCandidate &&
       (canAffordBroadFallback ||
-        (this.effort >= 2 && this.stalledIterations >= 2) ||
+        (this.enableLargeBoardBroadFallback &&
+          this.effort >= 2 &&
+          this.stalledIterations >= 2) ||
         shouldTryPeriodicLargeBoardBroadFallback)
     ) {
       attemptedPeriodicLargeBoardBroadFallback =
         shouldTryPeriodicLargeBoardBroadFallback
       for (const passMultiplier of [1, EXTENDED_BROAD_FORCE_PASS_MULTIPLIER]) {
+        this.broadForceAttempts += 1
         const broadCandidateRoutes = applyBroadRepulsionForces(
           this.srj,
           bestRoutes,
