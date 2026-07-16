@@ -1,5 +1,5 @@
-import type { GraphicsObject } from "graphics-debug"
 import type { ConnectivityMap } from "circuit-json-to-connectivity-map"
+import type { GraphicsObject } from "graphics-debug"
 import type { HighDensityRoute } from "../../types/high-density-types"
 import { BaseSolver } from "../BaseSolver"
 import { GlobalDrcForceImproveSolver } from "./GlobalDrcForceImproveSolver"
@@ -14,7 +14,7 @@ import type {
   GlobalDrcBranchPortfolioSolverParams,
 } from "./types"
 
-type PortfolioPhase = "start" | "branch" | "done"
+type PortfolioPhase = "start" | "branch" | "viaInPad" | "done"
 
 type BranchStrategy = {
   name: string
@@ -204,6 +204,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
   private broadInputSnapshot?: DrcSnapshot
   private broadSnapshot?: DrcSnapshot
   private activeBranchSolver?: GlobalDrcForceImproveSolver
+  private viaInPadSolver?: GlobalDrcForceImproveSolver
   private selectedSolver?: GlobalDrcForceImproveSolver
   private selectedBranchName = "input"
   private activeBranchStrategy?: BranchStrategy
@@ -212,6 +213,8 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
   private branchesAccepted = 0
   private consecutiveNonImprovingBranches = 0
   private broadBranchesAttempted = 0
+  private viaInPadAttempted = false
+  private viaInPadAccepted = false
 
   constructor(params: GlobalDrcBranchPortfolioSolverParams) {
     super()
@@ -226,6 +229,18 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
     }
     if (params.broadMaxIterations <= 0) {
       throw new Error("broadMaxIterations must be greater than zero")
+    }
+    if (
+      params.viaInPadMaxIterations !== undefined &&
+      !Number.isInteger(params.viaInPadMaxIterations)
+    ) {
+      throw new Error("viaInPadMaxIterations must be an integer")
+    }
+    if (
+      params.viaInPadMaxIterations !== undefined &&
+      params.viaInPadMaxIterations <= 0
+    ) {
+      throw new Error("viaInPadMaxIterations must be greater than zero")
     }
     this.params = params
     this.inputHdRoutes = params.hdRoutes
@@ -261,6 +276,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
   private finishPortfolio(): void {
     this.activeSubSolver = null
     this.activeBranchSolver = undefined
+    this.viaInPadSolver = undefined
     this.activeBranchStrategy = undefined
     this.phase = "done"
     this.progress = 1
@@ -287,6 +303,10 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       drcBranchPortfolioBroadBranchAttempted: this.broadBranchesAttempted > 0,
       drcBranchPortfolioBroadBranchAccepted:
         this.selectedBranchName.startsWith("broad"),
+      drcBranchPortfolioViaInPadPhaseAttempted: this.viaInPadAttempted,
+      drcBranchPortfolioViaInPadAccepted: this.viaInPadAccepted,
+      drcBranchPortfolioViaInPadMaxIterations:
+        this.params.viaInPadMaxIterations,
     }
     this.solved = true
   }
@@ -325,10 +345,45 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
     }
   }
 
+  private startViaInPadPhase(): void {
+    if (
+      this.bestSnapshot!.count === 0 ||
+      !this.params.enableViaInPadLayerMoves ||
+      !this.params.viaInPadDrcEvaluator
+    ) {
+      this.finishPortfolio()
+      return
+    }
+
+    const {
+      additionalCandidateHdRoutes: _additionalCandidateHdRoutes,
+      validationDrcEvaluator: _validationDrcEvaluator,
+      viaInPadDrcEvaluator,
+      viaInPadMaxIterations,
+      broadMaxIterations: _broadMaxIterations,
+      broadPassMultiplier: _broadPassMultiplier,
+      ...solverParams
+    } = this.params
+    this.viaInPadAttempted = true
+    this.viaInPadSolver = new GlobalDrcForceImproveSolver({
+      ...solverParams,
+      hdRoutes: this.outputHdRoutes,
+      drcEvaluator: viaInPadDrcEvaluator,
+      maxIterations: viaInPadMaxIterations ?? this.params.maxIterations,
+      enableLargeBoardBroadFallback: false,
+      enableTargetedErrorSweep: false,
+      enablePostSolveClearanceRelaxation: false,
+      enableViaInPadLayerMoves: true,
+    })
+    this.activeSubSolver = this.viaInPadSolver
+    this.phase = "viaInPad"
+    this.progress = 0.95
+  }
+
   private startNextBranch(): void {
     const strategy = this.branchStrategies[this.nextBranchIndex]
     if (!strategy) {
-      this.finishPortfolio()
+      this.startViaInPadPhase()
       return
     }
 
@@ -352,7 +407,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         strategy.name === "broad" &&
         branchInputSnapshot.count >= this.bestSnapshot!.count
       ) {
-        this.finishPortfolio()
+        this.startViaInPadPhase()
         return
       }
       this.broadBranchesAttempted += 1
@@ -361,6 +416,8 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
     const {
       additionalCandidateHdRoutes: _additionalCandidateHdRoutes,
       validationDrcEvaluator: _validationDrcEvaluator,
+      viaInPadDrcEvaluator: _viaInPadDrcEvaluator,
+      viaInPadMaxIterations: _viaInPadMaxIterations,
       broadMaxIterations: _broadMaxIterations,
       broadPassMultiplier: _broadPassMultiplier,
       ...solverParams
@@ -377,6 +434,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       targetedErrorStartOffset: strategy.targetedErrorStartOffset,
       targetedSweepScale:
         strategy.targetedSweepScale ?? this.params.targetedSweepScale,
+      enableViaInPadLayerMoves: false,
     })
     this.activeSubSolver = this.activeBranchSolver
     this.nextBranchIndex += 1
@@ -432,10 +490,36 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       this.consecutiveNonImprovingBranches >=
         this.maxConsecutiveNonImprovingBranches
     ) {
-      this.finishPortfolio()
+      this.startViaInPadPhase()
       return
     }
     this.startNextBranch()
+  }
+
+  private finishViaInPadPhase(): void {
+    const routes = this.viaInPadSolver!.getOutput()
+    const snapshot = getDrcSnapshot(
+      this.params.srj,
+      routes,
+      this.validationDrcEvaluator,
+      this.params.connMap,
+    )
+    if (
+      isBetterCandidate(
+        routes,
+        snapshot,
+        this.outputHdRoutes,
+        this.bestSnapshot!,
+        this.params.connMap,
+      )
+    ) {
+      this.outputHdRoutes = routes
+      this.bestSnapshot = snapshot
+      this.selectedSolver = this.viaInPadSolver
+      this.selectedBranchName = "via-in-pad"
+      this.viaInPadAccepted = true
+    }
+    this.finishPortfolio()
   }
 
   override _step(): void {
@@ -446,6 +530,19 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         return
       }
       this.startNextBranch()
+      return
+    }
+
+    if (this.phase === "viaInPad") {
+      this.viaInPadSolver!.step()
+      if (this.viaInPadSolver!.failed) {
+        throw new Error(
+          `via-in-pad DRC repair branch failed: ${this.viaInPadSolver!.error}`,
+        )
+      }
+      if (this.viaInPadSolver!.solved) {
+        this.finishViaInPadPhase()
+      }
       return
     }
 

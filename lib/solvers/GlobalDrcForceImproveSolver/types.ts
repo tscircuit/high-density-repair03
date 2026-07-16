@@ -24,6 +24,7 @@ export type GlobalDrcForceImproveSolverParams = {
   connMap?: ConnectivityMap
   effort?: number
   drcEvaluator?: DrcEvaluator
+  viaHoleDiameter?: number
   maxIterations?: number
   enableLargeBoardBroadFallback?: boolean
   enableTargetedErrorSweep?: boolean
@@ -31,6 +32,7 @@ export type GlobalDrcForceImproveSolverParams = {
   targetedErrorStartOffset?: number
   forceScales?: readonly number[]
   targetedSweepScale?: number
+  enableViaInPadLayerMoves?: boolean
 }
 
 export type GlobalDrcBranchPortfolioSolverParams =
@@ -43,6 +45,8 @@ export type GlobalDrcBranchPortfolioSolverParams =
      * Branch solvers continue to use drcEvaluator for movable repair targets.
      */
     validationDrcEvaluator?: DrcEvaluator
+    viaInPadDrcEvaluator?: DrcEvaluator
+    viaInPadMaxIterations?: number
   }
 
 export type SolverDeps = Record<string, unknown>
