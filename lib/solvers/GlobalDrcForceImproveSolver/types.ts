@@ -37,7 +37,7 @@ export type GlobalDrcBranchPortfolioSolverParams =
   GlobalDrcForceImproveSolverParams & {
     broadMaxIterations: number
     broadPassMultiplier: number
-    additionalCandidateHdRoutes?: HighDensityRoute[][]
+    additionalCandidateHdRoutes?: readonly HighDensityRoute[][]
   }
 
 export type SolverDeps = Record<string, unknown>
