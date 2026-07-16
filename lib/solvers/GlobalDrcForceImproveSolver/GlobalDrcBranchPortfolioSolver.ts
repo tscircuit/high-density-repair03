@@ -1,4 +1,5 @@
 import type { GraphicsObject } from "graphics-debug"
+import type { ConnectivityMap } from "circuit-json-to-connectivity-map"
 import type { HighDensityRoute } from "../../types/high-density-types"
 import { BaseSolver } from "../BaseSolver"
 import { GlobalDrcForceImproveSolver } from "./GlobalDrcForceImproveSolver"
@@ -27,17 +28,35 @@ type RouteComplexity = {
 
 const QUALITY_EPSILON = 1e-9
 
-const getRouteComplexity = (routes: HighDensityRoute[]): RouteComplexity => {
-  let viaCount = 0
+const getRouteComplexity = (
+  routes: HighDensityRoute[],
+  connMap?: ConnectivityMap,
+): RouteComplexity => {
+  const physicalViaKeys = new Set<string>()
   let routePointCount = 0
   let totalTraceLength = 0
 
   for (const route of routes) {
-    viaCount += route.vias.length
+    const net =
+      connMap?.idToNetMap[route.connectionName] ??
+      (route.rootConnectionName
+        ? connMap?.idToNetMap[route.rootConnectionName]
+        : undefined) ??
+      route.rootConnectionName ??
+      route.connectionName
     routePointCount += route.route.length
     for (let index = 1; index < route.route.length; index += 1) {
       const previousPoint = route.route[index - 1]!
       const point = route.route[index]!
+      if (
+        previousPoint.z !== point.z &&
+        Math.abs(previousPoint.x - point.x) <= 1e-3 &&
+        Math.abs(previousPoint.y - point.y) <= 1e-3
+      ) {
+        physicalViaKeys.add(
+          `${net}:${point.x.toFixed(3)}:${point.y.toFixed(3)}`,
+        )
+      }
       totalTraceLength += Math.hypot(
         point.x - previousPoint.x,
         point.y - previousPoint.y,
@@ -45,7 +64,11 @@ const getRouteComplexity = (routes: HighDensityRoute[]): RouteComplexity => {
     }
   }
 
-  return { viaCount, routePointCount, totalTraceLength }
+  return {
+    viaCount: physicalViaKeys.size,
+    routePointCount,
+    totalTraceLength,
+  }
 }
 
 const isBetterCandidate = (
@@ -53,6 +76,7 @@ const isBetterCandidate = (
   candidateSnapshot: DrcSnapshot,
   bestRoutes: HighDensityRoute[],
   bestSnapshot: DrcSnapshot,
+  connMap?: ConnectivityMap,
 ): boolean => {
   if (candidateSnapshot.count !== bestSnapshot.count) {
     return candidateSnapshot.count < bestSnapshot.count
@@ -70,8 +94,8 @@ const isBetterCandidate = (
     return candidateViaIssueCount < bestViaIssueCount
   }
 
-  const candidateComplexity = getRouteComplexity(candidateRoutes)
-  const bestComplexity = getRouteComplexity(bestRoutes)
+  const candidateComplexity = getRouteComplexity(candidateRoutes, connMap)
+  const bestComplexity = getRouteComplexity(bestRoutes, connMap)
   if (candidateComplexity.viaCount !== bestComplexity.viaCount) {
     return candidateComplexity.viaCount < bestComplexity.viaCount
   }
@@ -271,6 +295,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
           candidateSnapshot,
           this.outputHdRoutes,
           this.bestSnapshot,
+          this.params.connMap,
         )
       ) {
         this.outputHdRoutes = candidateRoutes
@@ -357,6 +382,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         snapshot,
         this.outputHdRoutes,
         this.bestSnapshot!,
+        this.params.connMap,
       )
     ) {
       this.outputHdRoutes = routes
