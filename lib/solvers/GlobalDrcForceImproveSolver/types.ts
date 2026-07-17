@@ -24,16 +24,36 @@ export type GlobalDrcForceImproveSolverParams = {
   connMap?: ConnectivityMap
   effort?: number
   drcEvaluator?: DrcEvaluator
+  viaHoleDiameter?: number
   maxIterations?: number
   enableLargeBoardBroadFallback?: boolean
   enableTargetedErrorSweep?: boolean
   enablePostSolveClearanceRelaxation?: boolean
+  targetedErrorStartOffset?: number
+  forceScales?: readonly number[]
+  targetedSweepScale?: number
+  enableViaInPadLayerMoves?: boolean
 }
 
 export type GlobalDrcBranchPortfolioSolverParams =
   GlobalDrcForceImproveSolverParams & {
     broadMaxIterations: number
     broadPassMultiplier: number
+    /**
+     * Iteration budgets used to replay the effort-1 repair branches before
+     * exploratory high-effort branches. When omitted, the regular branch
+     * budgets are reused.
+     */
+    baselineMaxIterations?: number
+    baselineBroadMaxIterations?: number
+    additionalCandidateHdRoutes?: readonly HighDensityRoute[][]
+    /**
+     * Optional stricter evaluator used only to rank portfolio checkpoints.
+     * Branch solvers continue to use drcEvaluator for movable repair targets.
+     */
+    validationDrcEvaluator?: DrcEvaluator
+    viaInPadDrcEvaluator?: DrcEvaluator
+    viaInPadMaxIterations?: number
   }
 
 export type SolverDeps = Record<string, unknown>

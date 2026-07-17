@@ -13,7 +13,6 @@ import {
   sharesNet,
 } from "./netUtils"
 import {
-  BROAD_FORCE_PASSES,
   BROAD_MAX_MOVE,
   BROAD_SPATIAL_CELL_SIZE_MIN,
   CLEARANCE_SLACK,
@@ -23,6 +22,8 @@ import {
   PREFERRED_TRACE_TO_PAD_CLEARANCE,
   TRACE_PAD_REPAIR_MAX_MOVE,
   VIA_PAIR_REPAIR_MAX_MOVE,
+  getBroadForcePassesForEffort,
+  getMaxTargetedSweepErrorsForEffort,
   getTraceToPadEdgeClearance,
   getViaEdgeToPadEdgeClearance,
 } from "./solverConfig"
@@ -2674,7 +2675,7 @@ export const applyBroadRepulsionForces = (
   const mutableRoutes = cloneRoutes(routes)
   const maxPasses = Math.max(
     2,
-    Math.round(BROAD_FORCE_PASSES * Math.max(1, effort) * passMultiplier),
+    getBroadForcePassesForEffort(effort, passMultiplier),
   )
   let changed = false
 
@@ -2735,7 +2736,7 @@ export const getTargetedClearanceSweepErrors = (
   errors: Array<Record<string, unknown>>,
   effort: number,
 ) => {
-  const maxErrors = Math.max(2, Math.round(12 * Math.max(1, effort)))
+  const maxErrors = Math.max(2, getMaxTargetedSweepErrorsForEffort(effort))
   return errors
     .filter((error) => getDrcErrorType(error) === "pcb_trace_error")
     .slice(0, maxErrors)
@@ -2760,6 +2761,248 @@ const getTraceRouteIndexForError = (
     : parseTraceRouteIndex(error)
 }
 
+const isRouteEndpointEligibleForViaInPad = (
+  srj: SimpleRouteJson,
+  route: MutableRoute,
+  endpoint: MutableRoute["route"][number],
+  connMap?: ConnectivityMap,
+  viaHoleDiameter?: number,
+) => {
+  const pcbPortId = endpoint.pcb_port_id
+  if (!pcbPortId) return false
+  // The same-net via land can extend past the terminal pad; the drilled hole
+  // must remain inside the pad copper for a valid via-in-pad transition.
+  const viaHoleRadius = (viaHoleDiameter ?? route.viaDiameter) / 2
+
+  return srj.obstacles.some((obstacle) => {
+    const obstacleZLayers = getObstacleZLayers(obstacle, srj.layerCount)
+    if (
+      obstacleZLayers.length !== 1 ||
+      obstacleZLayers[0] !== endpoint.z ||
+      !obstacle.connectedTo.includes(pcbPortId) ||
+      endpoint.x - viaHoleRadius <
+        obstacle.center.x - obstacle.width / 2 - POSITION_EPSILON ||
+      endpoint.x + viaHoleRadius >
+        obstacle.center.x + obstacle.width / 2 + POSITION_EPSILON ||
+      endpoint.y - viaHoleRadius <
+        obstacle.center.y - obstacle.height / 2 - POSITION_EPSILON ||
+      endpoint.y + viaHoleRadius >
+        obstacle.center.y + obstacle.height / 2 + POSITION_EPSILON
+    ) {
+      return false
+    }
+    return (
+      obstacleSharesNet(getRootConnectionName(route), obstacle, connMap) ||
+      obstacleSharesNet(route.connectionName, obstacle, connMap)
+    )
+  })
+}
+
+/**
+ * Moves a single-layer terminal-to-terminal route onto another layer and
+ * places the required transitions at its connected pad centers. The caller
+ * must score the candidate with the full DRC evaluator before accepting it.
+ */
+export const applyViaInPadLayerMoveForError = (
+  srj: SimpleRouteJson,
+  routes: MutableRoute[],
+  error: Record<string, unknown>,
+  traceRouteIndexById: Map<string, number>,
+  targetZ: number,
+  connMap?: ConnectivityMap,
+  viaHoleDiameter?: number,
+) => {
+  if (getDrcErrorType(error) !== "pcb_pad_trace_clearance_error") return false
+  if (targetZ < 0 || targetZ >= srj.layerCount) return false
+
+  const routeIndex = getTraceRouteIndexForError(error, traceRouteIndexById)
+  if (routeIndex === undefined) return false
+  const route = routes[routeIndex]
+  if (!route || route.route.length < 2) return false
+
+  const first = route.route[0]
+  const last = route.route.at(-1)
+  if (!first || !last || first.z !== last.z || targetZ === first.z) return false
+  if (route.route.some((point) => point.z !== first.z)) return false
+  if (!first.pcb_port_id || !last.pcb_port_id) return false
+
+  if (
+    !isRouteEndpointEligibleForViaInPad(
+      srj,
+      route,
+      first,
+      connMap,
+      viaHoleDiameter,
+    ) ||
+    !isRouteEndpointEligibleForViaInPad(
+      srj,
+      route,
+      last,
+      connMap,
+      viaHoleDiameter,
+    )
+  ) {
+    return false
+  }
+
+  const originalPoints = route.route.map((point) => ({ ...point }))
+  route.route = [
+    originalPoints[0]!,
+    { ...originalPoints[0]!, z: targetZ, pcb_port_id: undefined },
+    ...originalPoints.slice(1, -1).map((point) => ({
+      ...point,
+      z: targetZ,
+    })),
+    { ...originalPoints.at(-1)!, z: targetZ, pcb_port_id: undefined },
+    originalPoints.at(-1)!,
+  ]
+  return true
+}
+
+/** Moves an existing terminal-side via to the connected pad center. */
+export const applyTerminalViaRelocationForError = (
+  srj: SimpleRouteJson,
+  routes: MutableRoute[],
+  error: Record<string, unknown>,
+  traceRouteIndexById: Map<string, number>,
+  endpointSide: "start" | "end",
+  connMap?: ConnectivityMap,
+  viaHoleDiameter?: number,
+) => {
+  if (getDrcErrorType(error) !== "pcb_pad_trace_clearance_error") return false
+  const routeIndex = getTraceRouteIndexForError(error, traceRouteIndexById)
+  if (routeIndex === undefined) return false
+  const route = routes[routeIndex]
+  if (!route || route.route.length < 4) return false
+
+  const originalPoints = route.route.map((point) => ({ ...point }))
+  if (endpointSide === "start") {
+    const endpoint = originalPoints[0]!
+    if (
+      !isRouteEndpointEligibleForViaInPad(
+        srj,
+        route,
+        endpoint,
+        connMap,
+        viaHoleDiameter,
+      )
+    ) {
+      return false
+    }
+
+    let firstChangedZIndex = -1
+    for (let index = 1; index < originalPoints.length; index += 1) {
+      if (originalPoints[index]!.z !== endpoint.z) {
+        firstChangedZIndex = index
+        break
+      }
+    }
+    if (firstChangedZIndex <= 0) return false
+    const transitionStart = firstChangedZIndex - 1
+    if (
+      !areSameXY(
+        originalPoints[transitionStart]!,
+        originalPoints[firstChangedZIndex]!,
+      )
+    ) {
+      return false
+    }
+    let transitionEnd = firstChangedZIndex
+    while (
+      transitionEnd + 1 < originalPoints.length &&
+      areSameXY(
+        originalPoints[firstChangedZIndex]!,
+        originalPoints[transitionEnd + 1]!,
+      )
+    ) {
+      transitionEnd += 1
+    }
+    const targetZ = originalPoints[transitionEnd]!.z
+    const layerStack = originalPoints
+      .slice(transitionStart, transitionEnd + 1)
+      .map((point) => point.z)
+
+    route.route = [
+      endpoint,
+      ...layerStack.slice(1).map((z) => ({
+        ...endpoint,
+        z,
+        pcb_port_id: undefined,
+      })),
+      ...originalPoints.slice(1, transitionStart + 1).map((point) => ({
+        ...point,
+        z: targetZ,
+      })),
+      ...originalPoints.slice(transitionEnd + 1),
+    ]
+    return true
+  }
+
+  const endpoint = originalPoints.at(-1)!
+  if (
+    !isRouteEndpointEligibleForViaInPad(
+      srj,
+      route,
+      endpoint,
+      connMap,
+      viaHoleDiameter,
+    )
+  ) {
+    return false
+  }
+  let firstChangedZIndex = -1
+  for (let index = originalPoints.length - 2; index >= 0; index -= 1) {
+    if (originalPoints[index]!.z !== endpoint.z) {
+      firstChangedZIndex = index
+      break
+    }
+  }
+  if (
+    firstChangedZIndex < 0 ||
+    firstChangedZIndex >= originalPoints.length - 1
+  ) {
+    return false
+  }
+  const transitionEnd = firstChangedZIndex + 1
+  if (
+    !areSameXY(
+      originalPoints[firstChangedZIndex]!,
+      originalPoints[transitionEnd]!,
+    )
+  ) {
+    return false
+  }
+  let transitionStart = firstChangedZIndex
+  while (
+    transitionStart - 1 >= 0 &&
+    areSameXY(
+      originalPoints[firstChangedZIndex]!,
+      originalPoints[transitionStart - 1]!,
+    )
+  ) {
+    transitionStart -= 1
+  }
+  const targetZ = originalPoints[transitionStart]!.z
+  const layerStack = originalPoints
+    .slice(transitionStart, transitionEnd + 1)
+    .map((point) => point.z)
+
+  route.route = [
+    ...originalPoints.slice(0, transitionStart + 1),
+    ...originalPoints
+      .slice(transitionEnd + 1, -1)
+      .map((point) => ({ ...point, z: targetZ })),
+    { ...endpoint, z: targetZ, pcb_port_id: undefined },
+    ...layerStack.slice(1, -1).map((z) => ({
+      ...endpoint,
+      z,
+      pcb_port_id: undefined,
+    })),
+    endpoint,
+  ]
+  return true
+}
+
 export const isBetterDrcSnapshot = (
   candidateSnapshot: DrcSnapshot,
   candidateViaIssueCount: number,
@@ -2771,6 +3014,8 @@ export const isBetterDrcSnapshot = (
   (candidateSnapshot.count === bestIssueCount &&
     candidateSnapshot.issueScore < bestIssueScore) ||
   (candidateSnapshot.count === bestIssueCount &&
+    Math.abs(candidateSnapshot.issueScore - bestIssueScore) <=
+      POSITION_EPSILON &&
     candidateViaIssueCount < bestViaIssueCount)
 
 export const applyDrcErrorForces = (

@@ -81,7 +81,7 @@ test("stops after two DRC-count plateau checks", () => {
   expect(solver.stats.globalDrcForceImproveDrcCountPlateauChecks).toBe(2)
 })
 
-test("does not plateau-stop high DRC boards before broad fallback window", () => {
+test("plateau-stops high DRC boards when no candidate improves them", () => {
   const solver = new GlobalDrcForceImproveSolver({
     srj: {
       bounds: { minX: 0, minY: 0, maxX: 10, maxY: 10 },
@@ -92,6 +92,8 @@ test("does not plateau-stop high DRC boards before broad fallback window", () =>
       minViaDiameter: 0.3,
     },
     hdRoutes: [],
+    effort: 5,
+    maxIterations: 96,
     drcEvaluator: () =>
       Array.from({ length: 36 }, (_, index) => ({
         message: `synthetic centered DRC ${index}`,
@@ -99,7 +101,7 @@ test("does not plateau-stop high DRC boards before broad fallback window", () =>
       })),
   })
 
-  for (let index = 0; index < 95; index += 1) {
+  for (let index = 0; index < 15; index += 1) {
     solver.step()
     expect(solver.solved).toBe(false)
   }
@@ -108,7 +110,7 @@ test("does not plateau-stop high DRC boards before broad fallback window", () =>
 
   expect(solver.solved).toBe(true)
   expect(solver.MAX_ITERATIONS).toBe(96)
-  expect(solver.stats.globalDrcForceImproveDrcCountPlateauChecks).toBe(0)
+  expect(solver.stats.globalDrcForceImproveDrcCountPlateauChecks).toBe(2)
 })
 
 test("stops large-route boards after repeated broad fallback misses", () => {

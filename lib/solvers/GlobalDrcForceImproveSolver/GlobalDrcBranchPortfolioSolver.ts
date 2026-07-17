@@ -1,27 +1,241 @@
+import type { ConnectivityMap } from "circuit-json-to-connectivity-map"
 import type { GraphicsObject } from "graphics-debug"
-import { BaseSolver } from "../BaseSolver"
 import type { HighDensityRoute } from "../../types/high-density-types"
+import { BaseSolver } from "../BaseSolver"
 import { GlobalDrcForceImproveSolver } from "./GlobalDrcForceImproveSolver"
-import { getDrcSnapshot } from "./drc-snapshot"
-import { applyBroadRepulsionForces } from "./solverHelpers"
-import type { DrcSnapshot, GlobalDrcBranchPortfolioSolverParams } from "./types"
+import {
+  applyBroadRepulsionForces,
+  getDrcSnapshot,
+  getViaDrcIssueCount,
+} from "./solverHelpers"
+import type {
+  DrcEvaluator,
+  DrcSnapshot,
+  GlobalDrcBranchPortfolioSolverParams,
+} from "./types"
 
-type PortfolioPhase = "start" | "baseline" | "broad" | "done"
+type PortfolioPhase = "start" | "branch" | "viaInPad" | "done"
+
+type BranchStrategy = {
+  name: string
+  broadPassMultiplier?: number
+  forceScales?: readonly number[]
+  targetedErrorStartOffset: number
+  targetedSweepScale?: number
+  solverEffort?: number
+  maxIterations?: number
+  preservesBaselineCheckpoint?: boolean
+}
+
+type RouteComplexity = {
+  viaCount: number
+  routePointCount: number
+  totalTraceLength: number
+}
+
+const QUALITY_EPSILON = 1e-9
+
+const getRouteComplexity = (
+  routes: HighDensityRoute[],
+  connMap?: ConnectivityMap,
+): RouteComplexity => {
+  const physicalViaKeys = new Set<string>()
+  let routePointCount = 0
+  let totalTraceLength = 0
+
+  for (const route of routes) {
+    const net =
+      connMap?.idToNetMap[route.connectionName] ??
+      (route.rootConnectionName
+        ? connMap?.idToNetMap[route.rootConnectionName]
+        : undefined) ??
+      route.rootConnectionName ??
+      route.connectionName
+    routePointCount += route.route.length
+    for (let index = 1; index < route.route.length; index += 1) {
+      const previousPoint = route.route[index - 1]!
+      const point = route.route[index]!
+      if (
+        previousPoint.z !== point.z &&
+        Math.abs(previousPoint.x - point.x) <= 1e-3 &&
+        Math.abs(previousPoint.y - point.y) <= 1e-3
+      ) {
+        physicalViaKeys.add(
+          `${net}:${point.x.toFixed(3)}:${point.y.toFixed(3)}`,
+        )
+      }
+      totalTraceLength += Math.hypot(
+        point.x - previousPoint.x,
+        point.y - previousPoint.y,
+      )
+    }
+  }
+
+  return {
+    viaCount: physicalViaKeys.size,
+    routePointCount,
+    totalTraceLength,
+  }
+}
+
+const isBetterCandidate = (
+  candidateRoutes: HighDensityRoute[],
+  candidateSnapshot: DrcSnapshot,
+  bestRoutes: HighDensityRoute[],
+  bestSnapshot: DrcSnapshot,
+  connMap?: ConnectivityMap,
+): boolean => {
+  if (candidateSnapshot.count !== bestSnapshot.count) {
+    return candidateSnapshot.count < bestSnapshot.count
+  }
+  if (
+    Math.abs(candidateSnapshot.issueScore - bestSnapshot.issueScore) >
+    QUALITY_EPSILON
+  ) {
+    return candidateSnapshot.issueScore < bestSnapshot.issueScore
+  }
+
+  const candidateViaIssueCount = getViaDrcIssueCount(candidateSnapshot)
+  const bestViaIssueCount = getViaDrcIssueCount(bestSnapshot)
+  if (candidateViaIssueCount !== bestViaIssueCount) {
+    return candidateViaIssueCount < bestViaIssueCount
+  }
+
+  const candidateComplexity = getRouteComplexity(candidateRoutes, connMap)
+  const bestComplexity = getRouteComplexity(bestRoutes, connMap)
+  if (candidateComplexity.viaCount !== bestComplexity.viaCount) {
+    return candidateComplexity.viaCount < bestComplexity.viaCount
+  }
+  if (candidateComplexity.routePointCount !== bestComplexity.routePointCount) {
+    return candidateComplexity.routePointCount < bestComplexity.routePointCount
+  }
+
+  return (
+    candidateComplexity.totalTraceLength <
+    bestComplexity.totalTraceLength - QUALITY_EPSILON
+  )
+}
+
+const getBranchStrategies = (
+  effort: number,
+  broadPassMultiplier: number,
+  maxIterations?: number,
+  broadMaxIterations?: number,
+): BranchStrategy[] => {
+  const effortScale = Number.isFinite(effort) ? Math.max(1, effort) : 1
+  if (effortScale <= 1) {
+    return [
+      {
+        name: "baseline",
+        targetedErrorStartOffset: 0,
+      },
+      {
+        name: "broad",
+        broadPassMultiplier,
+        targetedErrorStartOffset: 0,
+      },
+    ]
+  }
+  const branchLimit = Math.min(10, 4 + Math.ceil(Math.log2(effortScale)))
+  const strategies: BranchStrategy[] = [
+    {
+      name: "baseline",
+      targetedErrorStartOffset: 0,
+      solverEffort: 1,
+      maxIterations,
+      preservesBaselineCheckpoint: true,
+    },
+    {
+      name: "baseline-broad",
+      broadPassMultiplier,
+      targetedErrorStartOffset: 0,
+      solverEffort: 1,
+      maxIterations: broadMaxIterations,
+      preservesBaselineCheckpoint: true,
+    },
+    {
+      name: "effort-baseline",
+      targetedErrorStartOffset: 0,
+      preservesBaselineCheckpoint: true,
+    },
+    {
+      name: "broad-reverse",
+      broadPassMultiplier,
+      forceScales: [-1, -1.75, 1],
+      targetedErrorStartOffset: 1,
+      targetedSweepScale: -1,
+    },
+    {
+      name: "targeted-strong",
+      forceScales: [2.5, -2.5, 0.75],
+      targetedErrorStartOffset: 2,
+      targetedSweepScale: 2.5,
+    },
+    {
+      name: "targeted-reverse",
+      forceScales: [-1, 1, 1.75],
+      targetedErrorStartOffset: 3,
+      targetedSweepScale: -1,
+    },
+    {
+      name: "broad-half",
+      broadPassMultiplier: broadPassMultiplier * 0.5,
+      forceScales: [0.5, 1.25, -1.5],
+      targetedErrorStartOffset: 5,
+      targetedSweepScale: 0.5,
+    },
+    {
+      name: "targeted-strong-reverse",
+      forceScales: [-2.5, -0.75, 1.5],
+      targetedErrorStartOffset: 8,
+      targetedSweepScale: -1.5,
+    },
+    {
+      name: "broad-strong",
+      broadPassMultiplier: broadPassMultiplier * 1.5,
+      forceScales: [1.75, -2.5, 0.5],
+      targetedErrorStartOffset: 13,
+      targetedSweepScale: 1.75,
+    },
+    {
+      name: "broad-short-reverse",
+      broadPassMultiplier: broadPassMultiplier * 0.25,
+      forceScales: [-0.5, -1.25, 2.5],
+      targetedErrorStartOffset: 21,
+      targetedSweepScale: -0.5,
+    },
+  ]
+
+  return strategies.slice(0, branchLimit)
+}
 
 export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
   readonly params: GlobalDrcBranchPortfolioSolverParams
   readonly inputHdRoutes: HighDensityRoute[]
   readonly broadMaxIterations: number
   readonly broadPassMultiplier: number
+  readonly branchStrategies: BranchStrategy[]
+  readonly maxConsecutiveNonImprovingBranches: number
+  readonly validationDrcEvaluator?: DrcEvaluator
   outputHdRoutes: HighDensityRoute[]
   private phase: PortfolioPhase = "start"
   private inputSnapshot?: DrcSnapshot
-  private baselineSolver?: GlobalDrcForceImproveSolver
+  private bestSnapshot?: DrcSnapshot
   private baselineSnapshot?: DrcSnapshot
   private broadInputSnapshot?: DrcSnapshot
   private broadSnapshot?: DrcSnapshot
-  private broadSolver?: GlobalDrcForceImproveSolver
+  private activeBranchSolver?: GlobalDrcForceImproveSolver
+  private viaInPadSolver?: GlobalDrcForceImproveSolver
   private selectedSolver?: GlobalDrcForceImproveSolver
+  private selectedBranchName = "input"
+  private activeBranchStrategy?: BranchStrategy
+  private nextBranchIndex = 0
+  private branchesAttempted = 0
+  private branchesAccepted = 0
+  private consecutiveNonImprovingBranches = 0
+  private broadBranchesAttempted = 0
+  private viaInPadAttempted = false
+  private viaInPadAccepted = false
 
   constructor(params: GlobalDrcBranchPortfolioSolverParams) {
     super()
@@ -37,10 +251,52 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
     if (params.broadMaxIterations <= 0) {
       throw new Error("broadMaxIterations must be greater than zero")
     }
+    if (
+      params.baselineMaxIterations !== undefined &&
+      (!Number.isInteger(params.baselineMaxIterations) ||
+        params.baselineMaxIterations <= 0)
+    ) {
+      throw new Error("baselineMaxIterations must be a positive integer")
+    }
+    if (
+      params.baselineBroadMaxIterations !== undefined &&
+      (!Number.isInteger(params.baselineBroadMaxIterations) ||
+        params.baselineBroadMaxIterations <= 0)
+    ) {
+      throw new Error("baselineBroadMaxIterations must be a positive integer")
+    }
+    if (
+      params.viaInPadMaxIterations !== undefined &&
+      !Number.isInteger(params.viaInPadMaxIterations)
+    ) {
+      throw new Error("viaInPadMaxIterations must be an integer")
+    }
+    if (
+      params.viaInPadMaxIterations !== undefined &&
+      params.viaInPadMaxIterations <= 0
+    ) {
+      throw new Error("viaInPadMaxIterations must be greater than zero")
+    }
     this.params = params
     this.inputHdRoutes = params.hdRoutes
     this.broadMaxIterations = params.broadMaxIterations
     this.broadPassMultiplier = params.broadPassMultiplier
+    this.validationDrcEvaluator =
+      params.validationDrcEvaluator ?? params.drcEvaluator
+    this.branchStrategies = getBranchStrategies(
+      params.effort ?? 1,
+      params.broadPassMultiplier,
+      params.baselineMaxIterations ?? params.maxIterations,
+      params.baselineBroadMaxIterations ?? params.broadMaxIterations,
+    )
+    const requestedEffort = params.effort ?? 1
+    const effortScale = Number.isFinite(requestedEffort)
+      ? Math.max(1, requestedEffort)
+      : 1
+    this.maxConsecutiveNonImprovingBranches = Math.min(
+      4,
+      2 + Math.floor(Math.log10(effortScale)),
+    )
     this.outputHdRoutes = params.hdRoutes
   }
 
@@ -49,146 +305,303 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       {
         ...this.params,
         hdRoutes: this.inputHdRoutes,
+        additionalCandidateHdRoutes: this.params.additionalCandidateHdRoutes,
       },
     ] as const
   }
 
-  private stepBranch(solver: GlobalDrcForceImproveSolver, branchName: string) {
-    this.activeSubSolver = solver
-    solver.step()
-    if (solver.failed) {
-      throw new Error(`${branchName} DRC repair branch failed: ${solver.error}`)
-    }
-  }
-
-  private acceptOutput(
-    routes: HighDensityRoute[],
-    snapshot: DrcSnapshot,
-    selectedSolver?: GlobalDrcForceImproveSolver,
-  ) {
-    this.outputHdRoutes = routes
-    this.selectedSolver = selectedSolver
+  private finishPortfolio(): void {
     this.activeSubSolver = null
+    this.activeBranchSolver = undefined
+    this.viaInPadSolver = undefined
+    this.activeBranchStrategy = undefined
     this.phase = "done"
     this.progress = 1
     this.stats = {
-      ...(selectedSolver?.stats ?? {}),
+      ...(this.selectedSolver?.stats ?? {}),
       drcBranchPortfolioInitialDrcIssueCount:
-        this.inputSnapshot?.count ?? snapshot.count,
+        this.inputSnapshot?.count ?? this.bestSnapshot?.count ?? 0,
       drcBranchPortfolioBaselineDrcIssueCount:
-        this.baselineSnapshot?.count ?? snapshot.count,
+        this.baselineSnapshot?.count ?? this.bestSnapshot?.count ?? 0,
       drcBranchPortfolioBroadInitialDrcIssueCount:
         this.broadInputSnapshot?.count,
       drcBranchPortfolioBroadFinalDrcIssueCount: this.broadSnapshot?.count,
+      drcBranchPortfolioFinalDrcIssueCount: this.bestSnapshot?.count ?? 0,
       drcBranchPortfolioBroadMaxIterations: this.broadMaxIterations,
-      drcBranchPortfolioBroadBranchAttempted: Boolean(this.broadSolver),
+      drcBranchPortfolioBranchLimit: this.branchStrategies.length,
+      drcBranchPortfolioBranchesAttempted: this.branchesAttempted,
+      drcBranchPortfolioBranchesAccepted: this.branchesAccepted,
+      drcBranchPortfolioConsecutiveNonImprovingBranches:
+        this.consecutiveNonImprovingBranches,
+      drcBranchPortfolioStoppedAfterNoImprovement:
+        this.consecutiveNonImprovingBranches >=
+        this.maxConsecutiveNonImprovingBranches,
+      drcBranchPortfolioSelectedBranch: this.selectedBranchName,
+      drcBranchPortfolioBroadBranchAttempted: this.broadBranchesAttempted > 0,
       drcBranchPortfolioBroadBranchAccepted:
-        selectedSolver !== undefined && selectedSolver === this.broadSolver,
+        this.selectedBranchName.startsWith("broad"),
+      drcBranchPortfolioViaInPadPhaseAttempted: this.viaInPadAttempted,
+      drcBranchPortfolioViaInPadAccepted: this.viaInPadAccepted,
+      drcBranchPortfolioViaInPadMaxIterations:
+        this.params.viaInPadMaxIterations,
     }
     this.solved = true
   }
 
-  private startBaselineBranch() {
-    this.baselineSolver = new GlobalDrcForceImproveSolver({
-      ...this.params,
-      hdRoutes: this.inputHdRoutes,
-    })
-    this.activeSubSolver = this.baselineSolver
-    this.phase = "baseline"
-  }
-
-  private startBroadBranch() {
-    const broadInputRoutes = applyBroadRepulsionForces(
+  private initializeCheckpoints(): void {
+    this.inputSnapshot = getDrcSnapshot(
       this.params.srj,
       this.inputHdRoutes,
-      this.params.effort ?? 1,
-      this.broadPassMultiplier,
+      this.validationDrcEvaluator,
       this.params.connMap,
     )
-    this.broadInputSnapshot = getDrcSnapshot(
-      this.params.srj,
-      broadInputRoutes,
-      this.params.drcEvaluator,
-      this.params.connMap,
-    )
-    if (this.broadInputSnapshot.count >= this.baselineSnapshot!.count) {
-      this.acceptOutput(
-        this.baselineSolver!.getOutput(),
-        this.baselineSnapshot!,
-        this.baselineSolver,
-      )
-      return
-    }
-    this.broadSolver = new GlobalDrcForceImproveSolver({
-      ...this.params,
-      hdRoutes: broadInputRoutes,
-      maxIterations: this.broadMaxIterations,
-    })
-    this.activeSubSolver = this.broadSolver
-    this.phase = "broad"
-  }
+    this.bestSnapshot = this.inputSnapshot
 
-  override _step() {
-    if (this.phase === "start") {
-      this.inputSnapshot = getDrcSnapshot(
+    const candidates = this.params.additionalCandidateHdRoutes ?? []
+    for (let index = 0; index < candidates.length; index += 1) {
+      const candidateRoutes = candidates[index]!
+      const candidateSnapshot = getDrcSnapshot(
         this.params.srj,
-        this.inputHdRoutes,
-        this.params.drcEvaluator,
+        candidateRoutes,
+        this.validationDrcEvaluator,
         this.params.connMap,
       )
-      if (this.inputSnapshot.count === 0) {
-        this.acceptOutput(this.inputHdRoutes, this.inputSnapshot)
-        return
-      }
-      this.startBaselineBranch()
-      return
-    }
-
-    if (this.phase === "baseline") {
-      this.stepBranch(this.baselineSolver!, "baseline")
-      if (!this.baselineSolver!.solved) return
-      const baselineRoutes = this.baselineSolver!.getOutput()
-      this.baselineSnapshot = getDrcSnapshot(
-        this.params.srj,
-        baselineRoutes,
-        this.params.drcEvaluator,
-        this.params.connMap,
-      )
-      if (this.baselineSnapshot.count === 0) {
-        this.acceptOutput(
-          baselineRoutes,
-          this.baselineSnapshot,
-          this.baselineSolver,
+      if (
+        isBetterCandidate(
+          candidateRoutes,
+          candidateSnapshot,
+          this.outputHdRoutes,
+          this.bestSnapshot,
+          this.params.connMap,
         )
-        return
+      ) {
+        this.outputHdRoutes = candidateRoutes
+        this.bestSnapshot = candidateSnapshot
+        this.selectedBranchName = `checkpoint-${index}`
       }
-      this.startBroadBranch()
-      return
-    }
-
-    if (this.phase === "broad") {
-      this.stepBranch(this.broadSolver!, "broad")
-      if (!this.broadSolver!.solved) return
-      const broadRoutes = this.broadSolver!.getOutput()
-      this.broadSnapshot = getDrcSnapshot(
-        this.params.srj,
-        broadRoutes,
-        this.params.drcEvaluator,
-        this.params.connMap,
-      )
-      if (this.broadSnapshot.count < this.baselineSnapshot!.count) {
-        this.acceptOutput(broadRoutes, this.broadSnapshot, this.broadSolver)
-        return
-      }
-      this.acceptOutput(
-        this.baselineSolver!.getOutput(),
-        this.baselineSnapshot!,
-        this.baselineSolver,
-      )
     }
   }
 
-  override getOutput() {
+  private startViaInPadPhase(): void {
+    if (
+      this.bestSnapshot!.count === 0 ||
+      !this.params.enableViaInPadLayerMoves ||
+      !this.params.viaInPadDrcEvaluator
+    ) {
+      this.finishPortfolio()
+      return
+    }
+
+    const {
+      additionalCandidateHdRoutes: _additionalCandidateHdRoutes,
+      validationDrcEvaluator: _validationDrcEvaluator,
+      viaInPadDrcEvaluator,
+      viaInPadMaxIterations,
+      baselineMaxIterations: _baselineMaxIterations,
+      baselineBroadMaxIterations: _baselineBroadMaxIterations,
+      broadMaxIterations: _broadMaxIterations,
+      broadPassMultiplier: _broadPassMultiplier,
+      ...solverParams
+    } = this.params
+    this.viaInPadAttempted = true
+    this.viaInPadSolver = new GlobalDrcForceImproveSolver({
+      ...solverParams,
+      hdRoutes: this.outputHdRoutes,
+      drcEvaluator: viaInPadDrcEvaluator,
+      maxIterations: viaInPadMaxIterations ?? this.params.maxIterations,
+      enableLargeBoardBroadFallback: false,
+      enableTargetedErrorSweep: false,
+      enablePostSolveClearanceRelaxation: false,
+      enableViaInPadLayerMoves: true,
+    })
+    this.activeSubSolver = this.viaInPadSolver
+    this.phase = "viaInPad"
+    this.progress = 0.95
+  }
+
+  private startNextBranch(): void {
+    const strategy = this.branchStrategies[this.nextBranchIndex]
+    if (!strategy) {
+      this.startViaInPadPhase()
+      return
+    }
+
+    let branchInputRoutes = this.outputHdRoutes
+    if (strategy.broadPassMultiplier !== undefined) {
+      branchInputRoutes = applyBroadRepulsionForces(
+        this.params.srj,
+        this.outputHdRoutes,
+        strategy.solverEffort ?? this.params.effort ?? 1,
+        strategy.broadPassMultiplier,
+        this.params.connMap,
+      )
+      const branchInputSnapshot = getDrcSnapshot(
+        this.params.srj,
+        branchInputRoutes,
+        this.validationDrcEvaluator,
+        this.params.connMap,
+      )
+      this.broadInputSnapshot ??= branchInputSnapshot
+      if (
+        strategy.name === "broad" &&
+        branchInputSnapshot.count >= this.bestSnapshot!.count
+      ) {
+        this.startViaInPadPhase()
+        return
+      }
+      this.broadBranchesAttempted += 1
+    }
+
+    const {
+      additionalCandidateHdRoutes: _additionalCandidateHdRoutes,
+      validationDrcEvaluator: _validationDrcEvaluator,
+      viaInPadDrcEvaluator: _viaInPadDrcEvaluator,
+      viaInPadMaxIterations: _viaInPadMaxIterations,
+      baselineMaxIterations: _baselineMaxIterations,
+      baselineBroadMaxIterations: _baselineBroadMaxIterations,
+      broadMaxIterations: _broadMaxIterations,
+      broadPassMultiplier: _broadPassMultiplier,
+      ...solverParams
+    } = this.params
+    this.activeBranchStrategy = strategy
+    this.activeBranchSolver = new GlobalDrcForceImproveSolver({
+      ...solverParams,
+      hdRoutes: branchInputRoutes,
+      effort: strategy.solverEffort ?? this.params.effort,
+      maxIterations:
+        strategy.maxIterations ??
+        (strategy.broadPassMultiplier === undefined
+          ? this.params.maxIterations
+          : this.broadMaxIterations),
+      forceScales: strategy.forceScales ?? this.params.forceScales,
+      targetedErrorStartOffset: strategy.targetedErrorStartOffset,
+      targetedSweepScale:
+        strategy.targetedSweepScale ?? this.params.targetedSweepScale,
+      enableViaInPadLayerMoves: false,
+    })
+    this.activeSubSolver = this.activeBranchSolver
+    this.nextBranchIndex += 1
+    this.branchesAttempted += 1
+    this.phase = "branch"
+    this.progress = this.nextBranchIndex / (this.branchStrategies.length + 1)
+  }
+
+  private finishActiveBranch(): void {
+    const solver = this.activeBranchSolver!
+    const strategy = this.activeBranchStrategy!
+    const routes = solver.getOutput()
+    const snapshot = getDrcSnapshot(
+      this.params.srj,
+      routes,
+      this.validationDrcEvaluator,
+      this.params.connMap,
+    )
+    if (strategy.name === "baseline") {
+      this.baselineSnapshot = snapshot
+    } else if (
+      strategy.broadPassMultiplier !== undefined &&
+      this.broadSnapshot === undefined
+    ) {
+      this.broadSnapshot = snapshot
+    }
+
+    if (
+      isBetterCandidate(
+        routes,
+        snapshot,
+        this.outputHdRoutes,
+        this.bestSnapshot!,
+        this.params.connMap,
+      )
+    ) {
+      this.outputHdRoutes = routes
+      this.bestSnapshot = snapshot
+      this.selectedSolver = solver
+      this.selectedBranchName = strategy.name
+      this.branchesAccepted += 1
+      this.consecutiveNonImprovingBranches = 0
+    } else if (!strategy.preservesBaselineCheckpoint) {
+      this.consecutiveNonImprovingBranches += 1
+    }
+
+    this.activeSubSolver = null
+    this.activeBranchSolver = undefined
+    this.activeBranchStrategy = undefined
+    if (
+      this.bestSnapshot!.count === 0 ||
+      this.nextBranchIndex >= this.branchStrategies.length ||
+      this.consecutiveNonImprovingBranches >=
+        this.maxConsecutiveNonImprovingBranches
+    ) {
+      this.startViaInPadPhase()
+      return
+    }
+    this.startNextBranch()
+  }
+
+  private finishViaInPadPhase(): void {
+    const routes = this.viaInPadSolver!.getOutput()
+    const snapshot = getDrcSnapshot(
+      this.params.srj,
+      routes,
+      this.validationDrcEvaluator,
+      this.params.connMap,
+    )
+    if (
+      isBetterCandidate(
+        routes,
+        snapshot,
+        this.outputHdRoutes,
+        this.bestSnapshot!,
+        this.params.connMap,
+      )
+    ) {
+      this.outputHdRoutes = routes
+      this.bestSnapshot = snapshot
+      this.selectedSolver = this.viaInPadSolver
+      this.selectedBranchName = "via-in-pad"
+      this.viaInPadAccepted = true
+    }
+    this.finishPortfolio()
+  }
+
+  override _step(): void {
+    if (this.phase === "start") {
+      this.initializeCheckpoints()
+      if (this.bestSnapshot!.count === 0) {
+        this.finishPortfolio()
+        return
+      }
+      this.startNextBranch()
+      return
+    }
+
+    if (this.phase === "viaInPad") {
+      this.viaInPadSolver!.step()
+      if (this.viaInPadSolver!.failed) {
+        throw new Error(
+          `via-in-pad DRC repair branch failed: ${this.viaInPadSolver!.error}`,
+        )
+      }
+      if (this.viaInPadSolver!.solved) {
+        this.finishViaInPadPhase()
+      }
+      return
+    }
+
+    if (this.phase !== "branch") return
+    this.activeBranchSolver!.step()
+    if (this.activeBranchSolver!.failed) {
+      throw new Error(
+        `${this.activeBranchStrategy!.name} DRC repair branch failed: ${this.activeBranchSolver!.error}`,
+      )
+    }
+    if (this.activeBranchSolver!.solved) {
+      this.finishActiveBranch()
+    }
+  }
+
+  override getOutput(): HighDensityRoute[] {
     return this.outputHdRoutes
   }
 
