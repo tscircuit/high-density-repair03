@@ -22,6 +22,9 @@ type BranchStrategy = {
   forceScales?: readonly number[]
   targetedErrorStartOffset: number
   targetedSweepScale?: number
+  solverEffort?: number
+  maxIterations?: number
+  preservesBaselineCheckpoint?: boolean
 }
 
 type RouteComplexity = {
@@ -116,6 +119,8 @@ const isBetterCandidate = (
 const getBranchStrategies = (
   effort: number,
   broadPassMultiplier: number,
+  maxIterations?: number,
+  broadMaxIterations?: number,
 ): BranchStrategy[] => {
   const effortScale = Number.isFinite(effort) ? Math.max(1, effort) : 1
   if (effortScale <= 1) {
@@ -131,11 +136,27 @@ const getBranchStrategies = (
       },
     ]
   }
-  const branchLimit = Math.min(8, 2 + Math.ceil(Math.log2(effortScale)))
+  const branchLimit = Math.min(10, 4 + Math.ceil(Math.log2(effortScale)))
   const strategies: BranchStrategy[] = [
     {
       name: "baseline",
       targetedErrorStartOffset: 0,
+      solverEffort: 1,
+      maxIterations,
+      preservesBaselineCheckpoint: true,
+    },
+    {
+      name: "baseline-broad",
+      broadPassMultiplier,
+      targetedErrorStartOffset: 0,
+      solverEffort: 1,
+      maxIterations: broadMaxIterations,
+      preservesBaselineCheckpoint: true,
+    },
+    {
+      name: "effort-baseline",
+      targetedErrorStartOffset: 0,
+      preservesBaselineCheckpoint: true,
     },
     {
       name: "broad-reverse",
@@ -231,6 +252,22 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       throw new Error("broadMaxIterations must be greater than zero")
     }
     if (
+      params.baselineMaxIterations !== undefined &&
+      (!Number.isInteger(params.baselineMaxIterations) ||
+        params.baselineMaxIterations <= 0)
+    ) {
+      throw new Error("baselineMaxIterations must be a positive integer")
+    }
+    if (
+      params.baselineBroadMaxIterations !== undefined &&
+      (!Number.isInteger(params.baselineBroadMaxIterations) ||
+        params.baselineBroadMaxIterations <= 0)
+    ) {
+      throw new Error(
+        "baselineBroadMaxIterations must be a positive integer",
+      )
+    }
+    if (
       params.viaInPadMaxIterations !== undefined &&
       !Number.isInteger(params.viaInPadMaxIterations)
     ) {
@@ -251,6 +288,8 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
     this.branchStrategies = getBranchStrategies(
       params.effort ?? 1,
       params.broadPassMultiplier,
+      params.baselineMaxIterations ?? params.maxIterations,
+      params.baselineBroadMaxIterations ?? params.broadMaxIterations,
     )
     const requestedEffort = params.effort ?? 1
     const effortScale = Number.isFinite(requestedEffort)
@@ -360,6 +399,8 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       validationDrcEvaluator: _validationDrcEvaluator,
       viaInPadDrcEvaluator,
       viaInPadMaxIterations,
+      baselineMaxIterations: _baselineMaxIterations,
+      baselineBroadMaxIterations: _baselineBroadMaxIterations,
       broadMaxIterations: _broadMaxIterations,
       broadPassMultiplier: _broadPassMultiplier,
       ...solverParams
@@ -392,7 +433,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       branchInputRoutes = applyBroadRepulsionForces(
         this.params.srj,
         this.outputHdRoutes,
-        this.params.effort ?? 1,
+        strategy.solverEffort ?? this.params.effort ?? 1,
         strategy.broadPassMultiplier,
         this.params.connMap,
       )
@@ -418,6 +459,8 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       validationDrcEvaluator: _validationDrcEvaluator,
       viaInPadDrcEvaluator: _viaInPadDrcEvaluator,
       viaInPadMaxIterations: _viaInPadMaxIterations,
+      baselineMaxIterations: _baselineMaxIterations,
+      baselineBroadMaxIterations: _baselineBroadMaxIterations,
       broadMaxIterations: _broadMaxIterations,
       broadPassMultiplier: _broadPassMultiplier,
       ...solverParams
@@ -426,10 +469,12 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
     this.activeBranchSolver = new GlobalDrcForceImproveSolver({
       ...solverParams,
       hdRoutes: branchInputRoutes,
+      effort: strategy.solverEffort ?? this.params.effort,
       maxIterations:
-        strategy.broadPassMultiplier === undefined
+        strategy.maxIterations ??
+        (strategy.broadPassMultiplier === undefined
           ? this.params.maxIterations
-          : this.broadMaxIterations,
+          : this.broadMaxIterations),
       forceScales: strategy.forceScales ?? this.params.forceScales,
       targetedErrorStartOffset: strategy.targetedErrorStartOffset,
       targetedSweepScale:
@@ -477,7 +522,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       this.selectedBranchName = strategy.name
       this.branchesAccepted += 1
       this.consecutiveNonImprovingBranches = 0
-    } else if (strategy.name !== "baseline") {
+    } else if (!strategy.preservesBaselineCheckpoint) {
       this.consecutiveNonImprovingBranches += 1
     }
 

@@ -39,6 +39,13 @@ export type GlobalDrcBranchPortfolioSolverParams =
   GlobalDrcForceImproveSolverParams & {
     broadMaxIterations: number
     broadPassMultiplier: number
+    /**
+     * Iteration budgets used to replay the effort-1 repair branches before
+     * exploratory high-effort branches. When omitted, the regular branch
+     * budgets are reused.
+     */
+    baselineMaxIterations?: number
+    baselineBroadMaxIterations?: number
     additionalCandidateHdRoutes?: readonly HighDensityRoute[][]
     /**
      * Optional stricter evaluator used only to rank portfolio checkpoints.
