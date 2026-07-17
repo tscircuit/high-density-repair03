@@ -263,9 +263,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       (!Number.isInteger(params.baselineBroadMaxIterations) ||
         params.baselineBroadMaxIterations <= 0)
     ) {
-      throw new Error(
-        "baselineBroadMaxIterations must be a positive integer",
-      )
+      throw new Error("baselineBroadMaxIterations must be a positive integer")
     }
     if (
       params.viaInPadMaxIterations !== undefined &&
