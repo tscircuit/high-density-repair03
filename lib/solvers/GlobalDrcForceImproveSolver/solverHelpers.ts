@@ -173,12 +173,27 @@ export const getDrcSnapshot = (
     const errorsWithCenters = Array.isArray(drcResult)
       ? drcResult
       : (drcResult.errorsWithCenters ?? drcResult.errors)
+    const viaRouteIndexById = new Map<string, number>()
+    if (!Array.isArray(drcResult)) {
+      for (const [viaId, traceId] of Object.entries(
+        drcResult.pcbViaTraceIdById ?? {},
+      )) {
+        const routeIndex = traceRouteIndexById.get(traceId)
+        if (routeIndex !== undefined) viaRouteIndexById.set(viaId, routeIndex)
+      }
+    }
 
     return {
-      errors: errors as Array<Record<string, unknown>>,
+      errors: errorsWithCenters as Array<Record<string, unknown>>,
       count: errors.length,
       issueScore: getDrcIssueScore(errors as Array<Record<string, unknown>>),
       traceRouteIndexById,
+      viaRouteIndexById,
+      viaPositionById: new Map(
+        !Array.isArray(drcResult)
+          ? Object.entries(drcResult.pcbViaPositionById ?? {})
+          : [],
+      ),
     }
   }
 
@@ -210,6 +225,8 @@ export const getDrcSnapshot = (
         : drc.errors) as unknown as Array<Record<string, unknown>>,
     ),
     traceRouteIndexById,
+    viaRouteIndexById: new Map(),
+    viaPositionById: new Map(),
   }
 }
 
@@ -2085,7 +2102,7 @@ const getNearestSegment = (
   return best?.segment
 }
 
-const getNearestVia = (vias: ViaNode[], point: Point) => {
+const getNearestVia = (vias: ViaNode[], point: Point, routeIndex?: number) => {
   let best:
     | {
         via: ViaNode
@@ -2094,6 +2111,7 @@ const getNearestVia = (vias: ViaNode[], point: Point) => {
     | undefined
 
   for (const via of vias) {
+    if (routeIndex !== undefined && via.routeIndex !== routeIndex) continue
     const distance = Math.hypot(via.x - point.x, via.y - point.y)
     if (!best || distance < best.distance) {
       best = { via, distance }
@@ -2101,6 +2119,60 @@ const getNearestVia = (vias: ViaNode[], point: Point) => {
   }
 
   return best?.via
+}
+
+const getNamedViaPair = (
+  vias: ViaNode[],
+  point: Point,
+  viaIds: unknown[],
+  viaRouteIndexById?: Map<string, number>,
+  viaPositionById?: Map<string, { x: number; y: number }>,
+): [ViaNode, ViaNode] | undefined => {
+  if (viaIds.length < 2) return undefined
+  const leftViaId = typeof viaIds[0] === "string" ? viaIds[0] : undefined
+  const rightViaId = typeof viaIds[1] === "string" ? viaIds[1] : undefined
+  if (leftViaId && rightViaId && viaPositionById) {
+    const leftPosition = viaPositionById.get(leftViaId)
+    const rightPosition = viaPositionById.get(rightViaId)
+    if (leftPosition && rightPosition) {
+      const left = getNearestVia(vias, leftPosition)
+      const rightCandidates = vias
+        .filter((via) => via !== left)
+        .sort(
+          (a, b) =>
+            Math.hypot(a.x - rightPosition.x, a.y - rightPosition.y) -
+            Math.hypot(b.x - rightPosition.x, b.y - rightPosition.y),
+        )
+      const right = rightCandidates[0]
+      if (left && right) return [left, right]
+    }
+  }
+
+  if (!viaRouteIndexById) return undefined
+  const leftRouteIndex =
+    leftViaId !== undefined ? viaRouteIndexById.get(leftViaId) : undefined
+  const rightRouteIndex =
+    rightViaId !== undefined ? viaRouteIndexById.get(rightViaId) : undefined
+  if (leftRouteIndex === undefined || rightRouteIndex === undefined) {
+    return undefined
+  }
+
+  if (leftRouteIndex !== rightRouteIndex) {
+    const left = getNearestVia(vias, point, leftRouteIndex)
+    const right = getNearestVia(vias, point, rightRouteIndex)
+    return left && right ? [left, right] : undefined
+  }
+
+  const sameRouteVias = vias
+    .filter((via) => via.routeIndex === leftRouteIndex)
+    .sort(
+      (left, right) =>
+        Math.hypot(left.x - point.x, left.y - point.y) -
+        Math.hypot(right.x - point.x, right.y - point.y),
+    )
+  return sameRouteVias.length >= 2
+    ? [sameRouteVias[0]!, sameRouteVias[1]!]
+    : undefined
 }
 
 const getNearestViaPair = (vias: ViaNode[], point: Point) => {
@@ -2221,8 +2293,13 @@ const pushViaViaPair = (
   srj: SimpleRouteJson,
   connMap?: ConnectivityMap,
   maxMove = BROAD_MAX_MOVE,
+  allowSameNet = false,
+  directionRotationRadians = 0,
 ) => {
-  if (sharesNet(left.rootConnectionName, right.rootConnectionName, connMap)) {
+  if (
+    !allowSameNet &&
+    sharesNet(left.rootConnectionName, right.rootConnectionName, connMap)
+  ) {
     return false
   }
 
@@ -2246,6 +2323,12 @@ const pushViaViaPair = (
     distance > POSITION_EPSILON
       ? separationY / distance
       : Math.sin(fallbackAngle)
+  const rotatedDirectionX =
+    directionX * Math.cos(directionRotationRadians) -
+    directionY * Math.sin(directionRotationRadians)
+  const rotatedDirectionY =
+    directionX * Math.sin(directionRotationRadians) +
+    directionY * Math.cos(directionRotationRadians)
   const movableCount = Number(left.movable) + Number(right.movable)
   if (movableCount === 0) return false
 
@@ -2253,15 +2336,15 @@ const pushViaViaPair = (
   const movedLeft = moveVia(
     routes,
     left,
-    directionX * move,
-    directionY * move,
+    rotatedDirectionX * move,
+    rotatedDirectionY * move,
     srj,
   )
   const movedRight = moveVia(
     routes,
     right,
-    -directionX * move,
-    -directionY * move,
+    -rotatedDirectionX * move,
+    -rotatedDirectionY * move,
     srj,
   )
   return movedLeft || movedRight
@@ -3022,6 +3105,8 @@ export const applyDrcErrorForces = (
   traceRouteIndexById: Map<string, number>,
   scale: number,
   connMap?: ConnectivityMap,
+  viaRouteIndexById?: Map<string, number>,
+  viaPositionById?: Map<string, { x: number; y: number }>,
 ) => {
   let changed = false
   const vias = collectViaNodes(routes)
@@ -3035,7 +3120,14 @@ export const applyDrcErrorForces = (
     const viaIds = error.pcb_via_ids
     if (Array.isArray(viaIds) && viaIds.length > 0) {
       repulsionPoint = getRepulsionPointForError(srj, error, center)
-      const nearestViaPair = getNearestViaPair(vias, center)
+      const nearestViaPair =
+        getNamedViaPair(
+          vias,
+          center,
+          viaIds,
+          viaRouteIndexById,
+          viaPositionById,
+        ) ?? getNearestViaPair(vias, center)
       if (nearestViaPair) {
         changed =
           pushViaViaPair(
@@ -3045,6 +3137,8 @@ export const applyDrcErrorForces = (
             srj,
             connMap,
             VIA_PAIR_REPAIR_MAX_MOVE * Math.abs(scale),
+            true,
+            scale > 1 ? Math.PI / 2 : scale < 0 ? -Math.PI / 2 : 0,
           ) || changed
       } else {
         const nearestVia = getNearestVia(vias, center)

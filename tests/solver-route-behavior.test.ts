@@ -476,7 +476,7 @@ test("treats composite root names as same-net when checking pad attachments", ()
   }
 })
 
-test("does not push close vias from mst-suffixed routes on the same net", () => {
+test("targeted DRC repair pushes close vias from mst-suffixed routes on the same net", () => {
   const srj: SimpleRouteJson = {
     bounds: { minX: -2, minY: -2, maxX: 2, maxY: 2 },
     connections: [
@@ -535,11 +535,11 @@ test("does not push close vias from mst-suffixed routes on the same net", () => 
     connMap,
   )
 
-  expect(changed).toBe(false)
-  expect(routes[0]?.route[1]).toEqual({ x: 0, y: 0, z: 0 })
-  expect(routes[0]?.route[2]).toEqual({ x: 0, y: 0, z: 1 })
-  expect(routes[1]?.route[1]).toEqual({ x: 0.05, y: 0, z: 0 })
-  expect(routes[1]?.route[2]).toEqual({ x: 0.05, y: 0, z: 1 })
+  expect(changed).toBe(true)
+  expect(routes[0]?.route[1]?.x).toBeLessThan(0)
+  expect(routes[0]?.route[2]?.x).toBeLessThan(0)
+  expect(routes[1]?.route[1]?.x).toBeGreaterThan(0.05)
+  expect(routes[1]?.route[2]?.x).toBeGreaterThan(0.05)
 })
 
 test("preserves width, via diameter, and endpoint port ids in DRC traces", () => {

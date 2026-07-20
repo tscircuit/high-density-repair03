@@ -442,6 +442,8 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
             bestSnapshot.traceRouteIndexById,
             1,
             this.connMap,
+            bestSnapshot.viaRouteIndexById,
+            bestSnapshot.viaPositionById,
           ) || changed
       }
 
@@ -505,6 +507,8 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           bestSnapshot.traceRouteIndexById,
           scale,
           this.connMap,
+          bestSnapshot.viaRouteIndexById,
+          bestSnapshot.viaPositionById,
         )
         if (!changed) continue
 

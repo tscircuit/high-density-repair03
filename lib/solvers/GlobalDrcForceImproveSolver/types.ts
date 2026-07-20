@@ -9,13 +9,24 @@ export type DrcEvaluator = (input: {
   srj?: SimpleRouteJson
   hdRoutes?: HighDensityRoute[]
   routes?: HighDensityRoute[]
-}) => { errors: DrcError[]; errorsWithCenters?: DrcError[] } | DrcError[]
+}) =>
+  | {
+      errors: DrcError[]
+      errorsWithCenters?: DrcError[]
+      /** Maps evaluator-specific via ids back to the trace that owns them. */
+      pcbViaTraceIdById?: Record<string, string>
+      /** Maps evaluator-specific via ids back to their evaluated geometry. */
+      pcbViaPositionById?: Record<string, { x: number; y: number }>
+    }
+  | DrcError[]
 
 export type DrcSnapshot = {
   errors: DrcError[]
   count: number
   issueScore: number
   traceRouteIndexById: Map<string, number>
+  viaRouteIndexById: Map<string, number>
+  viaPositionById: Map<string, { x: number; y: number }>
 }
 
 export type GlobalDrcForceImproveSolverParams = {
