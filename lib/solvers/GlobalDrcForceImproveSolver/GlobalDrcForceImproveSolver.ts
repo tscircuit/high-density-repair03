@@ -19,6 +19,8 @@ import {
 import {
   applyBroadRepulsionForces,
   applyDrcErrorForces,
+  applyTerminalViaRelocationForError,
+  applyViaInPadLayerMoveForError,
   cloneRoutes,
   getCenteredErrors,
   getDrcSnapshot,
@@ -55,15 +57,20 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   readonly connMap?: ConnectivityMap
   readonly effort: number
   readonly drcEvaluator?: DrcEvaluator
+  readonly viaHoleDiameter?: number
   readonly configuredMaxIterations?: number
   readonly enableLargeBoardBroadFallback: boolean
   readonly enableTargetedErrorSweep: boolean
   readonly enablePostSolveClearanceRelaxation: boolean
+  readonly enableViaInPadLayerMoves: boolean
   outputHdRoutes: HighDensityRoute[]
   private initialDrcIssueCount: number | undefined
   private broadForceAccepted = false
   private targetedForceAccepted = false
   private candidateAttempts = 0
+  private viaInPadCandidateAttempts = 0
+  private viaInPadCandidatesAccepted = 0
+  private padTopologyErrorCursor = 0
   private errorCursor = 0
   private stalledIterations = 0
   private bestDrcIssueCountSeen: number | undefined
@@ -80,12 +87,20 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     this.connMap = params.connMap
     this.effort = params.effort ?? 1
     this.drcEvaluator = params.drcEvaluator
+    if (
+      params.viaHoleDiameter !== undefined &&
+      (!Number.isFinite(params.viaHoleDiameter) || params.viaHoleDiameter <= 0)
+    ) {
+      throw new Error("viaHoleDiameter must be a positive finite number")
+    }
+    this.viaHoleDiameter = params.viaHoleDiameter
     this.configuredMaxIterations = params.maxIterations
     this.enableLargeBoardBroadFallback =
       params.enableLargeBoardBroadFallback ?? true
     this.enableTargetedErrorSweep = params.enableTargetedErrorSweep ?? false
     this.enablePostSolveClearanceRelaxation =
       params.enablePostSolveClearanceRelaxation ?? true
+    this.enableViaInPadLayerMoves = params.enableViaInPadLayerMoves ?? false
     this.outputHdRoutes = params.hdRoutes
     this.MAX_ITERATIONS =
       this.configuredMaxIterations ?? getBaseMaxIterations(this.effort)
@@ -99,11 +114,13 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         connMap: this.connMap,
         effort: this.effort,
         drcEvaluator: this.drcEvaluator,
+        viaHoleDiameter: this.viaHoleDiameter,
         maxIterations: this.configuredMaxIterations,
         enableLargeBoardBroadFallback: this.enableLargeBoardBroadFallback,
         enableTargetedErrorSweep: this.enableTargetedErrorSweep,
         enablePostSolveClearanceRelaxation:
           this.enablePostSolveClearanceRelaxation,
+        enableViaInPadLayerMoves: this.enableViaInPadLayerMoves,
       },
     ] as const
   }
@@ -116,6 +133,10 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       globalDrcForceImproveBroadForceAccepted: this.broadForceAccepted,
       globalDrcForceImproveTargetedForceAccepted: this.targetedForceAccepted,
       globalDrcForceImproveCandidateAttempts: this.candidateAttempts,
+      globalDrcForceImproveViaInPadCandidateAttempts:
+        this.viaInPadCandidateAttempts,
+      globalDrcForceImproveViaInPadCandidatesAccepted:
+        this.viaInPadCandidatesAccepted,
       globalDrcForceImproveStalledIterations: this.stalledIterations,
       globalDrcForceImproveBestDrcIssueCountSeen:
         this.bestDrcIssueCountSeen ?? snapshot.count,
@@ -271,7 +292,145 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     const targetedSweepErrors = this.enableTargetedErrorSweep
       ? getTargetedClearanceSweepErrors(centeredErrors, this.effort)
       : []
-    if (targetedSweepErrors.length >= 2) {
+    const padTraceErrors = centeredErrors.filter(
+      (error) => error.type === "pcb_pad_trace_clearance_error",
+    )
+    const orderedPadTopologyErrors = padTraceErrors.map(
+      (_, offset) =>
+        padTraceErrors[
+          (this.padTopologyErrorCursor + offset) % padTraceErrors.length
+        ]!,
+    )
+    for (const error of this.enableViaInPadLayerMoves
+      ? orderedPadTopologyErrors
+      : []) {
+      if (
+        acceptedCandidate ||
+        candidateAttemptsThisStep >= maxCandidateAttemptsThisStep
+      ) {
+        break
+      }
+
+      this.padTopologyErrorCursor =
+        (padTraceErrors.indexOf(error) + 1) % padTraceErrors.length
+
+      let bestViaInPadCandidate:
+        | {
+            routes: HighDensityRoute[]
+            snapshot: DrcSnapshot
+            viaIssueCount: number
+          }
+        | undefined
+      for (const endpointSide of ["start", "end"] as const) {
+        if (candidateAttemptsThisStep >= maxCandidateAttemptsThisStep) break
+        const candidateRoutes = cloneRoutes(bestRoutes)
+        const changed = applyTerminalViaRelocationForError(
+          this.srj,
+          candidateRoutes,
+          error,
+          bestSnapshot.traceRouteIndexById,
+          endpointSide,
+          this.connMap,
+          this.viaHoleDiameter,
+        )
+        if (!changed) continue
+
+        const materializedCandidateRoutes = materializeRoutes(candidateRoutes)
+        this.viaInPadCandidateAttempts += 1
+        candidateAttemptsThisStep += 1
+        this.candidateAttempts += 1
+        const candidateSnapshot = getDrcSnapshot(
+          this.srj,
+          materializedCandidateRoutes,
+          this.drcEvaluator,
+          this.connMap,
+        )
+        const candidateViaIssueCount = getViaDrcIssueCount(candidateSnapshot)
+        const comparisonCount =
+          bestViaInPadCandidate?.snapshot.count ?? bestIssueCount
+        const comparisonScore =
+          bestViaInPadCandidate?.snapshot.issueScore ?? bestIssueScore
+        const comparisonViaIssueCount =
+          bestViaInPadCandidate?.viaIssueCount ?? bestViaIssueCount
+
+        if (
+          isBetterDrcSnapshot(
+            candidateSnapshot,
+            candidateViaIssueCount,
+            comparisonCount,
+            comparisonScore,
+            comparisonViaIssueCount,
+          )
+        ) {
+          bestViaInPadCandidate = {
+            routes: materializedCandidateRoutes,
+            snapshot: candidateSnapshot,
+            viaIssueCount: candidateViaIssueCount,
+          }
+        }
+      }
+      for (let targetZ = 0; targetZ < this.srj.layerCount; targetZ += 1) {
+        if (candidateAttemptsThisStep >= maxCandidateAttemptsThisStep) break
+        const candidateRoutes = cloneRoutes(bestRoutes)
+        const changed = applyViaInPadLayerMoveForError(
+          this.srj,
+          candidateRoutes,
+          error,
+          bestSnapshot.traceRouteIndexById,
+          targetZ,
+          this.connMap,
+          this.viaHoleDiameter,
+        )
+        if (!changed) continue
+
+        const materializedCandidateRoutes = materializeRoutes(candidateRoutes)
+        this.viaInPadCandidateAttempts += 1
+        candidateAttemptsThisStep += 1
+        this.candidateAttempts += 1
+        const candidateSnapshot = getDrcSnapshot(
+          this.srj,
+          materializedCandidateRoutes,
+          this.drcEvaluator,
+          this.connMap,
+        )
+        const candidateViaIssueCount = getViaDrcIssueCount(candidateSnapshot)
+        const comparisonCount =
+          bestViaInPadCandidate?.snapshot.count ?? bestIssueCount
+        const comparisonScore =
+          bestViaInPadCandidate?.snapshot.issueScore ?? bestIssueScore
+        const comparisonViaIssueCount =
+          bestViaInPadCandidate?.viaIssueCount ?? bestViaIssueCount
+
+        if (
+          isBetterDrcSnapshot(
+            candidateSnapshot,
+            candidateViaIssueCount,
+            comparisonCount,
+            comparisonScore,
+            comparisonViaIssueCount,
+          )
+        ) {
+          bestViaInPadCandidate = {
+            routes: materializedCandidateRoutes,
+            snapshot: candidateSnapshot,
+            viaIssueCount: candidateViaIssueCount,
+          }
+        }
+      }
+
+      if (bestViaInPadCandidate) {
+        bestRoutes = bestViaInPadCandidate.routes
+        bestSnapshot = bestViaInPadCandidate.snapshot
+        bestIssueCount = bestSnapshot.count
+        bestIssueScore = bestSnapshot.issueScore
+        bestViaIssueCount = bestViaInPadCandidate.viaIssueCount
+        this.targetedForceAccepted = true
+        this.viaInPadCandidatesAccepted += 1
+        acceptedCandidate = true
+      }
+    }
+
+    if (!acceptedCandidate && targetedSweepErrors.length >= 2) {
       const candidateRoutes = cloneRoutes(bestRoutes)
       let changed = false
       for (const error of targetedSweepErrors) {
