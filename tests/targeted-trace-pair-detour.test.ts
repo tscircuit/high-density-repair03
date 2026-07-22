@@ -45,8 +45,7 @@ test("adds a directed copper dogleg to one exact conflicting trace", () => {
     {
       type: "pcb_trace_error",
       pcb_trace_id: "source_net_1_mst0_0",
-      pcb_trace_error_id:
-        "overlap_source_net_1_mst0_0_source_net_2_mst0_0",
+      pcb_trace_error_id: "overlap_source_net_1_mst0_0_source_net_2_mst0_0",
       center: { x: 0, y: 0 },
     },
     new Map([

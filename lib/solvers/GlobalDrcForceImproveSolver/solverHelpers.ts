@@ -3163,7 +3163,11 @@ export const applyTracePairDetourForError = (
   const segmentLength = Math.hypot(segmentX, segmentY)
   if (segmentLength <= POSITION_EPSILON) return false
   const projection = pointToSegmentProjection(center, segment)
-  const beforeT = clampValue(projection.t - halfSpan / segmentLength, 0.02, 0.98)
+  const beforeT = clampValue(
+    projection.t - halfSpan / segmentLength,
+    0.02,
+    0.98,
+  )
   const afterT = clampValue(projection.t + halfSpan / segmentLength, 0.02, 0.98)
   if (beforeT >= afterT) return false
 
@@ -3183,7 +3187,11 @@ export const applyTracePairDetourForError = (
     2,
     { ...originalStart },
     before,
-    { ...before, x: before.x + normalX * offset, y: before.y + normalY * offset },
+    {
+      ...before,
+      x: before.x + normalX * offset,
+      y: before.y + normalY * offset,
+    },
     { ...after, x: after.x + normalX * offset, y: after.y + normalY * offset },
     after,
     { ...originalEnd },
@@ -3269,13 +3277,7 @@ export const applyDrcErrorForces = (
       if (
         leftSegment &&
         rightSegment &&
-        pushSegmentSegmentPair(
-          routes,
-          leftSegment,
-          rightSegment,
-          srj,
-          connMap,
-        )
+        pushSegmentSegmentPair(routes, leftSegment, rightSegment, srj, connMap)
       ) {
         changed = true
         continue

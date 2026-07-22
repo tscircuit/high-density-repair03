@@ -37,8 +37,7 @@ test("bounds detour search when an exact trace pair cannot be resolved", () => {
       {
         type: "pcb_trace_error",
         pcb_trace_id: "missing_trace_0",
-        pcb_trace_error_id:
-          "overlap_missing_trace_0_another_missing_trace_0",
+        pcb_trace_error_id: "overlap_missing_trace_0_another_missing_trace_0",
         center: { x: 5, y: 5 },
       },
     ],

@@ -47,8 +47,7 @@ test("does not add a via by moving a connected terminal segment", () => {
     {
       type: "pcb_trace_error",
       pcb_trace_id: "source_net_1_mst0_0",
-      pcb_trace_error_id:
-        "overlap_source_net_1_mst0_0_source_net_2_mst0_0",
+      pcb_trace_error_id: "overlap_source_net_1_mst0_0_source_net_2_mst0_0",
       center: { x: -0.5, y: 0 },
     },
     new Map([

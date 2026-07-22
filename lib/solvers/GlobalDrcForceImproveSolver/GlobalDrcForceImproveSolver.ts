@@ -495,9 +495,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       }
       if (shouldTryTracePairTopology) {
         const routeSides =
-          this.iterations % 2 === 0
-            ? ([0, 1] as const)
-            : ([1, 0] as const)
+          this.iterations % 2 === 0 ? ([0, 1] as const) : ([1, 0] as const)
         const spanExpansion = this.iterations % 3
         for (const routeSide of routeSides) {
           for (let targetZ = 0; targetZ < this.srj.layerCount; targetZ += 1) {

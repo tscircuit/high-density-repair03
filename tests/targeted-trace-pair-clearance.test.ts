@@ -50,8 +50,7 @@ test("separates the exact trace pair encoded by a checks error id", () => {
         type: "pcb_trace_error",
         error_type: "pcb_trace_error",
         pcb_trace_id: "source_net_1_mst0_0",
-        pcb_trace_error_id:
-          "overlap_source_net_1_mst0_0_source_net_2_mst0_0",
+        pcb_trace_error_id: "overlap_source_net_1_mst0_0_source_net_2_mst0_0",
         center: { x: 0, y: 0.05 },
       },
     ],
@@ -64,7 +63,5 @@ test("separates the exact trace pair encoded by a checks error id", () => {
 
   expect(changed).toBe(true)
   expect(routes[0]?.route[1]?.y).toBeLessThan(0)
-  expect(
-    routes[1]!.route[1]!.y - routes[0]!.route[1]!.y,
-  ).toBeGreaterThan(0.1)
+  expect(routes[1]!.route[1]!.y - routes[0]!.route[1]!.y).toBeGreaterThan(0.1)
 })
