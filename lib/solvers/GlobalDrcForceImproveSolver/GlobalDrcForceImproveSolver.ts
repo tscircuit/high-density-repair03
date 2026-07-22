@@ -354,9 +354,14 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         )
         let detourCursor =
           this.tracePairDetourCursorByErrorId.get(traceErrorKey) ?? 0
-        while (candidateAttemptsThisStep < maxCandidateAttemptsThisStep) {
+        let detourVariantsChecked = 0
+        while (
+          candidateAttemptsThisStep < maxCandidateAttemptsThisStep &&
+          detourVariantsChecked < detourVariants.length
+        ) {
           const variant = detourVariants[detourCursor % detourVariants.length]!
           detourCursor += 1
+          detourVariantsChecked += 1
           const candidateRoutes = cloneRoutes(bestRoutes)
           const changed = applyTracePairDetourForError(
             candidateRoutes,
