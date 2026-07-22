@@ -3302,6 +3302,8 @@ export const applyDrcErrorForces = (
         ? (nearestObstacle?.center ?? center)
         : getRepulsionPointForError(srj, error, center)
       const nearestVia = getNearestVia(vias, center)
+      const isExactViaTraceError =
+        getDrcErrorType(error) === "pcb_via_trace_clearance_error"
       if (
         nearestVia &&
         !sharesNet(
@@ -3309,7 +3311,8 @@ export const applyDrcErrorForces = (
           nearestSegment.rootConnectionName,
           connMap,
         ) &&
-        Math.hypot(nearestVia.x - center.x, nearestVia.y - center.y) < 0.45
+        (isExactViaTraceError ||
+          Math.hypot(nearestVia.x - center.x, nearestVia.y - center.y) < 0.45)
       ) {
         changed =
           pushViaSegmentPair(
