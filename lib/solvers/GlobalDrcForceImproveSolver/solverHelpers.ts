@@ -3094,6 +3094,12 @@ export const applyTracePairLayerMoveForError = (
     const followingPoint = route.route[spanEndIndex + 1]
     if (followingPoint?.z === segment.z) spanEndIndex += 1
   }
+  if (
+    (spanStartIndex === 0 && route.route[0]?.pcb_port_id) ||
+    (spanEndIndex === route.route.length - 1 && route.route.at(-1)?.pcb_port_id)
+  ) {
+    return false
+  }
 
   const start = route.route[spanStartIndex]
   const end = route.route[spanEndIndex]
