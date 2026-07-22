@@ -511,6 +511,8 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
               routeSide,
               targetZ,
               spanExpansion,
+              this.connMap,
+              this.viaHoleDiameter,
             )
             if (!changed) continue
 

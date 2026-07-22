@@ -3073,6 +3073,8 @@ export const applyTracePairLayerMoveForError = (
   routeSide: 0 | 1,
   targetZ: number,
   spanExpansion = 0,
+  connMap?: ConnectivityMap,
+  viaHoleDiameter?: number,
 ) => {
   if (getDrcErrorType(error) !== "pcb_trace_error") return false
   if (targetZ < 0 || targetZ >= srj.layerCount) return false
@@ -3095,8 +3097,24 @@ export const applyTracePairLayerMoveForError = (
     if (followingPoint?.z === segment.z) spanEndIndex += 1
   }
   if (
-    (spanStartIndex === 0 && route.route[0]?.pcb_port_id) ||
-    (spanEndIndex === route.route.length - 1 && route.route.at(-1)?.pcb_port_id)
+    (spanStartIndex === 0 &&
+      route.route[0]?.pcb_port_id &&
+      !isRouteEndpointEligibleForViaInPad(
+        srj,
+        route,
+        route.route[0],
+        connMap,
+        viaHoleDiameter,
+      )) ||
+    (spanEndIndex === route.route.length - 1 &&
+      route.route.at(-1)?.pcb_port_id &&
+      !isRouteEndpointEligibleForViaInPad(
+        srj,
+        route,
+        route.route.at(-1)!,
+        connMap,
+        viaHoleDiameter,
+      ))
   ) {
     return false
   }
