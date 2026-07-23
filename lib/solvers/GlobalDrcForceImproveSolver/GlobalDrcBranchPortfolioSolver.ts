@@ -4,9 +4,12 @@ import type { HighDensityRoute } from "../../types/high-density-types"
 import { GlobalDrcForceImproveSolver } from "./GlobalDrcForceImproveSolver"
 import { getDrcSnapshot } from "./drc-snapshot"
 import { applyBroadRepulsionForces } from "./solverHelpers"
+import { BROAD_FALLBACK_SMALL_ROUTE_LIMIT } from "./solverConfig"
 import type { DrcSnapshot, GlobalDrcBranchPortfolioSolverParams } from "./types"
 
 type PortfolioPhase = "start" | "baseline" | "broad" | "viaInPad" | "done"
+
+const MAX_LARGE_BOARD_VIA_IN_PAD_DRC_ISSUES = 3
 
 export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
   readonly params: GlobalDrcBranchPortfolioSolverParams
@@ -126,6 +129,19 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
     if (
       !this.params.enableViaInPadLayerMoves ||
       !this.params.viaInPadDrcEvaluator
+    ) {
+      this.finishWithOutput(routes, snapshot, portfolioSelectedSolver)
+      return
+    }
+    const viaInPadInputSnapshot = getDrcSnapshot(
+      this.params.srj,
+      routes,
+      this.params.viaInPadDrcEvaluator,
+      this.params.connMap,
+    )
+    if (
+      this.inputHdRoutes.length > BROAD_FALLBACK_SMALL_ROUTE_LIMIT &&
+      viaInPadInputSnapshot.count > MAX_LARGE_BOARD_VIA_IN_PAD_DRC_ISSUES
     ) {
       this.finishWithOutput(routes, snapshot, portfolioSelectedSolver)
       return
