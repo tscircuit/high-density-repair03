@@ -175,7 +175,7 @@ export const getDrcSnapshot = (
       : (drcResult.errorsWithCenters ?? drcResult.errors)
 
     return {
-      errors: errors as Array<Record<string, unknown>>,
+      errors: errorsWithCenters as Array<Record<string, unknown>>,
       count: errors.length,
       issueScore: getDrcIssueScore(errors as Array<Record<string, unknown>>),
       traceRouteIndexById,
