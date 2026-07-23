@@ -46,12 +46,24 @@ import type { HighDensityRoute } from "../../types/high-density-types"
 import { convertHdRouteToSimplifiedRoute } from "../../utils/convertHdRouteToSimplifiedRoute"
 import { mapZToLayerName } from "../../utils/mapZToLayerName"
 
+const cloneRoute = (route: HighDensityRoute): MutableRoute => ({
+  ...route,
+  route: route.route.map((point) => ({ ...point })),
+  vias: route.vias.map((via) => ({ ...via })),
+})
+
 export const cloneRoutes = (routes: HighDensityRoute[]): MutableRoute[] =>
-  routes.map((route) => ({
-    ...route,
-    route: route.route.map((point) => ({ ...point })),
-    vias: route.vias.map((via) => ({ ...via })),
-  }))
+  routes.map(cloneRoute)
+
+export const cloneRoutesForIndexes = (
+  routes: HighDensityRoute[],
+  routeIndexes: readonly number[],
+): MutableRoute[] => {
+  const copiedIndexes = new Set(routeIndexes)
+  return routes.map((route, routeIndex) =>
+    copiedIndexes.has(routeIndex) ? cloneRoute(route) : route,
+  )
+}
 
 const areSameXY = (left: Point, right: Point) =>
   Math.abs(left.x - right.x) <= COORDINATE_EPSILON &&
@@ -89,11 +101,23 @@ const createSimplifiedTraces = (
 } => {
   const traces: SimplifiedPcbTraces = []
   const traceRouteIndexById = new Map<string, number>()
+  const routesByConnectionName = new Map<
+    string,
+    Array<{ route: HighDensityRoute; routeIndex: number }>
+  >()
+  for (let routeIndex = 0; routeIndex < routes.length; routeIndex += 1) {
+    const route = routes[routeIndex]
+    if (!route) continue
+    const groupedRoutes = routesByConnectionName.get(route.connectionName)
+    if (groupedRoutes) {
+      groupedRoutes.push({ route, routeIndex })
+    } else {
+      routesByConnectionName.set(route.connectionName, [{ route, routeIndex }])
+    }
+  }
 
   for (const connection of srj.connections) {
-    const hdRoutes = routes
-      .map((route, routeIndex) => ({ route, routeIndex }))
-      .filter(({ route }) => route.connectionName === connection.name)
+    const hdRoutes = routesByConnectionName.get(connection.name) ?? []
 
     for (let i = 0; i < hdRoutes.length; i += 1) {
       const hdRoute = hdRoutes[i]
@@ -272,33 +296,36 @@ export const collectViaNodes = (
   return vias
 }
 
-const collectSegments = (routes: MutableRoute[]): Segment[] => {
+const collectSegmentsForRoute = (
+  route: MutableRoute,
+  routeIndex: number,
+): Segment[] => {
   const segments: Segment[] = []
 
-  for (let routeIndex = 0; routeIndex < routes.length; routeIndex += 1) {
-    const route = routes[routeIndex]
-    if (!route) continue
-
-    for (let index = 0; index < route.route.length - 1; index += 1) {
-      const start = route.route[index]
-      const end = route.route[index + 1]
-      if (!start || !end) continue
-      if (start.z !== end.z || areSameXY(start, end)) continue
-      segments.push({
-        routeIndex,
-        rootConnectionName: getRootConnectionName(route),
-        startIndex: index,
-        endIndex: index + 1,
-        start,
-        end,
-        z: start.z,
-        radius: (route.traceThickness ?? 0.1) / 2,
-      })
-    }
+  for (let index = 0; index < route.route.length - 1; index += 1) {
+    const start = route.route[index]
+    const end = route.route[index + 1]
+    if (!start || !end) continue
+    if (start.z !== end.z || areSameXY(start, end)) continue
+    segments.push({
+      routeIndex,
+      rootConnectionName: getRootConnectionName(route),
+      startIndex: index,
+      endIndex: index + 1,
+      start,
+      end,
+      z: start.z,
+      radius: (route.traceThickness ?? 0.1) / 2,
+    })
   }
 
   return segments
 }
+
+const collectSegments = (routes: MutableRoute[]): Segment[] =>
+  routes.flatMap((route, routeIndex) =>
+    collectSegmentsForRoute(route, routeIndex),
+  )
 
 const getViaBounds = (via: ViaNode): Bounds2D => ({
   minX: via.x,
@@ -2728,11 +2755,23 @@ const deriveVias = (route: MutableRoute): MutableRoute["vias"] => {
   return vias
 }
 
+const materializeRoute = (route: MutableRoute): HighDensityRoute => ({
+  ...route,
+  vias: deriveVias(route),
+})
+
 export const materializeRoutes = (routes: MutableRoute[]): HighDensityRoute[] =>
-  routes.map((route) => ({
-    ...route,
-    vias: deriveVias(route),
-  }))
+  routes.map(materializeRoute)
+
+export const materializeRoutesForIndexes = (
+  routes: MutableRoute[],
+  routeIndexes: readonly number[],
+): HighDensityRoute[] => {
+  const changedIndexes = new Set(routeIndexes)
+  return routes.map((route, routeIndex) =>
+    changedIndexes.has(routeIndex) ? materializeRoute(route) : route,
+  )
+}
 
 const parseTraceRouteIndex = (error: Record<string, unknown>) => {
   const traceId = error.pcb_trace_id
@@ -2772,7 +2811,7 @@ const isViaDrcError = (error: Record<string, unknown>) =>
 export const getViaDrcIssueCount = (snapshot: DrcSnapshot) =>
   snapshot.errors.filter(isViaDrcError).length
 
-const getTraceRouteIndexForError = (
+export const getTraceRouteIndexForError = (
   error: Record<string, unknown>,
   traceRouteIndexById: Map<string, number>,
 ) => {
@@ -3030,7 +3069,7 @@ export const applyTerminalViaRelocationForError = (
   return true
 }
 
-const getTraceRoutePairForError = (
+export const getTraceRoutePairForError = (
   error: Record<string, unknown>,
   traceRouteIndexById: Map<string, number>,
 ): [number, number] | undefined => {
@@ -3087,7 +3126,10 @@ export const applyTracePairLayerMoveForError = (
   const routeIndex = routePair[routeSide]
   const route = routes[routeIndex]
   if (!route) return false
-  const segment = getNearestSegment(collectSegments(routes), center, routeIndex)
+  const segment = getNearestSegment(
+    collectSegmentsForRoute(route, routeIndex),
+    center,
+  )
   if (!segment || segment.z === targetZ) return false
 
   let spanStartIndex = segment.startIndex
@@ -3155,7 +3197,10 @@ export const applyTracePairDetourForError = (
   const routeIndex = routePair[routeSide]
   const route = routes[routeIndex]
   if (!route) return false
-  const segment = getNearestSegment(collectSegments(routes), center, routeIndex)
+  const segment = getNearestSegment(
+    collectSegmentsForRoute(route, routeIndex),
+    center,
+  )
   if (!segment) return false
 
   const segmentX = segment.end.x - segment.start.x

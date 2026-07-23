@@ -6,7 +6,7 @@ import {
   type SimpleRouteJson,
 } from "../lib"
 
-test("skips the combinatorial via-in-pad phase on large high-error boards", () => {
+test("runs the bounded via-in-pad phase on large high-error boards", () => {
   const hdRoutes: HighDensityRoute[] = Array.from(
     { length: 121 },
     (_, index) => ({
@@ -57,6 +57,6 @@ test("skips the combinatorial via-in-pad phase on large high-error boards", () =
 
   solver.solve()
 
-  expect(viaInPadEvaluationCount).toBe(1)
-  expect(solver.stats.drcBranchPortfolioViaInPadPhaseAttempted).toBe(false)
+  expect(viaInPadEvaluationCount).toBe(2)
+  expect(solver.stats.drcBranchPortfolioViaInPadPhaseAttempted).toBe(true)
 })
