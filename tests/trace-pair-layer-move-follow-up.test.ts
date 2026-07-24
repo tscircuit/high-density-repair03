@@ -1,0 +1,110 @@
+import { expect, test } from "bun:test"
+import {
+  GlobalDrcForceImproveSolver,
+  type HighDensityRoute,
+  type SimpleRouteJson,
+} from "../lib"
+import type { DrcEvaluator } from "../lib/solvers/GlobalDrcForceImproveSolver/types"
+
+const srj: SimpleRouteJson = {
+  bounds: { minX: -2, minY: -4, maxX: 4, maxY: 2 },
+  connections: [
+    { name: "A", pointsToConnect: [] },
+    { name: "B", pointsToConnect: [] },
+  ],
+  obstacles: [],
+  layerCount: 2,
+  minTraceWidth: 0.1,
+  minViaDiameter: 0.3,
+}
+
+const hdRoutes: HighDensityRoute[] = [
+  {
+    connectionName: "A",
+    route: [
+      { x: -1, y: 0, z: 0 },
+      { x: 1, y: 0, z: 0 },
+      { x: 1, y: 0, z: 1 },
+      { x: 1, y: -1, z: 1 },
+      { x: 1, y: -1, z: 0 },
+      { x: 1, y: -3, z: 0 },
+    ],
+    vias: [
+      { x: 1, y: 0 },
+      { x: 1, y: -1 },
+    ],
+    traceThickness: 0.1,
+    viaDiameter: 0.3,
+  },
+  {
+    connectionName: "B",
+    route: [
+      { x: 0, y: -1, z: 0 },
+      { x: 0, y: 1, z: 0 },
+      { x: 3, y: 1, z: 0 },
+      { x: 3, y: -2, z: 0 },
+      { x: 0, y: -2, z: 0 },
+    ],
+    vias: [],
+    traceThickness: 0.1,
+    viaDiameter: 0.3,
+  },
+]
+
+const makeTracePairError = (center: { x: number; y: number }) => ({
+  type: "pcb_trace_error",
+  error_type: "pcb_trace_error",
+  message: "PCB traces overlap",
+  pcb_trace_id: "A_0",
+  pcb_trace_error_id: "overlap_A_0_B_0",
+  center,
+})
+
+test("repairs a second trace-pair crossing exposed by a layer move", () => {
+  const drcEvaluator: DrcEvaluator = ({ routes }) => {
+    const routeA = routes?.[0]
+    const routeB = routes?.[1]
+    if (!routeA || !routeB) return []
+
+    const firstCrossingMovedToLayerOne =
+      routeA.route.filter((point) => point.y === 0 && point.z === 1).length >= 2
+    if (!firstCrossingMovedToLayerOne) {
+      return [makeTracePairError({ x: 0, y: 0 })]
+    }
+
+    const lowerRoutePointMoved = routeA.route.some(
+      (point) => point.z === 0 && point.y <= -1 && Math.abs(point.x - 1) > 1e-4,
+    )
+    const lowerBlockingPoint = routeB.route.find(
+      (point) => point.x >= 2.9 && point.y < 0,
+    )
+    const lowerBlockingPointMoved =
+      lowerBlockingPoint !== undefined &&
+      Math.abs(lowerBlockingPoint.y + 2) > 1e-4
+    if (!lowerRoutePointMoved && !lowerBlockingPointMoved) {
+      return [makeTracePairError({ x: 1, y: -2 })]
+    }
+
+    return []
+  }
+  const solver = new GlobalDrcForceImproveSolver({
+    srj,
+    hdRoutes,
+    drcEvaluator,
+    maxIterations: 2,
+    enableLargeBoardBroadFallback: false,
+    enablePostSolveClearanceRelaxation: false,
+    enableViaInPadLayerMoves: true,
+  })
+
+  solver.solve()
+
+  expect(solver.getOutput()).not.toEqual(hdRoutes)
+  expect(solver.stats.finalDrcIssueCount).toBe(0)
+  expect(
+    solver.stats.globalDrcForceImproveTracePairLayerMoveFollowUpAttempts,
+  ).toBe(1)
+  expect(
+    solver.stats.globalDrcForceImproveTracePairLayerMoveFollowUpsAccepted,
+  ).toBe(1)
+})

@@ -40,6 +40,7 @@ import type {
 } from "./types"
 import type { SimpleRouteJson } from "../../types"
 import type { HighDensityRoute } from "../../types/high-density-types"
+import { evaluateTracePairLayerMoveCandidate } from "./tracePairLayerMoveFollowUp"
 
 export type GlobalDrcForceImproveSolverVisualizer = (
   solver: GlobalDrcForceImproveSolver,
@@ -72,6 +73,8 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   private candidateAttempts = 0
   private viaInPadCandidateAttempts = 0
   private viaInPadCandidatesAccepted = 0
+  private tracePairLayerMoveFollowUpAttempts = 0
+  private tracePairLayerMoveFollowUpsAccepted = 0
   private padTopologyErrorCursor = 0
   private tracePairDetourCursorByErrorId = new Map<string, number>()
   private errorCursor = 0
@@ -140,6 +143,10 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         this.viaInPadCandidateAttempts,
       globalDrcForceImproveViaInPadCandidatesAccepted:
         this.viaInPadCandidatesAccepted,
+      globalDrcForceImproveTracePairLayerMoveFollowUpAttempts:
+        this.tracePairLayerMoveFollowUpAttempts,
+      globalDrcForceImproveTracePairLayerMoveFollowUpsAccepted:
+        this.tracePairLayerMoveFollowUpsAccepted,
       globalDrcForceImproveStalledIterations: this.stalledIterations,
       globalDrcForceImproveBestDrcIssueCountSeen:
         this.bestDrcIssueCountSeen ?? snapshot.count,
@@ -326,6 +333,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
             routes: HighDensityRoute[]
             snapshot: DrcSnapshot
             viaIssueCount: number
+            usedTracePairLayerMoveFollowUp?: boolean
           }
         | undefined
       const traceErrorKey =
@@ -516,17 +524,20 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
 
             const materializedCandidateRoutes =
               materializeRoutes(candidateRoutes)
-            this.viaInPadCandidateAttempts += 1
-            candidateAttemptsThisStep += 1
-            this.candidateAttempts += 1
-            const candidateSnapshot = getDrcSnapshot(
-              this.srj,
-              materializedCandidateRoutes,
-              this.drcEvaluator,
-              this.connMap,
-            )
-            const candidateViaIssueCount =
-              getViaDrcIssueCount(candidateSnapshot)
+            const candidateEvaluation = evaluateTracePairLayerMoveCandidate({
+              srj: this.srj,
+              candidateRoutes: materializedCandidateRoutes,
+              targetError: error,
+              bestIssueCount,
+              drcEvaluator: this.drcEvaluator,
+              connMap: this.connMap,
+            })
+            this.tracePairLayerMoveFollowUpAttempts +=
+              candidateEvaluation.followUpAttemptCount
+            this.viaInPadCandidateAttempts +=
+              candidateEvaluation.evaluationCount
+            candidateAttemptsThisStep += candidateEvaluation.evaluationCount
+            this.candidateAttempts += candidateEvaluation.evaluationCount
             const comparisonCount =
               bestViaInPadCandidate?.snapshot.count ?? bestIssueCount
             const comparisonScore =
@@ -536,17 +547,19 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
 
             if (
               isBetterDrcSnapshot(
-                candidateSnapshot,
-                candidateViaIssueCount,
+                candidateEvaluation.snapshot,
+                candidateEvaluation.viaIssueCount,
                 comparisonCount,
                 comparisonScore,
                 comparisonViaIssueCount,
               )
             ) {
               bestViaInPadCandidate = {
-                routes: materializedCandidateRoutes,
-                snapshot: candidateSnapshot,
-                viaIssueCount: candidateViaIssueCount,
+                routes: candidateEvaluation.routes,
+                snapshot: candidateEvaluation.snapshot,
+                viaIssueCount: candidateEvaluation.viaIssueCount,
+                usedTracePairLayerMoveFollowUp:
+                  candidateEvaluation.usedFollowUpRepair,
               }
             }
           }
@@ -561,6 +574,9 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         bestViaIssueCount = bestViaInPadCandidate.viaIssueCount
         this.targetedForceAccepted = true
         this.viaInPadCandidatesAccepted += 1
+        if (bestViaInPadCandidate.usedTracePairLayerMoveFollowUp) {
+          this.tracePairLayerMoveFollowUpsAccepted += 1
+        }
         acceptedCandidate = true
       }
     }
