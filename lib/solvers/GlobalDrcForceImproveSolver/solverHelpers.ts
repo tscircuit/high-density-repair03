@@ -2886,6 +2886,247 @@ export const applyViaInPadLayerMoveForError = (
   return true
 }
 
+/**
+ * Moves the maximal interior same-layer run containing a pad-clearance error
+ * onto another layer. Existing layer transitions bound the run, so this
+ * relocates copper without inventing terminal vias.
+ */
+export const applyLocalTraceLayerMoveForPadError = (
+  srj: SimpleRouteJson,
+  routes: MutableRoute[],
+  error: Record<string, unknown>,
+  traceRouteIndexById: Map<string, number>,
+  targetZ: number,
+) => {
+  if (getDrcErrorType(error) !== "pcb_pad_trace_clearance_error") return false
+  if (targetZ < 0 || targetZ >= srj.layerCount) return false
+
+  const routeIndex = getTraceRouteIndexForError(error, traceRouteIndexById)
+  const center = getErrorCenter(error)
+  if (routeIndex === undefined || !center) return false
+
+  const route = routes[routeIndex]
+  if (!route || route.route.length < 4) return false
+  const segment = getNearestSegment(collectSegments(routes), center, routeIndex)
+  if (!segment || segment.z === targetZ) return false
+
+  let spanStartIndex = segment.startIndex
+  while (route.route[spanStartIndex - 1]?.z === segment.z) {
+    spanStartIndex -= 1
+  }
+  let spanEndIndex = segment.endIndex
+  while (route.route[spanEndIndex + 1]?.z === segment.z) {
+    spanEndIndex += 1
+  }
+
+  if (spanStartIndex === 0 || spanEndIndex === route.route.length - 1) {
+    return false
+  }
+
+  const originalSpan = route.route.slice(spanStartIndex, spanEndIndex + 1)
+  const spanStart = originalSpan[0]
+  const spanEnd = originalSpan.at(-1)
+  if (!spanStart || !spanEnd) return false
+
+  route.route.splice(
+    spanStartIndex,
+    originalSpan.length,
+    { ...spanStart },
+    ...originalSpan.map((point) => ({
+      ...point,
+      z: targetZ,
+      pcb_port_id: undefined,
+    })),
+    { ...spanEnd },
+  )
+  return true
+}
+
+/** Adds a same-layer detour around the clearance envelope of an exact pad. */
+export const applyPadTraceDetourForError = (
+  srj: SimpleRouteJson,
+  routes: MutableRoute[],
+  error: Record<string, unknown>,
+  traceRouteIndexById: Map<string, number>,
+  variantIndex: number,
+) => {
+  if (getDrcErrorType(error) !== "pcb_pad_trace_clearance_error") return false
+  if (!Number.isInteger(variantIndex) || variantIndex < 0) return false
+
+  const routeIndex = getTraceRouteIndexForError(error, traceRouteIndexById)
+  const padId = error.pcb_pad_id
+  const center = getErrorCenter(error)
+  if (routeIndex === undefined || typeof padId !== "string" || !center) {
+    return false
+  }
+
+  const route = routes[routeIndex]
+  const obstacle = srj.obstacles.find(
+    (candidate) =>
+      candidate.obstacleId === padId || candidate.connectedTo.includes(padId),
+  )
+  if (!route || !obstacle) return false
+
+  const angleRadians =
+    (((obstacle.ccwRotationDegrees ?? 0) * Math.PI) / 180) * -1
+  const cos = Math.cos(angleRadians)
+  const sin = Math.sin(angleRadians)
+  const toLocal = (point: Point): Point => {
+    const dx = point.x - obstacle.center.x
+    const dy = point.y - obstacle.center.y
+    return {
+      x: dx * cos - dy * sin,
+      y: dx * sin + dy * cos,
+    }
+  }
+  const toWorld = (point: Point): Point => {
+    const worldAngle = -angleRadians
+    const worldCos = Math.cos(worldAngle)
+    const worldSin = Math.sin(worldAngle)
+    return {
+      x: obstacle.center.x + point.x * worldCos - point.y * worldSin,
+      y: obstacle.center.y + point.x * worldSin + point.y * worldCos,
+    }
+  }
+
+  const minimumClearance =
+    typeof error.minimum_clearance === "number"
+      ? error.minimum_clearance
+      : getTraceToPadEdgeClearance(srj)
+  const clearance =
+    route.traceThickness / 2 + minimumClearance + CLEARANCE_SLACK
+  const left = -obstacle.width / 2 - clearance
+  const right = obstacle.width / 2 + clearance
+  const bottom = -obstacle.height / 2 - clearance
+  const top = obstacle.height / 2 + clearance
+  const pointIsInsideEnvelope = (point: Point) =>
+    point.x >= left && point.x <= right && point.y >= bottom && point.y <= top
+  const envelopeCorners = [
+    { x: left, y: top },
+    { x: right, y: top },
+    { x: right, y: bottom },
+    { x: left, y: bottom },
+  ]
+  const segmentIntersectsEnvelope = (start: Point, end: Point) => {
+    if (pointIsInsideEnvelope(start) || pointIsInsideEnvelope(end)) {
+      return true
+    }
+    return envelopeCorners.some((corner, cornerIndex) => {
+      const nextCorner =
+        envelopeCorners[(cornerIndex + 1) % envelopeCorners.length]!
+      return (
+        segmentToSegmentMinDistance(start, end, corner, nextCorner) <=
+        POSITION_EPSILON
+      )
+    })
+  }
+
+  const obstacleZLayers = new Set(getObstacleZLayers(obstacle, srj.layerCount))
+  const affectedSegmentIndexes: number[] = []
+  for (
+    let pointIndex = 0;
+    pointIndex < route.route.length - 1;
+    pointIndex += 1
+  ) {
+    const start = route.route[pointIndex]
+    const end = route.route[pointIndex + 1]
+    if (!start || !end || start.z !== end.z || !obstacleZLayers.has(start.z)) {
+      continue
+    }
+    if (segmentIntersectsEnvelope(toLocal(start), toLocal(end))) {
+      affectedSegmentIndexes.push(pointIndex)
+    }
+  }
+  if (affectedSegmentIndexes.length === 0) return false
+
+  const affectedRuns: number[][] = []
+  for (const segmentIndex of affectedSegmentIndexes) {
+    const currentRun = affectedRuns.at(-1)
+    if (currentRun?.at(-1) === segmentIndex - 1) {
+      currentRun.push(segmentIndex)
+    } else {
+      affectedRuns.push([segmentIndex])
+    }
+  }
+  const affectedRun = affectedRuns
+    .map((run) => ({
+      run,
+      distance: Math.min(
+        ...run.map((segmentIndex) => {
+          const start = route.route[segmentIndex]!
+          const end = route.route[segmentIndex + 1]!
+          const projection = projectPointOntoLineSegment(center, start, end)
+          return Math.hypot(center.x - projection.x, center.y - projection.y)
+        }),
+      ),
+    }))
+    .sort((leftRun, rightRun) => leftRun.distance - rightRun.distance)[0]?.run
+  const firstSegmentIndex = affectedRun?.[0]
+  const lastSegmentIndex = affectedRun?.at(-1)
+  if (firstSegmentIndex === undefined || lastSegmentIndex === undefined) {
+    return false
+  }
+
+  const startAnchor = route.route[firstSegmentIndex]
+  const endAnchor = route.route[lastSegmentIndex + 1]
+  if (!startAnchor || !endAnchor || startAnchor.z !== endAnchor.z) return false
+
+  const detourPaths = [
+    [
+      { x: left, y: top },
+      { x: left, y: bottom },
+    ],
+    [
+      { x: right, y: top },
+      { x: right, y: bottom },
+    ],
+    [
+      { x: left, y: top },
+      { x: right, y: top },
+    ],
+    [
+      { x: left, y: bottom },
+      { x: right, y: bottom },
+    ],
+  ]
+    .map((path) => path.map(toWorld))
+    .sort((leftPath, rightPath) => {
+      const getPathLength = (path: Point[]) => {
+        const points = [startAnchor, ...path, endAnchor]
+        return points.slice(0, -1).reduce((total, point, pointIndex) => {
+          const nextPoint = points[pointIndex + 1]!
+          return (
+            total + Math.hypot(nextPoint.x - point.x, nextPoint.y - point.y)
+          )
+        }, 0)
+      }
+      return getPathLength(leftPath) - getPathLength(rightPath)
+    })
+  const detourPath = detourPaths[variantIndex]
+  if (!detourPath) return false
+  if (
+    detourPath.some(
+      (point) =>
+        !pointIsInsideBounds(point, srj.bounds) ||
+        (srj.outline &&
+          srj.outline.length >= 3 &&
+          !pointIsInsideOutline(point, srj.outline)),
+    )
+  ) {
+    return false
+  }
+
+  route.route.splice(
+    firstSegmentIndex + 1,
+    lastSegmentIndex - firstSegmentIndex,
+    ...detourPath.map((point) => ({
+      ...point,
+      z: startAnchor.z,
+    })),
+  )
+  return true
+}
+
 /** Moves an existing terminal-side via to the connected pad center. */
 export const applyTerminalViaRelocationForError = (
   srj: SimpleRouteJson,

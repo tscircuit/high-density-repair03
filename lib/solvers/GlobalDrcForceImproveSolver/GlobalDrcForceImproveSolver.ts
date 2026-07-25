@@ -19,6 +19,8 @@ import {
 import {
   applyBroadRepulsionForces,
   applyDrcErrorForces,
+  applyLocalTraceLayerMoveForPadError,
+  applyPadTraceDetourForError,
   applyTerminalViaRelocationForError,
   applyTracePairDetourForError,
   applyTracePairLayerMoveForError,
@@ -40,6 +42,10 @@ import type {
 } from "./types"
 import type { SimpleRouteJson } from "../../types"
 import type { HighDensityRoute } from "../../types/high-density-types"
+import {
+  evaluateTracePairLayerMoveCandidate,
+  MAX_TRACE_PAIR_LAYER_MOVE_FOLLOW_UPS_PER_STEP,
+} from "./tracePairLayerMoveFollowUp"
 
 export type GlobalDrcForceImproveSolverVisualizer = (
   solver: GlobalDrcForceImproveSolver,
@@ -72,7 +78,11 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   private candidateAttempts = 0
   private viaInPadCandidateAttempts = 0
   private viaInPadCandidatesAccepted = 0
+  private tracePairLayerMoveFollowUpAttempts = 0
+  private tracePairLayerMoveFollowUpsAccepted = 0
   private padTopologyErrorCursor = 0
+  private padTraceDetourErrorCursor = 0
+  private padTraceDetourCursorByErrorId = new Map<string, number>()
   private tracePairDetourCursorByErrorId = new Map<string, number>()
   private errorCursor = 0
   private stalledIterations = 0
@@ -140,6 +150,10 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         this.viaInPadCandidateAttempts,
       globalDrcForceImproveViaInPadCandidatesAccepted:
         this.viaInPadCandidatesAccepted,
+      globalDrcForceImproveTracePairLayerMoveFollowUpAttempts:
+        this.tracePairLayerMoveFollowUpAttempts,
+      globalDrcForceImproveTracePairLayerMoveFollowUpsAccepted:
+        this.tracePairLayerMoveFollowUpsAccepted,
       globalDrcForceImproveStalledIterations: this.stalledIterations,
       globalDrcForceImproveBestDrcIssueCountSeen:
         this.bestDrcIssueCountSeen ?? snapshot.count,
@@ -284,6 +298,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     const maxCandidateAttemptsThisStep =
       getMaxTargetedCandidateAttemptsForEffort(this.effort)
     let candidateAttemptsThisStep = 0
+    let tracePairLayerMoveFollowUpAttemptsThisStep = 0
     let acceptedCandidate = false
     let attemptedPeriodicLargeBoardBroadFallback = false
     const maxErrorsThisStep = Math.min(
@@ -308,6 +323,72 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           (this.padTopologyErrorCursor + offset) % padTraceErrors.length
         ]!,
     )
+    let padTraceDetourCandidate:
+      | {
+          routes: HighDensityRoute[]
+          snapshot: DrcSnapshot
+          viaIssueCount: number
+        }
+      | undefined
+    const padClearanceErrors = centeredErrors.filter(
+      (error) => error.type === "pcb_pad_trace_clearance_error",
+    )
+    if (this.enableViaInPadLayerMoves && padClearanceErrors.length > 0) {
+      const error =
+        padClearanceErrors[
+          this.padTraceDetourErrorCursor % padClearanceErrors.length
+        ]!
+      this.padTraceDetourErrorCursor =
+        (this.padTraceDetourErrorCursor + 1) % padClearanceErrors.length
+      const padTraceErrorKey =
+        typeof error.pcb_pad_trace_clearance_error_id === "string"
+          ? error.pcb_pad_trace_clearance_error_id
+          : undefined
+      if (padTraceErrorKey) {
+        const variantIndex =
+          this.padTraceDetourCursorByErrorId.get(padTraceErrorKey) ?? 0
+        const candidateRoutes = cloneRoutes(bestRoutes)
+        const changed = applyPadTraceDetourForError(
+          this.srj,
+          candidateRoutes,
+          error,
+          bestSnapshot.traceRouteIndexById,
+          variantIndex,
+        )
+        this.padTraceDetourCursorByErrorId.set(
+          padTraceErrorKey,
+          (variantIndex + 1) % 4,
+        )
+
+        if (changed) {
+          const materializedCandidateRoutes = materializeRoutes(candidateRoutes)
+          this.viaInPadCandidateAttempts += 1
+          this.candidateAttempts += 1
+          const candidateSnapshot = getDrcSnapshot(
+            this.srj,
+            materializedCandidateRoutes,
+            this.drcEvaluator,
+            this.connMap,
+          )
+          const candidateViaIssueCount = getViaDrcIssueCount(candidateSnapshot)
+          if (
+            isBetterDrcSnapshot(
+              candidateSnapshot,
+              candidateViaIssueCount,
+              bestIssueCount,
+              bestIssueScore,
+              bestViaIssueCount,
+            )
+          ) {
+            padTraceDetourCandidate = {
+              routes: materializedCandidateRoutes,
+              snapshot: candidateSnapshot,
+              viaIssueCount: candidateViaIssueCount,
+            }
+          }
+        }
+      }
+    }
     for (const error of this.enableViaInPadLayerMoves
       ? orderedPadTopologyErrors
       : []) {
@@ -326,6 +407,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
             routes: HighDensityRoute[]
             snapshot: DrcSnapshot
             viaIssueCount: number
+            usedTracePairLayerMoveFollowUp?: boolean
           }
         | undefined
       const traceErrorKey =
@@ -493,6 +575,52 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           }
         }
       }
+      for (let targetZ = 0; targetZ < this.srj.layerCount; targetZ += 1) {
+        if (candidateAttemptsThisStep >= maxCandidateAttemptsThisStep) break
+        const candidateRoutes = cloneRoutes(bestRoutes)
+        const changed = applyLocalTraceLayerMoveForPadError(
+          this.srj,
+          candidateRoutes,
+          error,
+          bestSnapshot.traceRouteIndexById,
+          targetZ,
+        )
+        if (!changed) continue
+
+        const materializedCandidateRoutes = materializeRoutes(candidateRoutes)
+        this.viaInPadCandidateAttempts += 1
+        candidateAttemptsThisStep += 1
+        this.candidateAttempts += 1
+        const candidateSnapshot = getDrcSnapshot(
+          this.srj,
+          materializedCandidateRoutes,
+          this.drcEvaluator,
+          this.connMap,
+        )
+        const candidateViaIssueCount = getViaDrcIssueCount(candidateSnapshot)
+        const comparisonCount =
+          bestViaInPadCandidate?.snapshot.count ?? bestIssueCount
+        const comparisonScore =
+          bestViaInPadCandidate?.snapshot.issueScore ?? bestIssueScore
+        const comparisonViaIssueCount =
+          bestViaInPadCandidate?.viaIssueCount ?? bestViaIssueCount
+
+        if (
+          isBetterDrcSnapshot(
+            candidateSnapshot,
+            candidateViaIssueCount,
+            comparisonCount,
+            comparisonScore,
+            comparisonViaIssueCount,
+          )
+        ) {
+          bestViaInPadCandidate = {
+            routes: materializedCandidateRoutes,
+            snapshot: candidateSnapshot,
+            viaIssueCount: candidateViaIssueCount,
+          }
+        }
+      }
       if (shouldTryTracePairTopology) {
         const routeSides =
           this.iterations % 2 === 0 ? ([0, 1] as const) : ([1, 0] as const)
@@ -516,17 +644,28 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
 
             const materializedCandidateRoutes =
               materializeRoutes(candidateRoutes)
-            this.viaInPadCandidateAttempts += 1
+            const candidateEvaluation = evaluateTracePairLayerMoveCandidate({
+              srj: this.srj,
+              candidateRoutes: materializedCandidateRoutes,
+              targetError: error,
+              bestIssueCount,
+              drcEvaluator: this.drcEvaluator,
+              connMap: this.connMap,
+              maxFollowUpAttempts:
+                MAX_TRACE_PAIR_LAYER_MOVE_FOLLOW_UPS_PER_STEP -
+                tracePairLayerMoveFollowUpAttemptsThisStep,
+            })
+            this.tracePairLayerMoveFollowUpAttempts +=
+              candidateEvaluation.followUpAttemptCount
+            tracePairLayerMoveFollowUpAttemptsThisStep +=
+              candidateEvaluation.followUpAttemptCount
+            this.viaInPadCandidateAttempts +=
+              candidateEvaluation.evaluationCount
+            // Follow-up repairs have their own bounded budget. Counting them
+            // against the primary candidate budget can prevent the solver
+            // from ever evaluating a valid alternate route or layer.
             candidateAttemptsThisStep += 1
-            this.candidateAttempts += 1
-            const candidateSnapshot = getDrcSnapshot(
-              this.srj,
-              materializedCandidateRoutes,
-              this.drcEvaluator,
-              this.connMap,
-            )
-            const candidateViaIssueCount =
-              getViaDrcIssueCount(candidateSnapshot)
+            this.candidateAttempts += candidateEvaluation.evaluationCount
             const comparisonCount =
               bestViaInPadCandidate?.snapshot.count ?? bestIssueCount
             const comparisonScore =
@@ -536,17 +675,19 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
 
             if (
               isBetterDrcSnapshot(
-                candidateSnapshot,
-                candidateViaIssueCount,
+                candidateEvaluation.snapshot,
+                candidateEvaluation.viaIssueCount,
                 comparisonCount,
                 comparisonScore,
                 comparisonViaIssueCount,
               )
             ) {
               bestViaInPadCandidate = {
-                routes: materializedCandidateRoutes,
-                snapshot: candidateSnapshot,
-                viaIssueCount: candidateViaIssueCount,
+                routes: candidateEvaluation.routes,
+                snapshot: candidateEvaluation.snapshot,
+                viaIssueCount: candidateEvaluation.viaIssueCount,
+                usedTracePairLayerMoveFollowUp:
+                  candidateEvaluation.usedFollowUpRepair,
               }
             }
           }
@@ -561,8 +702,22 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         bestViaIssueCount = bestViaInPadCandidate.viaIssueCount
         this.targetedForceAccepted = true
         this.viaInPadCandidatesAccepted += 1
+        if (bestViaInPadCandidate.usedTracePairLayerMoveFollowUp) {
+          this.tracePairLayerMoveFollowUpsAccepted += 1
+        }
         acceptedCandidate = true
       }
+    }
+
+    if (!acceptedCandidate && padTraceDetourCandidate) {
+      bestRoutes = padTraceDetourCandidate.routes
+      bestSnapshot = padTraceDetourCandidate.snapshot
+      bestIssueCount = bestSnapshot.count
+      bestIssueScore = bestSnapshot.issueScore
+      bestViaIssueCount = padTraceDetourCandidate.viaIssueCount
+      this.targetedForceAccepted = true
+      this.viaInPadCandidatesAccepted += 1
+      acceptedCandidate = true
     }
 
     if (!acceptedCandidate && targetedSweepErrors.length >= 2) {
