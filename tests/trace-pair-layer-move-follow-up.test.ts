@@ -144,10 +144,8 @@ test("repairs a second trace-pair crossing exposed by a layer move", () => {
         titles: ["Before repair", "Repaired geometry", "After repair"],
       },
     ),
-    {
-      backgroundColor: "white",
-    },
-  )
+    { backgroundColor: "white" },
+  ).replace(/[ \t]+$/gm, "")
   const snapshotPath = new URL(
     "./__snapshots__/trace-pair-layer-move-follow-up-before-after.snap.svg",
     import.meta.url,
