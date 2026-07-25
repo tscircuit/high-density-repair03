@@ -1,10 +1,18 @@
 import { expect, test } from "bun:test"
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { dirname } from "node:path"
+import {
+  getSvgFromGraphicsObject,
+  stackGraphicsHorizontally,
+  type GraphicsObject,
+} from "graphics-debug"
 import {
   GlobalDrcForceImproveSolver,
   type HighDensityRoute,
   type SimpleRouteJson,
 } from "../lib"
 import type { DrcEvaluator } from "../lib/solvers/GlobalDrcForceImproveSolver/types"
+import "../fixture-support/VisualizedGlobalDrcForceImproveSolver"
 
 const srj: SimpleRouteJson = {
   bounds: { minX: -2, minY: -4, maxX: 4, maxY: 2 },
@@ -60,6 +68,22 @@ const makeTracePairError = (center: { x: number; y: number }) => ({
   center,
 })
 
+const getStepGraphics = (
+  graphics: GraphicsObject,
+  step: number,
+): GraphicsObject => ({
+  ...graphics,
+  points: graphics.points?.filter((object) => object.step === step),
+  lines: graphics.lines?.filter((object) => object.step === step),
+  infiniteLines: graphics.infiniteLines?.filter(
+    (object) => object.step === step,
+  ),
+  rects: graphics.rects?.filter((object) => object.step === step),
+  polygons: graphics.polygons?.filter((object) => object.step === step),
+  circles: graphics.circles?.filter((object) => object.step === step),
+  texts: graphics.texts?.filter((object) => object.step === step),
+})
+
 test("repairs a second trace-pair crossing exposed by a layer move", () => {
   const drcEvaluator: DrcEvaluator = ({ routes }) => {
     const routeA = routes?.[0]
@@ -107,4 +131,30 @@ test("repairs a second trace-pair crossing exposed by a layer move", () => {
   expect(
     solver.stats.globalDrcForceImproveTracePairLayerMoveFollowUpsAccepted,
   ).toBe(1)
+
+  const visualization = solver.visualize()
+  const snapshotSvg = getSvgFromGraphicsObject(
+    stackGraphicsHorizontally(
+      [
+        getStepGraphics(visualization, 1),
+        getStepGraphics(visualization, 2),
+        getStepGraphics(visualization, 3),
+      ],
+      {
+        titles: ["Before repair", "Repaired geometry", "After repair"],
+      },
+    ),
+    {
+      backgroundColor: "white",
+    },
+  )
+  const snapshotPath = new URL(
+    "./__snapshots__/trace-pair-layer-move-follow-up-before-after.snap.svg",
+    import.meta.url,
+  ).pathname
+  if (process.env.BUN_UPDATE_SNAPSHOTS) {
+    mkdirSync(dirname(snapshotPath), { recursive: true })
+    writeFileSync(snapshotPath, snapshotSvg)
+  }
+  expect(snapshotSvg).toBe(readFileSync(snapshotPath, "utf8"))
 })
