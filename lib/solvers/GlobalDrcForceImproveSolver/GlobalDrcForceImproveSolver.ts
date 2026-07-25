@@ -19,6 +19,7 @@ import {
 import {
   applyBroadRepulsionForces,
   applyDrcErrorForces,
+  applyLocalTraceLayerMoveForPadError,
   applyTerminalViaRelocationForError,
   applyTracePairDetourForError,
   applyTracePairLayerMoveForError,
@@ -468,6 +469,52 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           targetZ,
           this.connMap,
           this.viaHoleDiameter,
+        )
+        if (!changed) continue
+
+        const materializedCandidateRoutes = materializeRoutes(candidateRoutes)
+        this.viaInPadCandidateAttempts += 1
+        candidateAttemptsThisStep += 1
+        this.candidateAttempts += 1
+        const candidateSnapshot = getDrcSnapshot(
+          this.srj,
+          materializedCandidateRoutes,
+          this.drcEvaluator,
+          this.connMap,
+        )
+        const candidateViaIssueCount = getViaDrcIssueCount(candidateSnapshot)
+        const comparisonCount =
+          bestViaInPadCandidate?.snapshot.count ?? bestIssueCount
+        const comparisonScore =
+          bestViaInPadCandidate?.snapshot.issueScore ?? bestIssueScore
+        const comparisonViaIssueCount =
+          bestViaInPadCandidate?.viaIssueCount ?? bestViaIssueCount
+
+        if (
+          isBetterDrcSnapshot(
+            candidateSnapshot,
+            candidateViaIssueCount,
+            comparisonCount,
+            comparisonScore,
+            comparisonViaIssueCount,
+          )
+        ) {
+          bestViaInPadCandidate = {
+            routes: materializedCandidateRoutes,
+            snapshot: candidateSnapshot,
+            viaIssueCount: candidateViaIssueCount,
+          }
+        }
+      }
+      for (let targetZ = 0; targetZ < this.srj.layerCount; targetZ += 1) {
+        if (candidateAttemptsThisStep >= maxCandidateAttemptsThisStep) break
+        const candidateRoutes = cloneRoutes(bestRoutes)
+        const changed = applyLocalTraceLayerMoveForPadError(
+          this.srj,
+          candidateRoutes,
+          error,
+          bestSnapshot.traceRouteIndexById,
+          targetZ,
         )
         if (!changed) continue
 

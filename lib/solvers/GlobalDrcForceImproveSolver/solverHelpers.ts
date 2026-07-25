@@ -2886,6 +2886,62 @@ export const applyViaInPadLayerMoveForError = (
   return true
 }
 
+/**
+ * Moves the maximal interior same-layer run containing a pad-clearance error
+ * onto another layer. Existing layer transitions bound the run, so this
+ * relocates copper without inventing terminal vias.
+ */
+export const applyLocalTraceLayerMoveForPadError = (
+  srj: SimpleRouteJson,
+  routes: MutableRoute[],
+  error: Record<string, unknown>,
+  traceRouteIndexById: Map<string, number>,
+  targetZ: number,
+) => {
+  if (getDrcErrorType(error) !== "pcb_pad_trace_clearance_error") return false
+  if (targetZ < 0 || targetZ >= srj.layerCount) return false
+
+  const routeIndex = getTraceRouteIndexForError(error, traceRouteIndexById)
+  const center = getErrorCenter(error)
+  if (routeIndex === undefined || !center) return false
+
+  const route = routes[routeIndex]
+  if (!route || route.route.length < 4) return false
+  const segment = getNearestSegment(collectSegments(routes), center, routeIndex)
+  if (!segment || segment.z === targetZ) return false
+
+  let spanStartIndex = segment.startIndex
+  while (route.route[spanStartIndex - 1]?.z === segment.z) {
+    spanStartIndex -= 1
+  }
+  let spanEndIndex = segment.endIndex
+  while (route.route[spanEndIndex + 1]?.z === segment.z) {
+    spanEndIndex += 1
+  }
+
+  if (spanStartIndex === 0 || spanEndIndex === route.route.length - 1) {
+    return false
+  }
+
+  const originalSpan = route.route.slice(spanStartIndex, spanEndIndex + 1)
+  const spanStart = originalSpan[0]
+  const spanEnd = originalSpan.at(-1)
+  if (!spanStart || !spanEnd) return false
+
+  route.route.splice(
+    spanStartIndex,
+    originalSpan.length,
+    { ...spanStart },
+    ...originalSpan.map((point) => ({
+      ...point,
+      z: targetZ,
+      pcb_port_id: undefined,
+    })),
+    { ...spanEnd },
+  )
+  return true
+}
+
 /** Moves an existing terminal-side via to the connected pad center. */
 export const applyTerminalViaRelocationForError = (
   srj: SimpleRouteJson,
