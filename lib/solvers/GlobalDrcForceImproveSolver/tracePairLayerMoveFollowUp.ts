@@ -22,7 +22,7 @@ export type TracePairLayerMoveEvaluation = {
 
 type DrcErrorCenter = { x: number; y: number }
 
-const MAX_TRACE_PAIR_LAYER_MOVE_FOLLOW_UPS = 8
+export const MAX_TRACE_PAIR_LAYER_MOVE_FOLLOW_UPS_PER_STEP = 8
 
 const getDrcErrorCenter = (
   error: Record<string, unknown>,
@@ -70,6 +70,7 @@ export const evaluateTracePairLayerMoveCandidate = ({
   bestIssueCount,
   drcEvaluator,
   connMap,
+  maxFollowUpAttempts = MAX_TRACE_PAIR_LAYER_MOVE_FOLLOW_UPS_PER_STEP,
 }: {
   srj: SimpleRouteJson
   candidateRoutes: HighDensityRoute[]
@@ -77,6 +78,7 @@ export const evaluateTracePairLayerMoveCandidate = ({
   bestIssueCount: number
   drcEvaluator?: DrcEvaluator
   connMap?: ConnectivityMap
+  maxFollowUpAttempts?: number
 }): TracePairLayerMoveEvaluation => {
   const firstSnapshot = getDrcSnapshot(
     srj,
@@ -108,7 +110,7 @@ export const evaluateTracePairLayerMoveCandidate = ({
 
   for (
     let followUpIndex = 0;
-    followUpIndex < MAX_TRACE_PAIR_LAYER_MOVE_FOLLOW_UPS;
+    followUpIndex < maxFollowUpAttempts;
     followUpIndex += 1
   ) {
     const followUpError = workingSnapshot.errors.find((error) =>

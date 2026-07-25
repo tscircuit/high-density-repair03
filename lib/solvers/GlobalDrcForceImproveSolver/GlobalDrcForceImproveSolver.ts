@@ -40,7 +40,10 @@ import type {
 } from "./types"
 import type { SimpleRouteJson } from "../../types"
 import type { HighDensityRoute } from "../../types/high-density-types"
-import { evaluateTracePairLayerMoveCandidate } from "./tracePairLayerMoveFollowUp"
+import {
+  evaluateTracePairLayerMoveCandidate,
+  MAX_TRACE_PAIR_LAYER_MOVE_FOLLOW_UPS_PER_STEP,
+} from "./tracePairLayerMoveFollowUp"
 
 export type GlobalDrcForceImproveSolverVisualizer = (
   solver: GlobalDrcForceImproveSolver,
@@ -291,6 +294,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     const maxCandidateAttemptsThisStep =
       getMaxTargetedCandidateAttemptsForEffort(this.effort)
     let candidateAttemptsThisStep = 0
+    let tracePairLayerMoveFollowUpAttemptsThisStep = 0
     let acceptedCandidate = false
     let attemptedPeriodicLargeBoardBroadFallback = false
     const maxErrorsThisStep = Math.min(
@@ -531,12 +535,20 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
               bestIssueCount,
               drcEvaluator: this.drcEvaluator,
               connMap: this.connMap,
+              maxFollowUpAttempts:
+                MAX_TRACE_PAIR_LAYER_MOVE_FOLLOW_UPS_PER_STEP -
+                tracePairLayerMoveFollowUpAttemptsThisStep,
             })
             this.tracePairLayerMoveFollowUpAttempts +=
               candidateEvaluation.followUpAttemptCount
+            tracePairLayerMoveFollowUpAttemptsThisStep +=
+              candidateEvaluation.followUpAttemptCount
             this.viaInPadCandidateAttempts +=
               candidateEvaluation.evaluationCount
-            candidateAttemptsThisStep += candidateEvaluation.evaluationCount
+            // Follow-up repairs have their own bounded budget. Counting them
+            // against the primary candidate budget can prevent the solver
+            // from ever evaluating a valid alternate route or layer.
+            candidateAttemptsThisStep += 1
             this.candidateAttempts += candidateEvaluation.evaluationCount
             const comparisonCount =
               bestViaInPadCandidate?.snapshot.count ?? bestIssueCount
