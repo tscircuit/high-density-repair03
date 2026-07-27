@@ -24,12 +24,16 @@ import {
   applyTracePairLayerMoveForError,
   applyViaInPadLayerMoveForError,
   cloneRoutes,
+  cloneRoutesForIndexes,
   getCenteredErrors,
   getDrcSnapshot,
   getTargetedClearanceSweepErrors,
+  getTraceRouteIndexForError,
+  getTraceRoutePairForError,
   getViaDrcIssueCount,
   isBetterDrcSnapshot,
   materializeRoutes,
+  materializeRoutesForIndexes,
 } from "./solverHelpers"
 import { applyTraceToPadClearanceRelaxation } from "./traceToPadClearanceRelaxation"
 import { applyViaToPadClearanceRelaxation } from "./viaToPadClearanceRelaxation"
@@ -334,11 +338,20 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           : typeof error.pcb_trace_id === "string"
             ? error.pcb_trace_id
             : undefined
+      const traceRouteIndex = getTraceRouteIndexForError(
+        error,
+        bestSnapshot.traceRouteIndexById,
+      )
+      const traceRoutePair = getTraceRoutePairForError(
+        error,
+        bestSnapshot.traceRouteIndexById,
+      )
       if (
         shouldTryTracePairTopology &&
         this.iterations % 2 === 0 &&
         bestIssueCount <= 1 &&
-        traceErrorKey
+        traceErrorKey &&
+        traceRoutePair
       ) {
         const detourVariants = ([0, 1] as const).flatMap((routeSide) =>
           [0.2, 0.4, 0.8, 1.2].flatMap((halfSpan) =>
@@ -362,7 +375,10 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           const variant = detourVariants[detourCursor % detourVariants.length]!
           detourCursor += 1
           detourVariantsChecked += 1
-          const candidateRoutes = cloneRoutes(bestRoutes)
+          const changedRouteIndex = traceRoutePair[variant.routeSide]
+          const candidateRoutes = cloneRoutesForIndexes(bestRoutes, [
+            changedRouteIndex,
+          ])
           const changed = applyTracePairDetourForError(
             candidateRoutes,
             error,
@@ -374,7 +390,10 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           )
           if (!changed) continue
 
-          const materializedCandidateRoutes = materializeRoutes(candidateRoutes)
+          const materializedCandidateRoutes = materializeRoutesForIndexes(
+            candidateRoutes,
+            [changedRouteIndex],
+          )
           this.viaInPadCandidateAttempts += 1
           candidateAttemptsThisStep += 1
           this.candidateAttempts += 1
@@ -399,7 +418,10 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       }
       for (const endpointSide of ["start", "end"] as const) {
         if (candidateAttemptsThisStep >= maxCandidateAttemptsThisStep) break
-        const candidateRoutes = cloneRoutes(bestRoutes)
+        if (traceRouteIndex === undefined) break
+        const candidateRoutes = cloneRoutesForIndexes(bestRoutes, [
+          traceRouteIndex,
+        ])
         const changed = applyTerminalViaRelocationForError(
           this.srj,
           candidateRoutes,
@@ -411,7 +433,10 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         )
         if (!changed) continue
 
-        const materializedCandidateRoutes = materializeRoutes(candidateRoutes)
+        const materializedCandidateRoutes = materializeRoutesForIndexes(
+          candidateRoutes,
+          [traceRouteIndex],
+        )
         this.viaInPadCandidateAttempts += 1
         candidateAttemptsThisStep += 1
         this.candidateAttempts += 1
@@ -447,7 +472,10 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       }
       for (let targetZ = 0; targetZ < this.srj.layerCount; targetZ += 1) {
         if (candidateAttemptsThisStep >= maxCandidateAttemptsThisStep) break
-        const candidateRoutes = cloneRoutes(bestRoutes)
+        if (traceRouteIndex === undefined) break
+        const candidateRoutes = cloneRoutesForIndexes(bestRoutes, [
+          traceRouteIndex,
+        ])
         const changed = applyViaInPadLayerMoveForError(
           this.srj,
           candidateRoutes,
@@ -459,7 +487,10 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         )
         if (!changed) continue
 
-        const materializedCandidateRoutes = materializeRoutes(candidateRoutes)
+        const materializedCandidateRoutes = materializeRoutesForIndexes(
+          candidateRoutes,
+          [traceRouteIndex],
+        )
         this.viaInPadCandidateAttempts += 1
         candidateAttemptsThisStep += 1
         this.candidateAttempts += 1
@@ -493,14 +524,17 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           }
         }
       }
-      if (shouldTryTracePairTopology) {
+      if (shouldTryTracePairTopology && traceRoutePair) {
         const routeSides =
           this.iterations % 2 === 0 ? ([0, 1] as const) : ([1, 0] as const)
         const spanExpansion = this.iterations % 3
         for (const routeSide of routeSides) {
           for (let targetZ = 0; targetZ < this.srj.layerCount; targetZ += 1) {
             if (candidateAttemptsThisStep >= maxCandidateAttemptsThisStep) break
-            const candidateRoutes = cloneRoutes(bestRoutes)
+            const changedRouteIndex = traceRoutePair[routeSide]
+            const candidateRoutes = cloneRoutesForIndexes(bestRoutes, [
+              changedRouteIndex,
+            ])
             const changed = applyTracePairLayerMoveForError(
               this.srj,
               candidateRoutes,
@@ -514,8 +548,10 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
             )
             if (!changed) continue
 
-            const materializedCandidateRoutes =
-              materializeRoutes(candidateRoutes)
+            const materializedCandidateRoutes = materializeRoutesForIndexes(
+              candidateRoutes,
+              [changedRouteIndex],
+            )
             this.viaInPadCandidateAttempts += 1
             candidateAttemptsThisStep += 1
             this.candidateAttempts += 1
