@@ -1,7 +1,9 @@
 import type { GraphicsObject } from "graphics-debug"
 import { BaseSolver } from "../BaseSolver"
+import { AutoroutingDrcEngine } from "../../drc"
 import type { HighDensityRoute } from "../../types/high-density-types"
 import { GlobalDrcForceImproveSolver } from "./GlobalDrcForceImproveSolver"
+import { RELAXED_DRC_OPTIONS } from "./drcPresets"
 import { getDrcSnapshot } from "./drc-snapshot"
 import { applyBroadRepulsionForces } from "./solverHelpers"
 import type { DrcSnapshot, GlobalDrcBranchPortfolioSolverParams } from "./types"
@@ -13,6 +15,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
   readonly inputHdRoutes: HighDensityRoute[]
   readonly broadMaxIterations: number
   readonly broadPassMultiplier: number
+  readonly autoroutingDrcEngine?: AutoroutingDrcEngine
   outputHdRoutes: HighDensityRoute[]
   private phase: PortfolioPhase = "start"
   private inputSnapshot?: DrcSnapshot
@@ -51,7 +54,23 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
     ) {
       throw new Error("viaInPadMaxIterations must be greater than zero")
     }
-    this.params = params
+    this.autoroutingDrcEngine =
+      params.autoroutingDrcEngine ??
+      (params.drcEvaluator
+        ? undefined
+        : new AutoroutingDrcEngine(params.srj, {
+            connMap: params.connMap,
+            traceClearance:
+              params.srj.minTraceToPadEdgeClearance ??
+              RELAXED_DRC_OPTIONS.traceClearance,
+            viaClearance:
+              params.srj.minTraceToPadEdgeClearance ??
+              RELAXED_DRC_OPTIONS.viaClearance,
+          }))
+    this.params = {
+      ...params,
+      autoroutingDrcEngine: this.autoroutingDrcEngine,
+    }
     this.inputHdRoutes = params.hdRoutes
     this.broadMaxIterations = params.broadMaxIterations
     this.broadPassMultiplier = params.broadPassMultiplier
@@ -158,6 +177,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       broadInputRoutes,
       this.params.drcEvaluator,
       this.params.connMap,
+      this.autoroutingDrcEngine,
     )
     if (this.broadInputSnapshot.count >= this.baselineSnapshot!.count) {
       this.startViaInPadPhase(
@@ -184,6 +204,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         this.inputHdRoutes,
         this.params.drcEvaluator,
         this.params.connMap,
+        this.autoroutingDrcEngine,
       )
       if (this.inputSnapshot.count === 0) {
         this.startViaInPadPhase(this.inputHdRoutes, this.inputSnapshot)
@@ -202,6 +223,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         baselineRoutes,
         this.params.drcEvaluator,
         this.params.connMap,
+        this.autoroutingDrcEngine,
       )
       if (this.baselineSnapshot.count === 0) {
         this.startViaInPadPhase(
@@ -224,6 +246,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         broadRoutes,
         this.params.drcEvaluator,
         this.params.connMap,
+        this.autoroutingDrcEngine,
       )
       if (this.broadSnapshot.count < this.baselineSnapshot!.count) {
         this.startViaInPadPhase(
@@ -250,6 +273,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         viaInPadRoutes,
         this.params.viaInPadDrcEvaluator,
         this.params.connMap,
+        this.autoroutingDrcEngine,
       )
       this.finishWithOutput(
         viaInPadRoutes,
