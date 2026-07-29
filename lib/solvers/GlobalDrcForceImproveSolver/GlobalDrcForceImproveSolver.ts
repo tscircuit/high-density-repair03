@@ -1,14 +1,14 @@
-import { BaseSolver } from "../BaseSolver"
 import type { ConnectivityMap } from "circuit-json-to-connectivity-map"
 import type { GraphicsObject } from "graphics-debug"
 import { AutoroutingDrcEngine } from "../../drc"
+import type { SimpleRouteJson } from "../../types"
+import type { HighDensityRoute } from "../../types/high-density-types"
+import { BaseSolver } from "../BaseSolver"
+import { attemptBoundedLocalReroute } from "./boundedLocalReroute"
+import { RELAXED_DRC_OPTIONS } from "./drcPresets"
 import {
   BROAD_FALLBACK_SMALL_ROUTE_LIMIT,
   EXTENDED_BROAD_FORCE_PASS_MULTIPLIER,
-  LARGE_DRC_COUNT_THRESHOLD,
-  MAX_DRC_COUNT_PLATEAU_CHECKS,
-  MAX_LARGE_BOARD_BROAD_FALLBACK_MISSES,
-  MIN_ITERATIONS_FOR_LARGE_BOARD_BROAD_FALLBACK,
   getBaseMaxIterations,
   getDrcCountImprovementCheckInterval,
   getDrcScaledMaxIterations,
@@ -16,6 +16,10 @@ import {
   getLargeBoardBroadFallbackCadence,
   getMaxTargetedCandidateAttemptsForEffort,
   getRouteComplexityMinIterations,
+  LARGE_DRC_COUNT_THRESHOLD,
+  MAX_DRC_COUNT_PLATEAU_CHECKS,
+  MAX_LARGE_BOARD_BROAD_FALLBACK_MISSES,
+  MIN_ITERATIONS_FOR_LARGE_BOARD_BROAD_FALLBACK,
 } from "./solverConfig"
 import {
   applyBroadRepulsionForces,
@@ -37,15 +41,12 @@ import {
   materializeRoutesForIndexes,
 } from "./solverHelpers"
 import { applyTraceToPadClearanceRelaxation } from "./traceToPadClearanceRelaxation"
-import { applyViaToPadClearanceRelaxation } from "./viaToPadClearanceRelaxation"
-import { RELAXED_DRC_OPTIONS } from "./drcPresets"
 import type {
   DrcEvaluator,
   DrcSnapshot,
   GlobalDrcForceImproveSolverParams,
 } from "./types"
-import type { SimpleRouteJson } from "../../types"
-import type { HighDensityRoute } from "../../types/high-density-types"
+import { applyViaToPadClearanceRelaxation } from "./viaToPadClearanceRelaxation"
 
 export type GlobalDrcForceImproveSolverVisualizer = (
   solver: GlobalDrcForceImproveSolver,
@@ -72,6 +73,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   readonly enableTargetedErrorSweep: boolean
   readonly enablePostSolveClearanceRelaxation: boolean
   readonly enableViaInPadLayerMoves: boolean
+  readonly enableBoundedLocalReroute: boolean
   outputHdRoutes: HighDensityRoute[]
   private initialDrcIssueCount: number | undefined
   private broadForceAccepted = false
@@ -89,6 +91,12 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   private drcCountPlateauChecks = 0
   private largeBoardBroadFallbackMisses = 0
   private outputSnapshot: DrcSnapshot | undefined
+  private boundedLocalRerouteAttempted = false
+  private boundedLocalRerouteAccepted = false
+  private boundedLocalRerouteGeneratedPathCount = 0
+  private boundedLocalRerouteGraphNodeCount = 0
+  private boundedLocalRerouteCandidateEvaluations = 0
+  private boundedLocalRerouteCanonicalEvaluations = 0
 
   constructor(params: GlobalDrcForceImproveSolverParams) {
     super()
@@ -124,6 +132,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     this.enablePostSolveClearanceRelaxation =
       params.enablePostSolveClearanceRelaxation ?? true
     this.enableViaInPadLayerMoves = params.enableViaInPadLayerMoves ?? false
+    this.enableBoundedLocalReroute = params.enableBoundedLocalReroute ?? true
     this.outputHdRoutes = params.hdRoutes
     this.MAX_ITERATIONS =
       this.configuredMaxIterations ?? getBaseMaxIterations(this.effort)
@@ -145,6 +154,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         enablePostSolveClearanceRelaxation:
           this.enablePostSolveClearanceRelaxation,
         enableViaInPadLayerMoves: this.enableViaInPadLayerMoves,
+        enableBoundedLocalReroute: this.enableBoundedLocalReroute,
       },
     ] as const
   }
@@ -169,6 +179,18 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       globalDrcForceImproveDrcCountPlateauChecks: this.drcCountPlateauChecks,
       globalDrcForceImproveLargeBoardBroadFallbackMisses:
         this.largeBoardBroadFallbackMisses,
+      globalDrcForceImproveBoundedLocalRerouteAttempted:
+        this.boundedLocalRerouteAttempted,
+      globalDrcForceImproveBoundedLocalRerouteAccepted:
+        this.boundedLocalRerouteAccepted,
+      globalDrcForceImproveBoundedLocalRerouteGeneratedPathCount:
+        this.boundedLocalRerouteGeneratedPathCount,
+      globalDrcForceImproveBoundedLocalRerouteGraphNodeCount:
+        this.boundedLocalRerouteGraphNodeCount,
+      globalDrcForceImproveBoundedLocalRerouteCandidateEvaluations:
+        this.boundedLocalRerouteCandidateEvaluations,
+      globalDrcForceImproveBoundedLocalRerouteCanonicalEvaluations:
+        this.boundedLocalRerouteCanonicalEvaluations,
     }
   }
 
@@ -816,6 +838,63 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       this.largeBoardBroadFallbackMisses = 0
     } else if (attemptedPeriodicLargeBoardBroadFallback) {
       this.largeBoardBroadFallbackMisses += 1
+    }
+
+    const shouldTryBoundedLocalReroute =
+      this.enableBoundedLocalReroute &&
+      !this.boundedLocalRerouteAttempted &&
+      this.drcEvaluator === undefined &&
+      this.autoroutingDrcEngine !== undefined &&
+      !acceptedCandidate &&
+      bestIssueCount > 0 &&
+      bestIssueCount <= 3 &&
+      this.drcCountPlateauChecks >= MAX_DRC_COUNT_PLATEAU_CHECKS - 1
+    if (shouldTryBoundedLocalReroute) {
+      this.boundedLocalRerouteAttempted = true
+      const exactTracePairError = centeredErrors.find(
+        (error) =>
+          error.type === "pcb_trace_error" &&
+          getTraceRoutePairForError(error, bestSnapshot.traceRouteIndexById) !==
+            undefined,
+      )
+      if (exactTracePairError) {
+        const localReroute = attemptBoundedLocalReroute({
+          srj: this.srj,
+          routes: bestRoutes,
+          error: exactTracePairError,
+          traceRouteIndexById: bestSnapshot.traceRouteIndexById,
+          autoroutingDrcEngine: this.autoroutingDrcEngine,
+          connMap: this.connMap,
+        })
+        this.boundedLocalRerouteGeneratedPathCount =
+          localReroute.generatedPathCount
+        this.boundedLocalRerouteGraphNodeCount = localReroute.graphNodeCount
+        this.boundedLocalRerouteCandidateEvaluations =
+          localReroute.candidateEvaluationCount
+        this.boundedLocalRerouteCanonicalEvaluations =
+          localReroute.canonicalEvaluationCount
+        if (
+          localReroute.routes &&
+          localReroute.fastSnapshot &&
+          localReroute.canonicalSnapshot
+        ) {
+          bestRoutes = localReroute.routes
+          bestSnapshot = localReroute.fastSnapshot
+          bestIssueCount = bestSnapshot.count
+          bestIssueScore = bestSnapshot.issueScore
+          bestViaIssueCount = getViaDrcIssueCount(bestSnapshot)
+          this.boundedLocalRerouteAccepted = true
+          acceptedCandidate = true
+          if (localReroute.canonicalSnapshot.count === 0) {
+            this.outputHdRoutes = bestRoutes
+            this.outputSnapshot = bestSnapshot
+            this.stalledIterations = 0
+            this.updateStats(localReroute.canonicalSnapshot)
+            this.solved = true
+            return
+          }
+        }
+      }
     }
 
     this.outputHdRoutes = bestRoutes

@@ -36,6 +36,7 @@ export type GlobalDrcForceImproveSolverParams = {
   enableTargetedErrorSweep?: boolean
   enablePostSolveClearanceRelaxation?: boolean
   enableViaInPadLayerMoves?: boolean
+  enableBoundedLocalReroute?: boolean
 }
 
 export type GlobalDrcBranchPortfolioSolverParams =
