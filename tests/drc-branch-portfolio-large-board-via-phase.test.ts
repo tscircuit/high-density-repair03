@@ -57,6 +57,6 @@ test("runs the bounded via-in-pad phase on large high-error boards", () => {
 
   solver.solve()
 
-  expect(viaInPadEvaluationCount).toBe(2)
+  expect(viaInPadEvaluationCount).toBe(1)
   expect(solver.stats.drcBranchPortfolioViaInPadPhaseAttempted).toBe(true)
 })

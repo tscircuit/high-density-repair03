@@ -65,6 +65,8 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   readonly drcEvaluator?: DrcEvaluator
   readonly viaHoleDiameter?: number
   readonly configuredMaxIterations?: number
+  readonly maxCandidateEvaluations?: number
+  readonly initialDrcSnapshot?: DrcSnapshot
   readonly enableLargeBoardBroadFallback: boolean
   readonly enableTargetedErrorSweep: boolean
   readonly enablePostSolveClearanceRelaxation: boolean
@@ -74,6 +76,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   private broadForceAccepted = false
   private targetedForceAccepted = false
   private candidateAttempts = 0
+  private candidateEvaluations = 0
   private viaInPadCandidateAttempts = 0
   private viaInPadCandidatesAccepted = 0
   private padTopologyErrorCursor = 0
@@ -102,6 +105,15 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     }
     this.viaHoleDiameter = params.viaHoleDiameter
     this.configuredMaxIterations = params.maxIterations
+    if (
+      params.maxCandidateEvaluations !== undefined &&
+      (!Number.isInteger(params.maxCandidateEvaluations) ||
+        params.maxCandidateEvaluations <= 0)
+    ) {
+      throw new Error("maxCandidateEvaluations must be a positive integer")
+    }
+    this.maxCandidateEvaluations = params.maxCandidateEvaluations
+    this.initialDrcSnapshot = params.initialDrcSnapshot
     this.enableLargeBoardBroadFallback =
       params.enableLargeBoardBroadFallback ?? true
     this.enableTargetedErrorSweep = params.enableTargetedErrorSweep ?? false
@@ -109,6 +121,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       params.enablePostSolveClearanceRelaxation ?? true
     this.enableViaInPadLayerMoves = params.enableViaInPadLayerMoves ?? false
     this.outputHdRoutes = params.hdRoutes
+    this.outputSnapshot = this.initialDrcSnapshot
     this.MAX_ITERATIONS =
       this.configuredMaxIterations ?? getBaseMaxIterations(this.effort)
   }
@@ -123,6 +136,8 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         drcEvaluator: this.drcEvaluator,
         viaHoleDiameter: this.viaHoleDiameter,
         maxIterations: this.configuredMaxIterations,
+        maxCandidateEvaluations: this.maxCandidateEvaluations,
+        initialDrcSnapshot: this.initialDrcSnapshot,
         enableLargeBoardBroadFallback: this.enableLargeBoardBroadFallback,
         enableTargetedErrorSweep: this.enableTargetedErrorSweep,
         enablePostSolveClearanceRelaxation:
@@ -140,6 +155,11 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       globalDrcForceImproveBroadForceAccepted: this.broadForceAccepted,
       globalDrcForceImproveTargetedForceAccepted: this.targetedForceAccepted,
       globalDrcForceImproveCandidateAttempts: this.candidateAttempts,
+      globalDrcForceImproveCandidateEvaluations: this.candidateEvaluations,
+      globalDrcForceImproveMaxCandidateEvaluations:
+        this.maxCandidateEvaluations,
+      globalDrcForceImproveCandidateEvaluationBudgetExhausted:
+        this.hasExhaustedCandidateEvaluationBudget(),
       globalDrcForceImproveViaInPadCandidateAttempts:
         this.viaInPadCandidateAttempts,
       globalDrcForceImproveViaInPadCandidatesAccepted:
@@ -166,6 +186,32 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       getDrcScaledMaxIterations(drcIssueCount, this.effort),
       getRouteComplexityMinIterations(this.inputHdRoutes.length, drcIssueCount),
     )
+  }
+
+  private hasExhaustedCandidateEvaluationBudget(): boolean {
+    return (
+      this.maxCandidateEvaluations !== undefined &&
+      this.candidateEvaluations >= this.maxCandidateEvaluations
+    )
+  }
+
+  getCandidateEvaluationCount(): number {
+    return this.candidateEvaluations
+  }
+
+  private evaluateCandidateRoutes(routes: HighDensityRoute[]): DrcSnapshot {
+    if (this.hasExhaustedCandidateEvaluationBudget()) {
+      throw new Error("Candidate DRC evaluation budget is exhausted")
+    }
+    this.candidateEvaluations += 1
+    return getDrcSnapshot(this.srj, routes, this.drcEvaluator, this.connMap)
+  }
+
+  getOutputDrcSnapshot(): DrcSnapshot {
+    if (!this.outputSnapshot) {
+      throw new Error("DRC snapshot is unavailable before the solver evaluates")
+    }
+    return this.outputSnapshot
   }
 
   private acceptSolvedRoutes(
@@ -206,9 +252,13 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     const isLargeRouteBoard =
       this.inputHdRoutes.length > BROAD_FALLBACK_SMALL_ROUTE_LIMIT &&
       initialDrcIssueCount > 0
-    const needsLargeBoardBroadFallbackWindow = isLargeRouteBoard
+    const usesAutomaticIterationBudget =
+      this.configuredMaxIterations === undefined
+    const needsLargeBoardBroadFallbackWindow =
+      isLargeRouteBoard && this.enableLargeBoardBroadFallback
 
     if (
+      usesAutomaticIterationBudget &&
       (initialDrcIssueCount >= LARGE_DRC_COUNT_THRESHOLD ||
         needsLargeBoardBroadFallbackWindow) &&
       this.iterations < MIN_ITERATIONS_FOR_LARGE_BOARD_BROAD_FALLBACK
@@ -285,8 +335,18 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       return
     }
 
-    const maxCandidateAttemptsThisStep =
-      getMaxTargetedCandidateAttemptsForEffort(this.effort)
+    const remainingCandidateEvaluations =
+      this.maxCandidateEvaluations === undefined
+        ? Number.POSITIVE_INFINITY
+        : this.maxCandidateEvaluations - this.candidateEvaluations
+    const maxCandidateAttemptsThisStep = Math.min(
+      getMaxTargetedCandidateAttemptsForEffort(this.effort),
+      remainingCandidateEvaluations,
+    )
+    if (maxCandidateAttemptsThisStep <= 0) {
+      this.acceptSolvedRoutes(bestRoutes, bestSnapshot)
+      return
+    }
     let candidateAttemptsThisStep = 0
     let acceptedCandidate = false
     let attemptedPeriodicLargeBoardBroadFallback = false
@@ -397,11 +457,8 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           this.viaInPadCandidateAttempts += 1
           candidateAttemptsThisStep += 1
           this.candidateAttempts += 1
-          const candidateSnapshot = getDrcSnapshot(
-            this.srj,
+          const candidateSnapshot = this.evaluateCandidateRoutes(
             materializedCandidateRoutes,
-            this.drcEvaluator,
-            this.connMap,
           )
           const candidateViaIssueCount = getViaDrcIssueCount(candidateSnapshot)
           const comparisonCount =
@@ -440,11 +497,8 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         this.viaInPadCandidateAttempts += 1
         candidateAttemptsThisStep += 1
         this.candidateAttempts += 1
-        const candidateSnapshot = getDrcSnapshot(
-          this.srj,
+        const candidateSnapshot = this.evaluateCandidateRoutes(
           materializedCandidateRoutes,
-          this.drcEvaluator,
-          this.connMap,
         )
         const candidateViaIssueCount = getViaDrcIssueCount(candidateSnapshot)
         const comparisonCount =
@@ -494,11 +548,8 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         this.viaInPadCandidateAttempts += 1
         candidateAttemptsThisStep += 1
         this.candidateAttempts += 1
-        const candidateSnapshot = getDrcSnapshot(
-          this.srj,
+        const candidateSnapshot = this.evaluateCandidateRoutes(
           materializedCandidateRoutes,
-          this.drcEvaluator,
-          this.connMap,
         )
         const candidateViaIssueCount = getViaDrcIssueCount(candidateSnapshot)
         const comparisonCount =
@@ -555,11 +606,8 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
             this.viaInPadCandidateAttempts += 1
             candidateAttemptsThisStep += 1
             this.candidateAttempts += 1
-            const candidateSnapshot = getDrcSnapshot(
-              this.srj,
+            const candidateSnapshot = this.evaluateCandidateRoutes(
               materializedCandidateRoutes,
-              this.drcEvaluator,
-              this.connMap,
             )
             const candidateViaIssueCount =
               getViaDrcIssueCount(candidateSnapshot)
@@ -601,7 +649,11 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       }
     }
 
-    if (!acceptedCandidate && targetedSweepErrors.length >= 2) {
+    if (
+      !acceptedCandidate &&
+      candidateAttemptsThisStep < maxCandidateAttemptsThisStep &&
+      targetedSweepErrors.length >= 2
+    ) {
       const candidateRoutes = cloneRoutes(bestRoutes)
       let changed = false
       for (const error of targetedSweepErrors) {
@@ -620,11 +672,8 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         const materializedCandidateRoutes = materializeRoutes(candidateRoutes)
         candidateAttemptsThisStep += 1
         this.candidateAttempts += 1
-        const candidateSnapshot = getDrcSnapshot(
-          this.srj,
+        const candidateSnapshot = this.evaluateCandidateRoutes(
           materializedCandidateRoutes,
-          this.drcEvaluator,
-          this.connMap,
         )
         const candidateViaIssueCount = getViaDrcIssueCount(candidateSnapshot)
 
@@ -682,11 +731,8 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         const materializedCandidateRoutes = materializeRoutes(candidateRoutes)
         candidateAttemptsThisStep += 1
         this.candidateAttempts += 1
-        const candidateSnapshot = getDrcSnapshot(
-          this.srj,
+        const candidateSnapshot = this.evaluateCandidateRoutes(
           materializedCandidateRoutes,
-          this.drcEvaluator,
-          this.connMap,
         )
         const candidateViaIssueCount = getViaDrcIssueCount(candidateSnapshot)
 
@@ -730,6 +776,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       this.stalledIterations % largeBoardBroadFallbackCadence === 0
     if (
       !acceptedCandidate &&
+      !this.hasExhaustedCandidateEvaluationBudget() &&
       (canAffordBroadFallback ||
         (this.effort >= 2 && this.stalledIterations >= 2) ||
         shouldTryPeriodicLargeBoardBroadFallback)
@@ -737,6 +784,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       attemptedPeriodicLargeBoardBroadFallback =
         shouldTryPeriodicLargeBoardBroadFallback
       for (const passMultiplier of [1, EXTENDED_BROAD_FORCE_PASS_MULTIPLIER]) {
+        if (this.hasExhaustedCandidateEvaluationBudget()) break
         const broadCandidateRoutes = applyBroadRepulsionForces(
           this.srj,
           bestRoutes,
@@ -746,12 +794,8 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           this.drcEvaluator === undefined,
         )
         if (broadCandidateRoutes === bestRoutes) continue
-        const broadCandidateSnapshot = getDrcSnapshot(
-          this.srj,
-          broadCandidateRoutes,
-          this.drcEvaluator,
-          this.connMap,
-        )
+        const broadCandidateSnapshot =
+          this.evaluateCandidateRoutes(broadCandidateRoutes)
         const broadCandidateViaIssueCount = getViaDrcIssueCount(
           broadCandidateSnapshot,
         )
@@ -790,6 +834,10 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     this.outputHdRoutes = bestRoutes
     this.outputSnapshot = bestSnapshot
     this.stalledIterations = acceptedCandidate ? 0 : this.stalledIterations + 1
+    if (this.hasExhaustedCandidateEvaluationBudget()) {
+      this.acceptSolvedRoutes(bestRoutes, bestSnapshot)
+      return
+    }
     this.updateDrcCountPlateauState(bestSnapshot)
     this.updateStats(bestSnapshot)
     if (this.solved || bestIssueCount === 0) {
