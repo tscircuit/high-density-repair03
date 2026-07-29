@@ -1,6 +1,6 @@
 # high-density-repair03
 
-This package contains a `GlobalDrcForceImproveSolver` for improving high-density PCB routes against DRC-style errors.
+This package contains a `GlobalDrcForceImproveSolver` for improving high-density PCB routes against DRC-style errors. Candidate routes are scored by the built-in `AutoroutingDrcEngine`, a lightweight spatially indexed evaluator designed specifically for the autorouting hot path.
 
 ## Install
 
@@ -191,13 +191,38 @@ That means this repo is intended to mirror the same repair concept and selection
 
 ## DRC Evaluator
 
-This repo does not bundle a full PCB DRC engine. Instead, you provide `drcEvaluator`, which receives:
+The repair solver creates and reuses an `AutoroutingDrcEngine` by default. The engine compiles static SRJ obstacles and connectivity once, then evaluates route-dependent trace segments and vias with a spatial broad phase. It covers the relaxed collision objective used by autorouting:
+
+- trace-to-trace clearance
+- trace-to-via clearance
+- trace-to-pad/plated-hole clearance
+- same-net and different-net via spacing
+
+It intentionally does not replace full-board validation. Benchmark/debug/reference code can continue calling `getDrcSnapshot` without an engine to evaluate through `@tscircuit/checks`.
+
+You can also construct the engine directly:
+
+```ts
+import { AutoroutingDrcEngine } from "high-density-repair03"
+
+const engine = new AutoroutingDrcEngine(srj, {
+  traceClearance: 0.1,
+  viaClearance: 0.1,
+  connMap,
+})
+
+const result = engine.evaluate(traces)
+console.log(result.errors)
+console.log(engine.lastRunStats)
+```
+
+For specialized or reference evaluation, provide `drcEvaluator` to override the optimized engine. It receives:
 
 - `srj`
 - `routes`
 - `traces`
 
-It should return either:
+The evaluator should return either:
 
 - an array of error objects, or
 - an object with `errors` and optional `errorsWithCenters`

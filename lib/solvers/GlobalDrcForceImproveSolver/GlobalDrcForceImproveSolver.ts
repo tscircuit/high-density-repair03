@@ -1,6 +1,7 @@
 import { BaseSolver } from "../BaseSolver"
 import type { ConnectivityMap } from "circuit-json-to-connectivity-map"
 import type { GraphicsObject } from "graphics-debug"
+import { AutoroutingDrcEngine } from "../../drc"
 import {
   BROAD_FALLBACK_SMALL_ROUTE_LIMIT,
   EXTENDED_BROAD_FORCE_PASS_MULTIPLIER,
@@ -37,6 +38,7 @@ import {
 } from "./solverHelpers"
 import { applyTraceToPadClearanceRelaxation } from "./traceToPadClearanceRelaxation"
 import { applyViaToPadClearanceRelaxation } from "./viaToPadClearanceRelaxation"
+import { RELAXED_DRC_OPTIONS } from "./drcPresets"
 import type {
   DrcEvaluator,
   DrcSnapshot,
@@ -63,6 +65,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   readonly connMap?: ConnectivityMap
   readonly effort: number
   readonly drcEvaluator?: DrcEvaluator
+  readonly autoroutingDrcEngine?: AutoroutingDrcEngine
   readonly viaHoleDiameter?: number
   readonly configuredMaxIterations?: number
   readonly enableLargeBoardBroadFallback: boolean
@@ -94,6 +97,19 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     this.connMap = params.connMap
     this.effort = params.effort ?? 1
     this.drcEvaluator = params.drcEvaluator
+    this.autoroutingDrcEngine =
+      params.autoroutingDrcEngine ??
+      (params.drcEvaluator
+        ? undefined
+        : new AutoroutingDrcEngine(params.srj, {
+            connMap: params.connMap,
+            traceClearance:
+              params.srj.minTraceToPadEdgeClearance ??
+              RELAXED_DRC_OPTIONS.traceClearance,
+            viaClearance:
+              params.srj.minTraceToPadEdgeClearance ??
+              RELAXED_DRC_OPTIONS.viaClearance,
+          }))
     if (
       params.viaHoleDiameter !== undefined &&
       (!Number.isFinite(params.viaHoleDiameter) || params.viaHoleDiameter <= 0)
@@ -121,6 +137,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         connMap: this.connMap,
         effort: this.effort,
         drcEvaluator: this.drcEvaluator,
+        autoroutingDrcEngine: this.autoroutingDrcEngine,
         viaHoleDiameter: this.viaHoleDiameter,
         maxIterations: this.configuredMaxIterations,
         enableLargeBoardBroadFallback: this.enableLargeBoardBroadFallback,
@@ -190,6 +207,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
             relaxedRoutes,
             this.drcEvaluator,
             this.connMap,
+            this.autoroutingDrcEngine,
           )
 
     this.outputHdRoutes = relaxedRoutes
@@ -263,7 +281,13 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     let bestRoutes = this.outputHdRoutes
     let bestSnapshot =
       this.outputSnapshot ??
-      getDrcSnapshot(this.srj, bestRoutes, this.drcEvaluator, this.connMap)
+      getDrcSnapshot(
+        this.srj,
+        bestRoutes,
+        this.drcEvaluator,
+        this.connMap,
+        this.autoroutingDrcEngine,
+      )
     if (this.initialDrcIssueCount === undefined) {
       this.initialDrcIssueCount = bestSnapshot.count
       this.bestDrcIssueCountSeen = bestSnapshot.count
@@ -402,6 +426,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
             materializedCandidateRoutes,
             this.drcEvaluator,
             this.connMap,
+            this.autoroutingDrcEngine,
           )
           const candidateViaIssueCount = getViaDrcIssueCount(candidateSnapshot)
           const comparisonCount =
@@ -445,6 +470,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           materializedCandidateRoutes,
           this.drcEvaluator,
           this.connMap,
+          this.autoroutingDrcEngine,
         )
         const candidateViaIssueCount = getViaDrcIssueCount(candidateSnapshot)
         const comparisonCount =
@@ -499,6 +525,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           materializedCandidateRoutes,
           this.drcEvaluator,
           this.connMap,
+          this.autoroutingDrcEngine,
         )
         const candidateViaIssueCount = getViaDrcIssueCount(candidateSnapshot)
         const comparisonCount =
@@ -560,6 +587,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
               materializedCandidateRoutes,
               this.drcEvaluator,
               this.connMap,
+              this.autoroutingDrcEngine,
             )
             const candidateViaIssueCount =
               getViaDrcIssueCount(candidateSnapshot)
@@ -625,6 +653,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           materializedCandidateRoutes,
           this.drcEvaluator,
           this.connMap,
+          this.autoroutingDrcEngine,
         )
         const candidateViaIssueCount = getViaDrcIssueCount(candidateSnapshot)
 
@@ -687,6 +716,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           materializedCandidateRoutes,
           this.drcEvaluator,
           this.connMap,
+          this.autoroutingDrcEngine,
         )
         const candidateViaIssueCount = getViaDrcIssueCount(candidateSnapshot)
 
@@ -751,6 +781,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           broadCandidateRoutes,
           this.drcEvaluator,
           this.connMap,
+          this.autoroutingDrcEngine,
         )
         const broadCandidateViaIssueCount = getViaDrcIssueCount(
           broadCandidateSnapshot,
@@ -805,6 +836,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         this.outputHdRoutes,
         this.drcEvaluator,
         this.connMap,
+        this.autoroutingDrcEngine,
       )
     this.acceptSolvedRoutes(this.outputHdRoutes, snapshot)
   }

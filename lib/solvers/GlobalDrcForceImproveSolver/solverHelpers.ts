@@ -3,6 +3,7 @@ import {
   segmentToSegmentMinDistance,
 } from "@tscircuit/math-utils"
 import type { ConnectivityMap } from "circuit-json-to-connectivity-map"
+import type { AutoroutingDrcEngine } from "../../drc"
 import { RELAXED_DRC_OPTIONS } from "./drcPresets"
 import { PREFERRED_VIA_TO_VIA_CLEARANCE, getDrcErrors } from "./getDrcErrors"
 import { convertToCircuitJson } from "../utils/convertToCircuitJson"
@@ -183,8 +184,12 @@ export const getDrcSnapshot = (
   routes: HighDensityRoute[],
   drcEvaluator?: DrcEvaluator,
   connMap?: ConnectivityMap,
+  autoroutingDrcEngine?: AutoroutingDrcEngine,
 ): DrcSnapshot => {
-  const drcSrj = getConnMapAwareSrj(srj, connMap)
+  const drcSrj =
+    autoroutingDrcEngine && !drcEvaluator
+      ? srj
+      : getConnMapAwareSrj(srj, connMap)
   const { traces, traceRouteIndexById } = createSimplifiedTraces(drcSrj, routes)
   const drcResult = drcEvaluator?.({
     srj: drcSrj,
@@ -208,21 +213,24 @@ export const getDrcSnapshot = (
     }
   }
 
-  const drc = getDrcErrors(
-    convertToCircuitJson(
-      drcSrj,
-      traces,
-      drcSrj.minTraceWidth,
-      drcSrj.minViaDiameter,
-    ),
-    {
-      ...RELAXED_DRC_OPTIONS,
-      traceClearance:
-        drcSrj.minTraceToPadEdgeClearance ?? RELAXED_DRC_OPTIONS.traceClearance,
-      viaClearance:
-        drcSrj.minTraceToPadEdgeClearance ?? RELAXED_DRC_OPTIONS.viaClearance,
-    },
-  )
+  const drc =
+    autoroutingDrcEngine?.evaluate(traces) ??
+    getDrcErrors(
+      convertToCircuitJson(
+        drcSrj,
+        traces,
+        drcSrj.minTraceWidth,
+        drcSrj.minViaDiameter,
+      ),
+      {
+        ...RELAXED_DRC_OPTIONS,
+        traceClearance:
+          drcSrj.minTraceToPadEdgeClearance ??
+          RELAXED_DRC_OPTIONS.traceClearance,
+        viaClearance:
+          drcSrj.minTraceToPadEdgeClearance ?? RELAXED_DRC_OPTIONS.viaClearance,
+      },
+    )
 
   return {
     errors:

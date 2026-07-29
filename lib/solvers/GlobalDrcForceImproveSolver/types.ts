@@ -1,4 +1,5 @@
 import type { ConnectivityMap } from "circuit-json-to-connectivity-map"
+import type { AutoroutingDrcEngine } from "../../drc"
 import type { SimpleRouteJson, SimplifiedPcbTraces } from "../../types"
 import type { HighDensityRoute } from "../../types/high-density-types"
 
@@ -24,6 +25,11 @@ export type GlobalDrcForceImproveSolverParams = {
   connMap?: ConnectivityMap
   effort?: number
   drcEvaluator?: DrcEvaluator
+  /**
+   * Reusable optimized evaluator for the autorouting hot path. A new engine is
+   * created automatically when neither this nor `drcEvaluator` is provided.
+   */
+  autoroutingDrcEngine?: AutoroutingDrcEngine
   viaHoleDiameter?: number
   maxIterations?: number
   enableLargeBoardBroadFallback?: boolean

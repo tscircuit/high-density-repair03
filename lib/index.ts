@@ -3,6 +3,13 @@ export {
   GlobalDrcForceImproveSolver,
   setGlobalDrcForceImproveSolverVisualizer,
 } from "./solvers/GlobalDrcForceImproveSolver"
+export { AutoroutingDrcEngine } from "./drc"
+export type {
+  AutoroutingDrcEngineOptions,
+  AutoroutingDrcEngineRunStats,
+  AutoroutingDrcError,
+  AutoroutingDrcResult,
+} from "./drc"
 export type {
   ConnectionPoint,
   DrcError,
