@@ -40,6 +40,13 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       throw new Error("broadMaxIterations must be greater than zero")
     }
     if (
+      params.maxCandidateEvaluations !== undefined &&
+      (!Number.isInteger(params.maxCandidateEvaluations) ||
+        params.maxCandidateEvaluations <= 0)
+    ) {
+      throw new Error("maxCandidateEvaluations must be a positive integer")
+    }
+    if (
       params.viaInPadMaxIterations !== undefined &&
       !Number.isInteger(params.viaInPadMaxIterations)
     ) {
@@ -75,6 +82,24 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
     }
   }
 
+  private getCandidateEvaluationCount(): number {
+    return (
+      (this.baselineSolver?.getCandidateEvaluationCount() ?? 0) +
+      (this.broadSolver?.getCandidateEvaluationCount() ?? 0) +
+      (this.viaInPadSolver?.getCandidateEvaluationCount() ?? 0)
+    )
+  }
+
+  private getRemainingCandidateEvaluations(): number | undefined {
+    if (this.params.maxCandidateEvaluations === undefined) {
+      return undefined
+    }
+    return Math.max(
+      0,
+      this.params.maxCandidateEvaluations - this.getCandidateEvaluationCount(),
+    )
+  }
+
   private finishWithOutput(
     routes: HighDensityRoute[],
     snapshot: DrcSnapshot,
@@ -103,6 +128,12 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       drcBranchPortfolioViaInPadPhaseAttempted: Boolean(this.viaInPadSolver),
       drcBranchPortfolioViaInPadMaxIterations:
         this.params.viaInPadMaxIterations,
+      drcBranchPortfolioMaxCandidateEvaluations:
+        this.params.maxCandidateEvaluations,
+      drcBranchPortfolioCandidateEvaluations:
+        this.getCandidateEvaluationCount(),
+      drcBranchPortfolioCandidateEvaluationBudgetExhausted:
+        this.getRemainingCandidateEvaluations() === 0,
     }
     this.solved = true
   }
@@ -111,6 +142,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
     this.baselineSolver = new GlobalDrcForceImproveSolver({
       ...this.params,
       hdRoutes: this.inputHdRoutes,
+      initialDrcSnapshot: this.inputSnapshot,
       enableViaInPadLayerMoves: false,
     })
     this.activeSubSolver = this.baselineSolver
@@ -130,12 +162,23 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       this.finishWithOutput(routes, snapshot, portfolioSelectedSolver)
       return
     }
+    const remainingCandidateEvaluations =
+      this.getRemainingCandidateEvaluations()
+    if (remainingCandidateEvaluations === 0) {
+      this.finishWithOutput(routes, snapshot, portfolioSelectedSolver)
+      return
+    }
     this.viaInPadSolver = new GlobalDrcForceImproveSolver({
       ...this.params,
       hdRoutes: routes,
       drcEvaluator: this.params.viaInPadDrcEvaluator,
+      initialDrcSnapshot:
+        this.params.viaInPadDrcEvaluator === this.params.drcEvaluator
+          ? snapshot
+          : undefined,
       maxIterations:
         this.params.viaInPadMaxIterations ?? this.params.maxIterations,
+      maxCandidateEvaluations: remainingCandidateEvaluations,
       enableLargeBoardBroadFallback: false,
       enableTargetedErrorSweep: false,
       enablePostSolveClearanceRelaxation: false,
@@ -146,6 +189,16 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
   }
 
   private startBroadBranch() {
+    const remainingCandidateEvaluations =
+      this.getRemainingCandidateEvaluations()
+    if (remainingCandidateEvaluations === 0) {
+      this.startViaInPadPhase(
+        this.baselineSolver!.getOutput(),
+        this.baselineSnapshot!,
+        this.baselineSolver,
+      )
+      return
+    }
     const broadInputRoutes = applyBroadRepulsionForces(
       this.params.srj,
       this.inputHdRoutes,
@@ -170,7 +223,9 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
     this.broadSolver = new GlobalDrcForceImproveSolver({
       ...this.params,
       hdRoutes: broadInputRoutes,
+      initialDrcSnapshot: this.broadInputSnapshot,
       maxIterations: this.broadMaxIterations,
+      maxCandidateEvaluations: remainingCandidateEvaluations,
       enableViaInPadLayerMoves: false,
     })
     this.activeSubSolver = this.broadSolver
@@ -197,12 +252,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       this.stepBranch(this.baselineSolver!, "baseline")
       if (!this.baselineSolver!.solved) return
       const baselineRoutes = this.baselineSolver!.getOutput()
-      this.baselineSnapshot = getDrcSnapshot(
-        this.params.srj,
-        baselineRoutes,
-        this.params.drcEvaluator,
-        this.params.connMap,
-      )
+      this.baselineSnapshot = this.baselineSolver!.getOutputDrcSnapshot()
       if (this.baselineSnapshot.count === 0) {
         this.startViaInPadPhase(
           baselineRoutes,
@@ -219,12 +269,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       this.stepBranch(this.broadSolver!, "broad")
       if (!this.broadSolver!.solved) return
       const broadRoutes = this.broadSolver!.getOutput()
-      this.broadSnapshot = getDrcSnapshot(
-        this.params.srj,
-        broadRoutes,
-        this.params.drcEvaluator,
-        this.params.connMap,
-      )
+      this.broadSnapshot = this.broadSolver!.getOutputDrcSnapshot()
       if (this.broadSnapshot.count < this.baselineSnapshot!.count) {
         this.startViaInPadPhase(
           broadRoutes,
@@ -245,12 +290,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       this.stepBranch(this.viaInPadSolver!, "via-in-pad")
       if (!this.viaInPadSolver!.solved) return
       const viaInPadRoutes = this.viaInPadSolver!.getOutput()
-      const viaInPadSnapshot = getDrcSnapshot(
-        this.params.srj,
-        viaInPadRoutes,
-        this.params.viaInPadDrcEvaluator,
-        this.params.connMap,
-      )
+      const viaInPadSnapshot = this.viaInPadSolver!.getOutputDrcSnapshot()
       this.finishWithOutput(
         viaInPadRoutes,
         viaInPadSnapshot,

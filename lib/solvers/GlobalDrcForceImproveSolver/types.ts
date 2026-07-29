@@ -26,6 +26,8 @@ export type GlobalDrcForceImproveSolverParams = {
   drcEvaluator?: DrcEvaluator
   viaHoleDiameter?: number
   maxIterations?: number
+  maxCandidateEvaluations?: number
+  initialDrcSnapshot?: DrcSnapshot
   enableLargeBoardBroadFallback?: boolean
   enableTargetedErrorSweep?: boolean
   enablePostSolveClearanceRelaxation?: boolean
