@@ -87,7 +87,7 @@ Examples:
 
 PRs with `[BENCHMARK TEST]` in the title run the default SRJ18 benchmark workflow automatically on PR updates. The workflow can also be run manually with `workflow_dispatch`, including dataset, scenario limit, concurrency, effort, max iterations, and ref inputs.
 
-For PR comment runs, CI posts Markdown tables for the PR benchmark and the latest successful matching `main` benchmark artifact when available. The PR table includes deltas versus `main` for DRC counts and timing metrics; it does not compare results from different datasets.
+Every successful `main` push publishes separate SRJ18 and DRC14 baseline artifacts. For PR comment runs, CI selects the baseline matching the requested dataset and posts Markdown tables for both results. The PR table includes deltas versus `main` for DRC counts and timing metrics; it never compares results from different datasets.
 
 ## Usage
 
