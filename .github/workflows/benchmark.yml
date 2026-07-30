@@ -10,6 +10,14 @@ on:
       - main
   workflow_dispatch:
     inputs:
+      dataset:
+        description: Dataset to benchmark
+        required: false
+        default: srj18
+        type: choice
+        options:
+          - drc14
+          - srj18
       scenario_limit:
         description: 'Scenario limit (number or "all"). Default: all.'
         required: false
@@ -184,10 +192,12 @@ jobs:
               const inputs = context.payload.inputs || {}
 
               const scenarioLimit = (inputs.scenario_limit || '').trim()
+              const dataset = (inputs.dataset || 'srj18').trim()
               const concurrency = (inputs.concurrency || '').trim()
               const effort = (inputs.effort || '').trim()
               const maxIterations = (inputs.max_iterations || '').trim()
 
+              benchmarkArgs.push('--dataset', dataset)
               if (scenarioLimit) {
                 benchmarkArgs.push('--scenario-limit', scenarioLimit)
               }
@@ -225,7 +235,8 @@ jobs:
       - name: Install dependencies
         run: bun install --no-save
 
-      - name: Run benchmark
+      - name: Run requested benchmark
+        if: github.event_name != 'push'
         env:
           BENCHMARK_ARGS_JSON: ${{ steps.parse.outputs.benchmark_args_json }}
         run: |
@@ -250,8 +261,21 @@ jobs:
           process.exit(result.status ?? 1)
           NODE
 
+      - name: Run SRJ18 main benchmark
+        if: github.event_name == 'push'
+        run: |
+          set -o pipefail
+          chmod +x ./benchmark.sh
+          ./benchmark.sh --dataset srj18 --out benchmark-result-srj18.json 2>&1 | tee benchmark-result-srj18.txt
+
+      - name: Run DRC14 main benchmark
+        if: github.event_name == 'push'
+        run: |
+          set -o pipefail
+          ./benchmark.sh --dataset drc14 --out benchmark-result-drc14.json 2>&1 | tee benchmark-result-drc14.txt
+
       - name: Save PR benchmark output
-        if: always()
+        if: always() && github.event_name != 'push'
         run: |
           if [ -f benchmark-result.txt ]; then
             cp benchmark-result.txt benchmark-result-pr.txt
@@ -265,26 +289,62 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.TSCIRCUIT_BOT_GITHUB_TOKEN }}
         run: |
+          DATASET=$(node -e '
+            const fs = require("node:fs")
+            const reportPath = fs.existsSync("benchmark-result-pr.json")
+              ? "benchmark-result-pr.json"
+              : "benchmark-result.json"
+            if (!fs.existsSync(reportPath)) process.exit(1)
+            const report = JSON.parse(fs.readFileSync(reportPath, "utf8"))
+            if (!["drc14", "srj18"].includes(report.dataset)) process.exit(1)
+            process.stdout.write(report.dataset)
+          ') || {
+            echo "(unable to determine the PR benchmark dataset)" > benchmark-result-main.txt
+            echo "" > benchmark-result-main.json
+            exit 0
+          }
           RUN_ID=$(gh api "repos/${{ github.repository }}/actions/workflows/benchmark.yml/runs?branch=main&event=push&status=success&per_page=1" --jq '.workflow_runs[0].id' 2>/dev/null || echo "")
           if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
-            echo "(no main branch benchmark result available)" > benchmark-result-main.txt
+            echo "(no ${DATASET} main branch benchmark result available)" > benchmark-result-main.txt
             echo "" > benchmark-result-main.json
             exit 0
           fi
-          gh run download "$RUN_ID" --repo "${{ github.repository }}" --name benchmark-result --dir ./main-artifact 2>/dev/null || true
-          if [ -f ./main-artifact/benchmark-result.txt ]; then
-            cp ./main-artifact/benchmark-result.txt benchmark-result-main.txt
+          gh run download "$RUN_ID" --repo "${{ github.repository }}" --name "benchmark-result-${DATASET}" --dir ./main-artifact 2>/dev/null || true
+          if [ -f "./main-artifact/benchmark-result-${DATASET}.txt" ]; then
+            cp "./main-artifact/benchmark-result-${DATASET}.txt" benchmark-result-main.txt
           else
-            echo "(no main branch benchmark result available)" > benchmark-result-main.txt
+            echo "(no ${DATASET} main branch benchmark result available)" > benchmark-result-main.txt
           fi
-          if [ -f ./main-artifact/benchmark-result.json ]; then
-            cp ./main-artifact/benchmark-result.json benchmark-result-main.json
+          if [ -f "./main-artifact/benchmark-result-${DATASET}.json" ]; then
+            cp "./main-artifact/benchmark-result-${DATASET}.json" benchmark-result-main.json
           else
             echo "" > benchmark-result-main.json
           fi
 
+      - name: Upload SRJ18 main benchmark result
+        if: always() && github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-result-srj18
+          path: |
+            ./benchmark-result-srj18.txt
+            ./benchmark-result-srj18.json
+          overwrite: true
+          if-no-files-found: ignore
+
+      - name: Upload DRC14 main benchmark result
+        if: always() && github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-result-drc14
+          path: |
+            ./benchmark-result-drc14.txt
+            ./benchmark-result-drc14.json
+          overwrite: true
+          if-no-files-found: ignore
+
       - name: Upload benchmark result
-        if: always()
+        if: always() && github.event_name != 'push'
         uses: actions/upload-artifact@v4
         with:
           name: benchmark-result
@@ -346,6 +406,7 @@ jobs:
               if (!report?.metadata) return []
               const metadata = report.metadata
               return [
+                `Dataset: ${String(report.dataset ?? 'n/a').toUpperCase()}`,
                 `Concurrency: ${metadata.concurrency ?? 'n/a'}`,
                 `Effort: ${metadata.effort ?? 'n/a'}`,
                 ...(metadata.maxIterations !== undefined ? [`Max iterations: ${metadata.maxIterations}`] : []),
@@ -398,6 +459,17 @@ jobs:
             const mainText = readText('benchmark-result-main.txt') ?? '(main benchmark output unavailable)'
             const prReport = readJson('benchmark-result-pr.json') ?? readJson('benchmark-result.json')
             const mainReport = readJson('benchmark-result-main.json')
+            const reportsAreComparable =
+              Boolean(prReport && mainReport) &&
+              prReport.dataset === mainReport.dataset
+            const comparableMainReport = reportsAreComparable ? mainReport : null
+            const mainSummary = reportsAreComparable
+              ? renderSummaryTable(mainReport, { includeDelta: false })
+              : [
+                  prReport && mainReport
+                    ? `No matching main-branch baseline is available for ${String(prReport.dataset).toUpperCase()} (latest main artifact uses ${String(mainReport.dataset).toUpperCase()}).`
+                    : 'Summary table unavailable.',
+                ]
             const runUrl = `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`
             const jobStatus = '${{ job.status }}'
             const benchmarkFailed = jobStatus !== 'success'
@@ -414,7 +486,7 @@ jobs:
               '<details>',
               '<summary>Main Branch Results</summary>',
               '',
-              ...renderSummaryTable(mainReport, { includeDelta: false }),
+              ...mainSummary,
               '',
               '<details>',
               '<summary>Raw output</summary>',
@@ -428,7 +500,7 @@ jobs:
               '<details open>',
               '<summary>PR Results</summary>',
               '',
-              ...renderSummaryTable(prReport, { includeDelta: true, baseline: mainReport }),
+              ...renderSummaryTable(prReport, { includeDelta: true, baseline: comparableMainReport }),
               '',
               '<details>',
               '<summary>Raw output</summary>',

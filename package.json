@@ -9,7 +9,8 @@
   "scripts": {
     "start": "cosmos",
     "benchmark": "./benchmark.sh",
-    "benchmark:drc14": "bun scripts/benchmark-drc14.ts",
+    "benchmark:drc14": "bun scripts/benchmark.ts --dataset drc14",
+    "benchmark:srj18": "bun scripts/benchmark.ts --dataset srj18",
     "build:site": "cosmos-export",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
