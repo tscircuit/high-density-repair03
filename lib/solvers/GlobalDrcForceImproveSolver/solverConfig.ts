@@ -1,6 +1,7 @@
 import type { SimpleRouteJson } from "../../types"
 
 const BASE_MAX_TARGETED_CANDIDATE_ATTEMPTS = 3
+const BASE_MAX_ROUTE_DISJOINT_BATCH_ERRORS = 24
 const BASE_MAX_ITERATIONS_PER_EFFORT = 48
 const DEEP_ERROR_FORCE_SCALES = [1, 1.75, -1] as const
 const FAST_ERROR_FORCE_SCALES = [1, 1.75, -1] as const
@@ -13,6 +14,7 @@ const SMALL_DRC_COUNT_IMPROVEMENT_CHECK_INTERVAL = 2
 export const POSITION_EPSILON = 1e-6
 export const COORDINATE_EPSILON = 1e-3
 export const MAX_ERROR_MOVE = 0.14
+export const MIN_ROUTE_DISJOINT_BATCH_CENTER_DISTANCE = 0.8
 export const BROAD_FORCE_PASSES = 12
 export const EXTENDED_BROAD_FORCE_PASS_MULTIPLIER = 2
 export const BROAD_MAX_MOVE = 0.035
@@ -29,6 +31,7 @@ export const getViaEdgeToPadEdgeClearance = (srj: SimpleRouteJson) =>
   srj.minViaEdgeToPadEdgeClearance ?? PREFERRED_VIA_TO_PAD_CLEARANCE
 export const LARGE_DRC_COUNT_THRESHOLD = 20
 export const MAX_DRC_COUNT_PLATEAU_CHECKS = 2
+export const MAX_ROUTE_DISJOINT_BATCH_CONSECUTIVE_MISSES = 1
 export const MAX_LARGE_BOARD_BROAD_FALLBACK_MISSES = 2
 export const BROAD_SPATIAL_CELL_SIZE_MIN = 1
 
@@ -77,4 +80,10 @@ export const getMaxTargetedCandidateAttemptsForEffort = (effort: number) =>
   Math.max(
     1,
     Math.round(BASE_MAX_TARGETED_CANDIDATE_ATTEMPTS * Math.max(1, effort)),
+  )
+
+export const getMaxRouteDisjointBatchErrorsForEffort = (effort: number) =>
+  Math.max(
+    2,
+    Math.round(BASE_MAX_ROUTE_DISJOINT_BATCH_ERRORS * Math.max(1, effort)),
   )

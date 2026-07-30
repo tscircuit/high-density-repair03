@@ -113,6 +113,23 @@ test("matches the relaxed reference checks for autorouting collision types", () 
   expect(engineResult.locationAwareErrors.length).toBe(
     engineResult.errors.length,
   )
+
+  const tracePairError = engineResult.errors.find(
+    (error) =>
+      error.pcb_trace_error_id === "overlap_trace_a_trace_b" ||
+      error.pcb_trace_error_id === "overlap_trace_b_trace_a",
+  )
+  expect(tracePairError?.pcb_trace_ids).toEqual(["trace_a", "trace_b"])
+
+  const traceViaError = engineResult.errors.find(
+    (error) => error.pcb_via_trace_id === "trace_c",
+  )
+  expect(traceViaError?.pcb_trace_ids).toEqual(["trace_a", "trace_c"])
+
+  const obstacleError = engineResult.errors.find(
+    (error) => error.pcb_obstacle_id === "pcb_smtpad_foreign",
+  )
+  expect(obstacleError?.pcb_trace_ids).toEqual(["trace_a"])
 })
 
 test("classifies close via pairs by canonical SRJ net", () => {
@@ -170,6 +187,11 @@ test("classifies close via pairs by canonical SRJ net", () => {
 
   expect(viaErrorIds).toContain("same_net_vias_close_via_0_via_1")
   expect(viaErrorIds).toContain("different_net_vias_close_via_1_via_2")
+  expect(
+    result.errors.find(
+      (error) => error.pcb_error_id === "different_net_vias_close_via_1_via_2",
+    )?.pcb_trace_ids,
+  ).toEqual(["trace_1", "trace_2"])
 })
 
 test("uses an injected connectivity map for equivalent net identifiers", () => {

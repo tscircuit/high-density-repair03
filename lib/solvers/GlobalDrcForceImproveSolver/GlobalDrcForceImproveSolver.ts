@@ -8,6 +8,7 @@ import {
   LARGE_DRC_COUNT_THRESHOLD,
   MAX_DRC_COUNT_PLATEAU_CHECKS,
   MAX_LARGE_BOARD_BROAD_FALLBACK_MISSES,
+  MAX_ROUTE_DISJOINT_BATCH_CONSECUTIVE_MISSES,
   MIN_ITERATIONS_FOR_LARGE_BOARD_BROAD_FALLBACK,
   getBaseMaxIterations,
   getDrcCountImprovementCheckInterval,
@@ -28,6 +29,7 @@ import {
   cloneRoutesForIndexes,
   getCenteredErrors,
   getDrcSnapshot,
+  getRouteDisjointDrcErrorBatch,
   getTargetedClearanceSweepErrors,
   getTraceRouteIndexForError,
   getTraceRoutePairForError,
@@ -77,6 +79,11 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   private broadForceAccepted = false
   private targetedForceAccepted = false
   private candidateAttempts = 0
+  private routeDisjointBatchAttempts = 0
+  private routeDisjointBatchesAccepted = 0
+  private routeDisjointBatchErrorsAttempted = 0
+  private routeDisjointBatchErrorsAccepted = 0
+  private routeDisjointBatchConsecutiveMisses = 0
   private viaInPadCandidateAttempts = 0
   private viaInPadCandidatesAccepted = 0
   private padTopologyErrorCursor = 0
@@ -157,6 +164,16 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       globalDrcForceImproveBroadForceAccepted: this.broadForceAccepted,
       globalDrcForceImproveTargetedForceAccepted: this.targetedForceAccepted,
       globalDrcForceImproveCandidateAttempts: this.candidateAttempts,
+      globalDrcForceImproveRouteDisjointBatchAttempts:
+        this.routeDisjointBatchAttempts,
+      globalDrcForceImproveRouteDisjointBatchesAccepted:
+        this.routeDisjointBatchesAccepted,
+      globalDrcForceImproveRouteDisjointBatchErrorsAttempted:
+        this.routeDisjointBatchErrorsAttempted,
+      globalDrcForceImproveRouteDisjointBatchErrorsAccepted:
+        this.routeDisjointBatchErrorsAccepted,
+      globalDrcForceImproveRouteDisjointBatchConsecutiveMisses:
+        this.routeDisjointBatchConsecutiveMisses,
       globalDrcForceImproveViaInPadCandidateAttempts:
         this.viaInPadCandidateAttempts,
       globalDrcForceImproveViaInPadCandidatesAccepted:
@@ -323,6 +340,16 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     const targetedSweepErrors = this.enableTargetedErrorSweep
       ? getTargetedClearanceSweepErrors(centeredErrors, this.effort)
       : []
+    const routeDisjointBatch =
+      bestRoutes.length > BROAD_FALLBACK_SMALL_ROUTE_LIMIT &&
+      this.routeDisjointBatchConsecutiveMisses <
+        MAX_ROUTE_DISJOINT_BATCH_CONSECUTIVE_MISSES
+        ? getRouteDisjointDrcErrorBatch(
+            centeredErrors,
+            bestSnapshot.traceRouteIndexById,
+            this.effort,
+          )
+        : { errors: [], routeIndexes: [] }
     const shouldTryTracePairTopology =
       (this.initialDrcIssueCount ?? bestIssueCount) <= 3
     const padTraceErrors = centeredErrors.filter(
@@ -629,6 +656,73 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       }
     }
 
+    if (!acceptedCandidate && routeDisjointBatch.errors.length >= 2) {
+      this.routeDisjointBatchAttempts += 1
+      this.routeDisjointBatchErrorsAttempted += routeDisjointBatch.errors.length
+      const candidateRoutes = cloneRoutesForIndexes(
+        bestRoutes,
+        routeDisjointBatch.routeIndexes,
+      )
+      const changed = applyDrcErrorForces(
+        this.srj,
+        candidateRoutes,
+        routeDisjointBatch.errors,
+        bestSnapshot.traceRouteIndexById,
+        1,
+        this.connMap,
+        true,
+        routeDisjointBatch.routeIndexes,
+      )
+
+      if (changed) {
+        const materializedCandidateRoutes = materializeRoutesForIndexes(
+          candidateRoutes,
+          routeDisjointBatch.routeIndexes,
+        )
+        candidateAttemptsThisStep += 1
+        this.candidateAttempts += 1
+        const candidateSnapshot = getDrcSnapshot(
+          this.srj,
+          materializedCandidateRoutes,
+          this.drcEvaluator,
+          this.connMap,
+          this.autoroutingDrcEngine,
+        )
+        const candidateViaIssueCount = getViaDrcIssueCount(candidateSnapshot)
+
+        if (
+          isBetterDrcSnapshot(
+            candidateSnapshot,
+            candidateViaIssueCount,
+            bestIssueCount,
+            bestIssueScore,
+            bestViaIssueCount,
+          )
+        ) {
+          bestRoutes = materializedCandidateRoutes
+          bestSnapshot = candidateSnapshot
+          bestIssueCount = candidateSnapshot.count
+          bestIssueScore = candidateSnapshot.issueScore
+          bestViaIssueCount = candidateViaIssueCount
+          this.targetedForceAccepted = true
+          this.routeDisjointBatchesAccepted += 1
+          this.routeDisjointBatchErrorsAccepted +=
+            routeDisjointBatch.errors.length
+          this.routeDisjointBatchConsecutiveMisses = 0
+          acceptedCandidate = true
+          if (candidateSnapshot.count === 0) {
+            this.acceptSolvedRoutes(bestRoutes, bestSnapshot)
+            return
+          }
+        }
+        if (!acceptedCandidate) {
+          this.routeDisjointBatchConsecutiveMisses += 1
+        }
+      } else {
+        this.routeDisjointBatchConsecutiveMisses += 1
+      }
+    }
+
     if (!acceptedCandidate && targetedSweepErrors.length >= 2) {
       const candidateRoutes = cloneRoutes(bestRoutes)
       let changed = false
@@ -694,7 +788,12 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
 
       this.errorCursor = (errorIndex + 1) % centeredErrors.length
 
-      for (const scale of getForceScalesForEffort(this.effort)) {
+      const forceScales =
+        this.routeDisjointBatchConsecutiveMisses >=
+        MAX_ROUTE_DISJOINT_BATCH_CONSECUTIVE_MISSES
+          ? ([1] as const)
+          : getForceScalesForEffort(this.effort)
+      for (const scale of forceScales) {
         if (candidateAttemptsThisStep >= maxCandidateAttemptsThisStep) break
 
         const candidateRoutes = cloneRoutes(bestRoutes)

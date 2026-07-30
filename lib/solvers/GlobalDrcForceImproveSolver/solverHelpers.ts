@@ -20,10 +20,12 @@ import {
   CLEARANCE_SLACK,
   COORDINATE_EPSILON,
   MAX_ERROR_MOVE,
+  MIN_ROUTE_DISJOINT_BATCH_CENTER_DISTANCE,
   POSITION_EPSILON,
   PREFERRED_TRACE_TO_PAD_CLEARANCE,
   TRACE_PAD_REPAIR_MAX_MOVE,
   VIA_PAIR_REPAIR_MAX_MOVE,
+  getMaxRouteDisjointBatchErrorsForEffort,
   getTraceToPadEdgeClearance,
   getViaEdgeToPadEdgeClearance,
 } from "./solverConfig"
@@ -250,10 +252,12 @@ export const getDrcSnapshot = (
 export const collectViaNodes = (
   routes: HighDensityRoute[],
   defaultViaDiameter = 0.3,
+  selectedRouteIndexes?: ReadonlySet<number>,
 ): ViaNode[] => {
   const vias: ViaNode[] = []
 
   for (let routeIndex = 0; routeIndex < routes.length; routeIndex += 1) {
+    if (selectedRouteIndexes && !selectedRouteIndexes.has(routeIndex)) continue
     const route = routes[routeIndex]
     if (!route) continue
     const seenIndexes = new Set<number>()
@@ -330,9 +334,14 @@ const collectSegmentsForRoute = (
   return segments
 }
 
-const collectSegments = (routes: MutableRoute[]): Segment[] =>
+const collectSegments = (
+  routes: MutableRoute[],
+  selectedRouteIndexes?: ReadonlySet<number>,
+): Segment[] =>
   routes.flatMap((route, routeIndex) =>
-    collectSegmentsForRoute(route, routeIndex),
+    selectedRouteIndexes && !selectedRouteIndexes.has(routeIndex)
+      ? []
+      : collectSegmentsForRoute(route, routeIndex),
   )
 
 const getViaBounds = (via: ViaNode): Bounds2D => ({
@@ -2122,7 +2131,7 @@ const getNearestSegment = (
   return best?.segment
 }
 
-const getNearestVia = (vias: ViaNode[], point: Point) => {
+const getNearestVia = (vias: ViaNode[], point: Point, routeIndex?: number) => {
   let best:
     | {
         via: ViaNode
@@ -2131,6 +2140,7 @@ const getNearestVia = (vias: ViaNode[], point: Point) => {
     | undefined
 
   for (const via of vias) {
+    if (routeIndex !== undefined && via.routeIndex !== routeIndex) continue
     const distance = Math.hypot(via.x - point.x, via.y - point.y)
     if (!best || distance < best.distance) {
       best = { via, distance }
@@ -3113,6 +3123,150 @@ export const getTraceRoutePairForError = (
     : undefined
 }
 
+export const getDrcErrorRouteIndexes = (
+  error: Record<string, unknown>,
+  traceRouteIndexById: Map<string, number>,
+) => {
+  const routeIndexes = new Set<number>()
+  const primaryRouteIndex = getTraceRouteIndexForError(
+    error,
+    traceRouteIndexById,
+  )
+  if (primaryRouteIndex !== undefined) routeIndexes.add(primaryRouteIndex)
+
+  const explicitTraceIds = Array.isArray(error.pcb_trace_ids)
+    ? error.pcb_trace_ids.filter(
+        (traceId): traceId is string => typeof traceId === "string",
+      )
+    : []
+  for (const traceId of explicitTraceIds) {
+    const routeIndex = traceRouteIndexById.get(traceId)
+    if (routeIndex !== undefined) routeIndexes.add(routeIndex)
+  }
+
+  const traceRoutePair = getTraceRoutePairForError(error, traceRouteIndexById)
+  if (traceRoutePair) {
+    routeIndexes.add(traceRoutePair[0])
+    routeIndexes.add(traceRoutePair[1])
+  }
+
+  return [...routeIndexes]
+}
+
+const getDrcErrorSeverityForBatching = (error: Record<string, unknown>) => {
+  const message = typeof error.message === "string" ? error.message : ""
+  const gapMatch = message.match(/gap: (-?\d+(?:\.\d+)?)mm/)
+  if (!gapMatch) return 1
+  const gap = Number.parseFloat(gapMatch[1]!)
+  return Number.isFinite(gap) ? Math.max(0, 0.1 - gap) : 1
+}
+
+const getDrcErrorBatchPriority = (error: Record<string, unknown>) => {
+  if (isTraceObstacleDrcError(error)) return 4
+  if (
+    Array.isArray(error.pcb_via_trace_ids) ||
+    typeof error.pcb_via_trace_id === "string"
+  ) {
+    return 3
+  }
+  if (isViaDrcError(error)) return 2
+  return 1
+}
+
+export const getRouteDisjointDrcErrorBatch = (
+  errors: Array<Record<string, unknown>>,
+  traceRouteIndexById: Map<string, number>,
+  effort: number,
+) => {
+  const candidates: Array<{
+    error: Record<string, unknown>
+    order: number
+    center: Point
+    routeIndexes: number[]
+    priority: number
+    severity: number
+  }> = []
+
+  for (let order = 0; order < errors.length; order += 1) {
+    const error = errors[order]
+    if (!error) continue
+    const center = getErrorCenter(error)
+    const routeIndexes = getDrcErrorRouteIndexes(error, traceRouteIndexById)
+    if (!center || routeIndexes.length === 0) continue
+    candidates.push({
+      error,
+      order,
+      center,
+      routeIndexes,
+      priority: getDrcErrorBatchPriority(error),
+      severity: getDrcErrorSeverityForBatching(error),
+    })
+  }
+
+  const errorCountByRouteIndex = new Map<number, number>()
+  for (const candidate of candidates) {
+    for (const routeIndex of candidate.routeIndexes) {
+      errorCountByRouteIndex.set(
+        routeIndex,
+        (errorCountByRouteIndex.get(routeIndex) ?? 0) + 1,
+      )
+    }
+  }
+
+  candidates.sort((left, right) => {
+    const leftRouteImpact = left.routeIndexes.reduce(
+      (sum, routeIndex) => sum + (errorCountByRouteIndex.get(routeIndex) ?? 0),
+      0,
+    )
+    const rightRouteImpact = right.routeIndexes.reduce(
+      (sum, routeIndex) => sum + (errorCountByRouteIndex.get(routeIndex) ?? 0),
+      0,
+    )
+    return (
+      right.priority - left.priority ||
+      rightRouteImpact - leftRouteImpact ||
+      right.severity - left.severity ||
+      left.order - right.order
+    )
+  })
+
+  const selected: typeof candidates = []
+  const usedRouteIndexes = new Set<number>()
+  const maxErrors = getMaxRouteDisjointBatchErrorsForEffort(effort)
+
+  for (const candidate of candidates) {
+    if (
+      candidate.routeIndexes.some((routeIndex) =>
+        usedRouteIndexes.has(routeIndex),
+      )
+    ) {
+      continue
+    }
+    if (
+      selected.some(
+        (selectedCandidate) =>
+          Math.hypot(
+            selectedCandidate.center.x - candidate.center.x,
+            selectedCandidate.center.y - candidate.center.y,
+          ) < MIN_ROUTE_DISJOINT_BATCH_CENTER_DISTANCE,
+      )
+    ) {
+      continue
+    }
+
+    selected.push(candidate)
+    for (const routeIndex of candidate.routeIndexes) {
+      usedRouteIndexes.add(routeIndex)
+    }
+    if (selected.length >= maxErrors) break
+  }
+
+  return {
+    errors: selected.map((candidate) => candidate.error),
+    routeIndexes: [...usedRouteIndexes],
+  }
+}
+
 /** Moves only the conflicting segment of one exact trace pair to another layer. */
 export const applyTracePairLayerMoveForError = (
   srj: SimpleRouteJson,
@@ -3273,10 +3427,14 @@ export const applyDrcErrorForces = (
   scale: number,
   connMap?: ConnectivityMap,
   enableCanonicalPairRepairs = true,
+  selectedRouteIndexes?: readonly number[],
 ) => {
   let changed = false
-  const vias = collectViaNodes(routes)
-  const segments = collectSegments(routes)
+  const selectedRouteIndexSet = selectedRouteIndexes
+    ? new Set(selectedRouteIndexes)
+    : undefined
+  const vias = collectViaNodes(routes, 0.3, selectedRouteIndexSet)
+  const segments = collectSegments(routes, selectedRouteIndexSet)
 
   for (const error of errors) {
     const center = getErrorCenter(error)
@@ -3286,7 +3444,15 @@ export const applyDrcErrorForces = (
     const viaIds = error.pcb_via_ids
     if (Array.isArray(viaIds) && viaIds.length > 0) {
       repulsionPoint = getRepulsionPointForError(srj, error, center)
-      const nearestViaPair = getNearestViaPair(vias, center)
+      const ownedRouteIndexes = getDrcErrorRouteIndexes(
+        error,
+        traceRouteIndexById,
+      )
+      const ownedVias =
+        ownedRouteIndexes.length > 0
+          ? vias.filter((via) => ownedRouteIndexes.includes(via.routeIndex))
+          : vias
+      const nearestViaPair = getNearestViaPair(ownedVias, center)
       if (nearestViaPair) {
         const isCanonicalViaPairError =
           enableCanonicalPairRepairs &&
@@ -3358,17 +3524,27 @@ export const applyDrcErrorForces = (
       repulsionPoint = isObstacleError
         ? (nearestObstacle?.center ?? center)
         : getRepulsionPointForError(srj, error, center)
-      const nearestVia = getNearestVia(vias, center)
+      const explicitViaTraceId =
+        typeof error.pcb_via_trace_id === "string"
+          ? error.pcb_via_trace_id
+          : undefined
+      const explicitViaRouteIndex =
+        explicitViaTraceId === undefined
+          ? undefined
+          : traceRouteIndexById.get(explicitViaTraceId)
+      const nearestVia = getNearestVia(vias, center, explicitViaRouteIndex)
       const isExactViaTraceError =
         getDrcErrorType(error) === "pcb_via_trace_clearance_error"
       if (
         nearestVia &&
+        !isObstacleError &&
         !sharesNet(
           nearestVia.rootConnectionName,
           nearestSegment.rootConnectionName,
           connMap,
         ) &&
         (isExactViaTraceError ||
+          explicitViaRouteIndex !== undefined ||
           Math.hypot(nearestVia.x - center.x, nearestVia.y - center.y) < 0.45)
       ) {
         changed =
@@ -3411,9 +3587,19 @@ export const applyDrcErrorForces = (
       changed = movedSegment || changed
     }
 
-    const nearestVia = getNearestVia(vias, center)
+    const isObstacleError = isTraceObstacleDrcError(error)
+    const explicitViaTraceId =
+      typeof error.pcb_via_trace_id === "string"
+        ? error.pcb_via_trace_id
+        : undefined
+    const explicitViaRouteIndex =
+      explicitViaTraceId === undefined
+        ? undefined
+        : traceRouteIndexById.get(explicitViaTraceId)
+    const nearestVia = getNearestVia(vias, center, explicitViaRouteIndex)
     if (
       nearestVia &&
+      !isObstacleError &&
       Math.hypot(nearestVia.x - center.x, nearestVia.y - center.y) < 0.35
     ) {
       changed =
