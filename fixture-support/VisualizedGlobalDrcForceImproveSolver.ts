@@ -4,6 +4,8 @@ import {
   setGlobalDrcForceImproveSolverVisualizer,
 } from "../lib/solvers/GlobalDrcForceImproveSolver"
 import { getDrcSnapshot } from "../lib/solvers/GlobalDrcForceImproveSolver/drc-snapshot"
+import { BROAD_FALLBACK_SMALL_ROUTE_LIMIT } from "../lib/solvers/GlobalDrcForceImproveSolver/solverConfig"
+import { getRouteDisjointDrcErrorBatch } from "../lib/solvers/GlobalDrcForceImproveSolver/solverHelpers"
 import type {
   GlobalDrcForceImproveSolverParams,
   HighDensityRoute,
@@ -298,21 +300,60 @@ export const getDrcMarkersForSolver = (
   return [...initialMarkers, ...createdMarkers]
 }
 
+const getRouteDisjointBatchCenters = (solver: GlobalDrcForceImproveSolver) => {
+  if (solver.outputHdRoutes.length <= BROAD_FALLBACK_SMALL_ROUTE_LIMIT) {
+    return []
+  }
+
+  const snapshot = getDrcSnapshot(
+    solver.srj,
+    solver.outputHdRoutes,
+    solver.drcEvaluator,
+    solver.connMap,
+    solver.autoroutingDrcEngine,
+  )
+  return getRouteDisjointDrcErrorBatch(
+    snapshot.errors,
+    snapshot.traceRouteIndexById,
+    solver.effort,
+  )
+    .errors.map((error) => getDrcErrorCenter(error as DrcError))
+    .filter(isDrcCenter)
+}
+
 const getDrcMarkerCircles = (
   solver: GlobalDrcForceImproveSolver,
   selectedDrcMarkerId?: string,
-): Circle[] =>
-  getDrcMarkersForSolver(solver).map((marker) => {
+): Circle[] => {
+  const routeDisjointBatchCenters = getRouteDisjointBatchCenters(solver)
+
+  return getDrcMarkersForSolver(solver).map((marker) => {
     const isSelected = marker.id === selectedDrcMarkerId
     const isFixed = marker.status === "fixed"
+    const isRouteDisjointBatchSelection =
+      marker.status === "unfixed" &&
+      routeDisjointBatchCenters.some((center) =>
+        centersAreClose(marker.center, center),
+      )
     return {
       center: marker.center,
       radius: isSelected ? 0.32 : 0.22,
-      fill: isFixed ? "rgba(34, 197, 94, 0.42)" : "rgba(147, 51, 234, 0.38)",
-      stroke: isSelected ? "#111827" : isFixed ? "#16a34a" : "#7e22ce",
-      label: `${marker.status}: ${marker.message}`,
+      fill: isRouteDisjointBatchSelection
+        ? "rgba(14, 165, 233, 0.48)"
+        : isFixed
+          ? "rgba(34, 197, 94, 0.42)"
+          : "rgba(147, 51, 234, 0.38)",
+      stroke: isSelected
+        ? "#111827"
+        : isRouteDisjointBatchSelection
+          ? "#0369a1"
+          : isFixed
+            ? "#16a34a"
+            : "#7e22ce",
+      label: `${isRouteDisjointBatchSelection ? "batch-selected" : marker.status}: ${marker.message}`,
     }
   })
+}
 
 const getDrcMarkerById = (
   solver: GlobalDrcForceImproveSolver,
