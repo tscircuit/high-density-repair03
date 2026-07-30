@@ -235,11 +235,15 @@ export const getDrcMarkersForSolver = (
     solver.srj,
     solver.inputHdRoutes,
     solver.drcEvaluator,
+    solver.connMap,
+    solver.autoroutingDrcEngine,
   ).errors
   const currentErrors = getDrcSnapshot(
     solver.srj,
     solver.outputHdRoutes,
     solver.drcEvaluator,
+    solver.connMap,
+    solver.autoroutingDrcEngine,
   ).errors
   const currentCenters = currentErrors
     .map(getDrcErrorCenter)
