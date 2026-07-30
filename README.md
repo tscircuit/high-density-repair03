@@ -30,25 +30,31 @@ bun run typecheck
 
 ## Benchmark
 
-Run the DRC14 benchmark locally:
+Run either benchmark dataset locally:
 
 ```bash
+bun run benchmark
 bun run benchmark:drc14
+bun run benchmark:srj18
 ```
+
+`bun run benchmark` uses the stored SRJ18 repair inputs by default.
 
 You can also use the shell wrapper, which is the entrypoint used by CI:
 
 ```bash
 ./benchmark.sh
 ./benchmark.sh 10
+./benchmark.sh --dataset srj18 --limit 1
 ./benchmark.sh --limit all --concurrency 4
 ./benchmark.sh --scenario-limit 20 --effort 2 --max-iterations 100
 ```
 
-The benchmark runs the pinned `dataset-drc14` samples through `GlobalDrcForceImproveSolver`. It prints each sample's initial-to-final DRC count, then prints a summary table. By default it writes `benchmark-result.json`; this is generated output and is ignored by git.
+The benchmark runs either the pinned `dataset-drc14` repair samples or checked-in SRJ18 repair inputs through `GlobalDrcForceImproveSolver`. The SRJ18 fixtures were captured from the exact Pipeline7 boundary immediately before repair03 runs, so the benchmark does not run the full autorouter or depend on `dataset-srj18`. It prints each sample's initial-to-final DRC count, then prints a summary table. By default it writes `benchmark-result.json`; this is generated output and is ignored by git.
 
 Useful options:
 
+- `--dataset drc14|srj18`: choose the dataset (default: `srj18`)
 - `--limit` / `--scenario-limit`: run the first N samples, or `all`
 - `--concurrency N|auto`: number of Bun workers
 - `--effort`: solver effort value
@@ -71,14 +77,17 @@ Examples:
 ```txt
 /benchmark
 /benchmark 10
+/benchmark --dataset drc14
+/benchmark --dataset srj18
+/benchmark 1 --dataset srj18
 /benchmark all --concurrency 4
 /benchmark --scenario-limit all --effort 2
 /benchmark --scenario-limit 20 --max-iterations 100
 ```
 
-PRs with `[BENCHMARK TEST]` in the title run the benchmark workflow automatically on PR updates. The workflow can also be run manually with `workflow_dispatch`, including scenario limit, concurrency, effort, max iterations, and ref inputs.
+PRs with `[BENCHMARK TEST]` in the title run the default SRJ18 benchmark workflow automatically on PR updates. The workflow can also be run manually with `workflow_dispatch`, including dataset, scenario limit, concurrency, effort, max iterations, and ref inputs.
 
-For PR comment runs, CI posts Markdown tables for the PR benchmark and the latest successful `main` benchmark artifact when available. The PR table includes deltas versus `main` for DRC counts and timing metrics.
+For PR comment runs, CI posts Markdown tables for the PR benchmark and the latest successful matching `main` benchmark artifact when available. The PR table includes deltas versus `main` for DRC counts and timing metrics; it does not compare results from different datasets.
 
 ## Usage
 

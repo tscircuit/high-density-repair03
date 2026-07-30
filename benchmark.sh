@@ -2,6 +2,7 @@
 set -euo pipefail
 
 LIMIT=""
+DATASET="${BENCHMARK_DATASET:-srj18}"
 CONCURRENCY=""
 EFFORT=""
 MAX_ITERATIONS=""
@@ -19,11 +20,12 @@ CONCURRENCY="${BENCHMARK_CONCURRENCY:-$(default_concurrency)}"
 print_help() {
   cat <<'EOH'
 Usage:
-  ./benchmark.sh [limit|all] [--concurrency N] [--effort N] [--max-iterations N] [--out PATH] [--json] [--fail-on-drc]
-  ./benchmark.sh [--limit N|all] [--concurrency N] [--effort N] [--max-iterations N] [--out PATH] [--json] [--fail-on-drc]
+  ./benchmark.sh [limit|all] [--dataset drc14|srj18] [--concurrency N] [--effort N] [--max-iterations N] [--out PATH] [--json] [--fail-on-drc]
+  ./benchmark.sh [--dataset drc14|srj18] [--limit N|all] [--concurrency N] [--effort N] [--max-iterations N] [--out PATH] [--json] [--fail-on-drc]
 
 Options:
-  --limit N|all          Run first N dataset-drc14 samples, or all samples
+  --dataset NAME        Dataset to benchmark: drc14 or srj18 (default: srj18)
+  --limit N|all          Run first N samples, or all samples
   --concurrency N        Number of Bun workers, or "auto"
   --effort N             Solver effort value (default from TS script: 1)
   --max-iterations N     Override solver max iterations
@@ -34,11 +36,13 @@ Options:
   -h, --help             Show this help
 
 Defaults:
-  Running ./benchmark.sh with no parameters benchmarks all dataset-drc14 samples.
+  Running ./benchmark.sh with no parameters benchmarks all SRJ18 samples.
 
 Examples:
   ./benchmark.sh
   ./benchmark.sh 5
+  ./benchmark.sh --dataset drc14 --limit 5
+  ./benchmark.sh --dataset srj18 --limit 1
   ./benchmark.sh --limit all --concurrency auto
   ./benchmark.sh --limit all --effort 2
   ./benchmark.sh --limit 10 --max-iterations 100 --out tmp/drc14-result.json
@@ -58,6 +62,10 @@ while [ "$#" -gt 0 ]; do
       ;;
     --limit|--scenario-limit)
       LIMIT="${2:-}"
+      shift 2
+      ;;
+    --dataset)
+      DATASET="${2:-}"
       shift 2
       ;;
     --concurrency|--concurrent|--concurent|--CONCURENT)
@@ -99,7 +107,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-CMD=(bun "scripts/benchmark-drc14.ts" "--concurrency" "$CONCURRENCY")
+CMD=(bun "scripts/benchmark.ts" "--dataset" "$DATASET" "--concurrency" "$CONCURRENCY")
 
 if [ -n "${LIMIT}" ]; then
   CMD+=("--limit" "${LIMIT}")

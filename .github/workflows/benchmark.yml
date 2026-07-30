@@ -10,6 +10,14 @@ on:
       - main
   workflow_dispatch:
     inputs:
+      dataset:
+        description: Dataset to benchmark
+        required: false
+        default: srj18
+        type: choice
+        options:
+          - drc14
+          - srj18
       scenario_limit:
         description: 'Scenario limit (number or "all"). Default: all.'
         required: false
@@ -184,10 +192,12 @@ jobs:
               const inputs = context.payload.inputs || {}
 
               const scenarioLimit = (inputs.scenario_limit || '').trim()
+              const dataset = (inputs.dataset || 'srj18').trim()
               const concurrency = (inputs.concurrency || '').trim()
               const effort = (inputs.effort || '').trim()
               const maxIterations = (inputs.max_iterations || '').trim()
 
+              benchmarkArgs.push('--dataset', dataset)
               if (scenarioLimit) {
                 benchmarkArgs.push('--scenario-limit', scenarioLimit)
               }
@@ -346,6 +356,7 @@ jobs:
               if (!report?.metadata) return []
               const metadata = report.metadata
               return [
+                `Dataset: ${String(report.dataset ?? 'n/a').toUpperCase()}`,
                 `Concurrency: ${metadata.concurrency ?? 'n/a'}`,
                 `Effort: ${metadata.effort ?? 'n/a'}`,
                 ...(metadata.maxIterations !== undefined ? [`Max iterations: ${metadata.maxIterations}`] : []),
@@ -398,6 +409,17 @@ jobs:
             const mainText = readText('benchmark-result-main.txt') ?? '(main benchmark output unavailable)'
             const prReport = readJson('benchmark-result-pr.json') ?? readJson('benchmark-result.json')
             const mainReport = readJson('benchmark-result-main.json')
+            const reportsAreComparable =
+              Boolean(prReport && mainReport) &&
+              prReport.dataset === mainReport.dataset
+            const comparableMainReport = reportsAreComparable ? mainReport : null
+            const mainSummary = reportsAreComparable
+              ? renderSummaryTable(mainReport, { includeDelta: false })
+              : [
+                  prReport && mainReport
+                    ? `No matching main-branch baseline is available for ${String(prReport.dataset).toUpperCase()} (latest main artifact uses ${String(mainReport.dataset).toUpperCase()}).`
+                    : 'Summary table unavailable.',
+                ]
             const runUrl = `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`
             const jobStatus = '${{ job.status }}'
             const benchmarkFailed = jobStatus !== 'success'
@@ -414,7 +436,7 @@ jobs:
               '<details>',
               '<summary>Main Branch Results</summary>',
               '',
-              ...renderSummaryTable(mainReport, { includeDelta: false }),
+              ...mainSummary,
               '',
               '<details>',
               '<summary>Raw output</summary>',
@@ -428,7 +450,7 @@ jobs:
               '<details open>',
               '<summary>PR Results</summary>',
               '',
-              ...renderSummaryTable(prReport, { includeDelta: true, baseline: mainReport }),
+              ...renderSummaryTable(prReport, { includeDelta: true, baseline: comparableMainReport }),
               '',
               '<details>',
               '<summary>Raw output</summary>',

@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs"
+import { readFileSync, writeFileSync } from "node:fs"
 import { cpus } from "node:os"
 import {
   isMainThread,
@@ -6,7 +6,9 @@ import {
   Worker,
   workerData,
 } from "node:worker_threads"
-import samples from "dataset-drc14"
+import { gunzipSync } from "node:zlib"
+import { ConnectivityMap } from "circuit-json-to-connectivity-map"
+import drc14Samples from "dataset-drc14"
 import type {
   HighDensityRoute,
   SimpleRouteJson,
@@ -16,7 +18,9 @@ import { GlobalDrcForceImproveSolver } from "../lib"
 import { getDrcSnapshot } from "../lib/solvers/GlobalDrcForceImproveSolver/drc-snapshot"
 import type { SimpleRouteConnection } from "../types/srj-types"
 
-type DatasetSample = {
+type DatasetName = "drc14" | "srj18"
+
+type Drc14DatasetSample = {
   id?: string
   simpleRouteJson?: SimpleRouteJson & { traces?: SimplifiedPcbTrace[] }
   metadata?: {
@@ -26,6 +30,34 @@ type DatasetSample = {
     routingPipeline?: string
   }
 }
+
+type CapturedSolverOptions = {
+  effort?: number
+  maxIterations?: number
+  enableLargeBoardBroadFallback?: boolean
+  enableTargetedErrorSweep?: boolean
+  enablePostSolveClearanceRelaxation?: boolean
+  enableViaInPadLayerMoves?: boolean
+}
+
+type StoredRepairFixture = {
+  version: 1
+  dataset: "srj18"
+  sampleId: string
+  scenarioName: string
+  provenance: {
+    repository: "tscircuit/tscircuit-autorouter"
+    commit: string
+    pipeline: string
+    repairStage: string
+  }
+  params: CapturedSolverOptions & {
+    srj: SimpleRouteJson
+    hdRoutes: HighDensityRoute[]
+  }
+}
+
+type DatasetSample = Drc14DatasetSample | StoredRepairFixture
 
 type SampleResult = {
   sampleId: string
@@ -42,6 +74,7 @@ type SampleResult = {
 type IndexedSampleResult = SampleResult & { sampleIndex: number }
 
 type WorkerInput = {
+  dataset: DatasetName
   sampleIndex: number
   effort: number
   maxIterations?: number
@@ -54,7 +87,7 @@ type WorkerDoneMessage = {
 }
 
 type BenchmarkReport = {
-  dataset: "drc14"
+  dataset: DatasetName
   sampleCount: number
   succeeded: number
   failed: number
@@ -74,13 +107,20 @@ type BenchmarkReport = {
   sampleResults: SampleResult[]
 }
 
+const DATASET_NAMES = ["drc14", "srj18"] as const
+const SRJ18_SAMPLE_IDS = Array.from(
+  { length: 16 },
+  (_, index) => `sample${String(index + 1).padStart(3, "0")}`,
+)
+
 const formatMs = (ms: number) => `${ms.toFixed(2)}ms`
 
 const printHelp = () => {
   console.log(`Usage:
-  bun scripts/benchmark-drc14.ts [--limit N|all] [--concurrency N] [--effort N] [--max-iterations N] [--out PATH] [--json] [--fail-on-drc]
+  bun scripts/benchmark.ts [--dataset drc14|srj18] [--limit N|all] [--concurrency N] [--effort N] [--max-iterations N] [--out PATH] [--json] [--fail-on-drc]
 
 Options:
+  --dataset NAME        Dataset to benchmark: drc14 or srj18 (default: srj18)
   --limit N|all          Run first N samples, or all samples (default: all)
   --concurrency N        Number of Bun workers, or "auto"
   --effort N             Solver effort value (default: 1)
@@ -107,6 +147,20 @@ const parseFirstValueArg = (args: string[], flags: string[]) => {
   }
 
   return undefined
+}
+
+const parseDatasetArg = (args: string[]): DatasetName => {
+  const rawValue =
+    parseValueArg(args, "--dataset") ?? Bun.env.BENCHMARK_DATASET ?? "srj18"
+  const normalizedValue = rawValue.trim().toLowerCase()
+
+  if (DATASET_NAMES.includes(normalizedValue as DatasetName)) {
+    return normalizedValue as DatasetName
+  }
+
+  throw new Error(
+    `Invalid value for --dataset: ${rawValue}. Expected drc14 or srj18.`,
+  )
 }
 
 const parsePositiveNumberArg = (
@@ -193,6 +247,111 @@ const getLayerZ = (layer: string, layerCount: number) => {
   }
 
   throw new Error(`Unsupported route layer: ${layer}`)
+}
+
+type CapturedConnection = SimpleRouteConnection & {
+  __rootConnectionNames?: string[]
+  __netConnectionName?: string
+}
+
+type CapturedTrace = SimplifiedPcbTrace & {
+  connectsTo?: string[]
+}
+
+const pointHash = (point: { x: number; y: number }) =>
+  `${Math.round(point.x * 100)},${Math.round(point.y * 100)}`
+
+const getConnectivityMapFromSimpleRouteJson = (srj: SimpleRouteJson) => {
+  const connMap = new ConnectivityMap({})
+
+  for (const connection of srj.connections as CapturedConnection[]) {
+    const connectionAliases = [
+      connection.name,
+      connection.rootConnectionName,
+      connection.netConnectionName,
+      connection.__netConnectionName,
+      ...(connection.mergedConnectionNames ?? []),
+      ...(connection.__rootConnectionNames ?? []),
+    ].filter((value): value is string => Boolean(value))
+    connMap.addConnections([connectionAliases])
+
+    for (const point of connection.pointsToConnect) {
+      const pointLayers =
+        "layers" in point
+          ? point.layers
+              .map((layer) => getLayerZ(layer, srj.layerCount))
+              .sort()
+              .join("-")
+          : getLayerZ(point.layer, srj.layerCount)
+      const pointAliases = [
+        connection.name,
+        `${pointHash(point)}:${pointLayers}`,
+        point.pcb_port_id,
+        point.pointId,
+      ].filter((value): value is string => Boolean(value))
+      connMap.addConnections([pointAliases])
+    }
+  }
+
+  for (const obstacle of srj.obstacles) {
+    const obstacleAliases = [
+      obstacle.obstacleId,
+      ...obstacle.connectedTo,
+      ...(obstacle.offBoardConnectsTo ?? []),
+      `${pointHash(obstacle.center)}:${obstacle.layers
+        .map((layer) => getLayerZ(layer, srj.layerCount))
+        .sort()
+        .join("-")}`,
+    ].filter((value): value is string => Boolean(value))
+    connMap.addConnections([Array.from(new Set(obstacleAliases))])
+  }
+
+  for (const trace of (srj.traces ?? []) as CapturedTrace[]) {
+    const traceAliases = [
+      trace.pcb_trace_id,
+      trace.connection_name,
+      ...(trace.connectsTo ?? []),
+    ].filter((value): value is string => Boolean(value))
+    connMap.addConnections([Array.from(new Set(traceAliases))])
+  }
+
+  return connMap
+}
+
+const loadSrj18Sample = (sampleIndex: number): StoredRepairFixture => {
+  const sampleId = SRJ18_SAMPLE_IDS[sampleIndex]
+  if (!sampleId) {
+    throw new Error(`Missing SRJ18 fixture at index ${sampleIndex}`)
+  }
+
+  const fixtureUrl = new URL(
+    `../benchmarks/srj18/${sampleId}.json.gz`,
+    import.meta.url,
+  )
+  return JSON.parse(
+    gunzipSync(readFileSync(fixtureUrl)).toString("utf8"),
+  ) as StoredRepairFixture
+}
+
+const loadDatasetSamples = (dataset: DatasetName): DatasetSample[] => {
+  if (dataset === "drc14") {
+    return drc14Samples as Drc14DatasetSample[]
+  }
+
+  return SRJ18_SAMPLE_IDS.map((_, sampleIndex) => loadSrj18Sample(sampleIndex))
+}
+
+const loadDatasetSample = (
+  dataset: DatasetName,
+  sampleIndex: number,
+): DatasetSample | undefined => {
+  if (dataset === "drc14") {
+    return (drc14Samples as Drc14DatasetSample[])[sampleIndex]
+  }
+
+  return sampleIndex < SRJ18_SAMPLE_IDS.length
+    ? loadSrj18Sample(sampleIndex)
+    : undefined
 }
 
 const pushRoutePoint = (
@@ -288,7 +447,14 @@ const traceToHdRoute = (
   }
 }
 
-const sampleToHdRoutes = (sample: DatasetSample) => {
+const isStoredRepairFixture = (
+  sample: DatasetSample,
+): sample is StoredRepairFixture => "params" in sample
+
+const getSampleId = (sample: DatasetSample) =>
+  isStoredRepairFixture(sample) ? sample.sampleId : (sample.id ?? "unknown")
+
+const sampleToHdRoutes = (sample: Drc14DatasetSample) => {
   const srj = sample.simpleRouteJson
   if (!srj) {
     throw new Error("Sample is missing simpleRouteJson")
@@ -303,6 +469,18 @@ const sampleToHdRoutes = (sample: DatasetSample) => {
   }
 }
 
+const sampleToRepairInput = (sample: DatasetSample) => {
+  if (isStoredRepairFixture(sample)) {
+    const { srj, hdRoutes, ...capturedOptions } = sample.params
+    return { srj, hdRoutes, capturedOptions }
+  }
+
+  return {
+    ...sampleToHdRoutes(sample),
+    capturedOptions: {} satisfies CapturedSolverOptions,
+  }
+}
+
 const runSample = ({
   sample,
   effort,
@@ -312,17 +490,31 @@ const runSample = ({
   effort: number
   maxIterations?: number
 }): SampleResult => {
-  const sampleId = sample.id ?? "unknown"
+  const sampleId = getSampleId(sample)
   const startedAt = performance.now()
 
   try {
-    const { srj, hdRoutes } = sampleToHdRoutes(sample)
+    const { srj, hdRoutes, capturedOptions } = sampleToRepairInput(sample)
+    const {
+      effort: _capturedEffort,
+      maxIterations: capturedMaxIterations,
+      ...capturedBooleanOptions
+    } = capturedOptions
+    const effectiveMaxIterations = maxIterations ?? capturedMaxIterations
     const initialDrc = getDrcSnapshot(srj, hdRoutes)
     const solver = new GlobalDrcForceImproveSolver({
       srj,
       hdRoutes,
+      ...(isStoredRepairFixture(sample)
+        ? {
+            connMap: getConnectivityMapFromSimpleRouteJson(srj),
+            ...capturedBooleanOptions,
+          }
+        : {}),
       effort,
-      ...(maxIterations !== undefined ? { maxIterations } : {}),
+      ...(effectiveMaxIterations !== undefined
+        ? { maxIterations: effectiveMaxIterations }
+        : {}),
     })
 
     solver.solve()
@@ -339,7 +531,9 @@ const runSample = ({
       improvement: initialDrc.count - finalDrc.count,
       iterations: solver.iterations,
       elapsedMs,
-      metadataRelaxedDrcErrorCount: sample.metadata?.relaxedDrcErrorCount,
+      metadataRelaxedDrcErrorCount: isStoredRepairFixture(sample)
+        ? undefined
+        : sample.metadata?.relaxedDrcErrorCount,
     }
   } catch (error) {
     return {
@@ -356,12 +550,14 @@ const runSample = ({
 }
 
 const buildReport = ({
+  dataset,
   results,
   effort,
   maxIterations,
   concurrency,
   scenarioLimitUsed,
 }: {
+  dataset: DatasetName
   results: SampleResult[]
   effort: number
   maxIterations?: number
@@ -383,7 +579,7 @@ const buildReport = ({
   )
 
   return {
-    dataset: "drc14",
+    dataset,
     sampleCount: results.length,
     succeeded: succeeded.length,
     failed: results.length - succeeded.length,
@@ -433,7 +629,7 @@ const logSummary = (report: BenchmarkReport) => {
     `| ${metric.padEnd(metricWidth)} | ${value.padStart(valueWidth)} |`
 
   console.log("")
-  console.log("Dataset DRC14 benchmark summary")
+  console.log(`Dataset ${report.dataset.toUpperCase()} benchmark summary`)
   console.log(horizontal)
   console.log(renderRow(metricHeader, valueHeader))
   console.log(horizontal)
@@ -501,11 +697,13 @@ const logSampleResult = (
 }
 
 const runSamples = async ({
+  dataset,
   selectedSamples,
   effort,
   maxIterations,
   concurrency,
 }: {
+  dataset: DatasetName
   selectedSamples: DatasetSample[]
   effort: number
   maxIterations?: number
@@ -542,6 +740,7 @@ const runSamples = async ({
 
         const worker = new Worker(new URL(import.meta.url), {
           workerData: {
+            dataset,
             sampleIndex,
             effort,
             ...(maxIterations !== undefined ? { maxIterations } : {}),
@@ -564,7 +763,7 @@ const runSamples = async ({
           hasResult = true
           const sample = selectedSamples[sampleIndex]
           const result: SampleResult = {
-            sampleId: sample?.id ?? `sample${sampleIndex + 1}`,
+            sampleId: sample ? getSampleId(sample) : `sample${sampleIndex + 1}`,
             traceCount: 0,
             initialDrcCount: 0,
             finalDrcCount: 0,
@@ -581,7 +780,9 @@ const runSamples = async ({
           if (!hasResult) {
             const sample = selectedSamples[sampleIndex]
             const result: SampleResult = {
-              sampleId: sample?.id ?? `sample${sampleIndex + 1}`,
+              sampleId: sample
+                ? getSampleId(sample)
+                : `sample${sampleIndex + 1}`,
               traceCount: 0,
               initialDrcCount: 0,
               finalDrcCount: 0,
@@ -607,9 +808,9 @@ const runSamples = async ({
 }
 
 const runWorker = () => {
-  const { sampleIndex, effort, maxIterations } = workerData as WorkerInput
-  const datasetSamples = samples as DatasetSample[]
-  const sample = datasetSamples[sampleIndex]
+  const { dataset, sampleIndex, effort, maxIterations } =
+    workerData as WorkerInput
+  const sample = loadDatasetSample(dataset, sampleIndex)
 
   const result = sample
     ? runSample({ sample, effort, maxIterations })
@@ -637,11 +838,12 @@ export const runBenchmark = async (args: string[] = Bun.argv.slice(2)) => {
     return
   }
 
-  const datasetSamples = samples as DatasetSample[]
+  const dataset = parseDatasetArg(args)
+  const datasetSamples = loadDatasetSamples(dataset)
   const limit = parseLimitArg(args, datasetSamples.length)
   const effort = parsePositiveNumberArg(args, "--effort", 1)
   const concurrency = parseConcurrencyArg(args)
-  const maxIterations = parseOptionalPositiveIntegerArg(
+  const maxIterationsOverride = parseOptionalPositiveIntegerArg(
     args,
     "--max-iterations",
   )
@@ -651,16 +853,23 @@ export const runBenchmark = async (args: string[] = Bun.argv.slice(2)) => {
   const shouldFailOnDrc = args.includes("--fail-on-drc")
 
   const selectedSamples = datasetSamples.slice(0, limit)
+  const firstSample = selectedSamples[0]
+  const capturedMaxIterations =
+    firstSample && isStoredRepairFixture(firstSample)
+      ? firstSample.params.maxIterations
+      : undefined
+  const maxIterations = maxIterationsOverride ?? capturedMaxIterations
   const effectiveConcurrency = Math.min(
     concurrency,
     Math.max(1, selectedSamples.length),
   )
   console.log(
-    `Starting DRC14 benchmark: samples=${selectedSamples.length} workers=${effectiveConcurrency} effort=${effort}` +
+    `Starting ${dataset.toUpperCase()} benchmark: samples=${selectedSamples.length} workers=${effectiveConcurrency} effort=${effort}` +
       (maxIterations !== undefined ? ` maxIterations=${maxIterations}` : ""),
   )
 
   const results = await runSamples({
+    dataset,
     selectedSamples,
     effort,
     maxIterations,
@@ -668,6 +877,7 @@ export const runBenchmark = async (args: string[] = Bun.argv.slice(2)) => {
   })
 
   const report = buildReport({
+    dataset,
     results,
     effort,
     maxIterations,
