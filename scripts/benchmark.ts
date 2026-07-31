@@ -108,10 +108,7 @@ type BenchmarkReport = {
 }
 
 const DATASET_NAMES = ["drc14", "srj18"] as const
-const SRJ18_SAMPLE_IDS = Array.from(
-  { length: 16 },
-  (_, index) => `sample${String(index + 1).padStart(3, "0")}`,
-)
+const SRJ18_SAMPLE_IDS = ["sample010"]
 
 const formatMs = (ms: number) => `${ms.toFixed(2)}ms`
 
@@ -521,6 +518,14 @@ const runSample = ({
 
     const outputRoutes = solver.getOutput()
     const finalDrc = getDrcSnapshot(srj, outputRoutes)
+    console.log(
+      "[diagnostic]",
+      JSON.stringify({
+        initialErrors: initialDrc.errors,
+        finalErrors: finalDrc.errors,
+        stats: solver.stats,
+      }),
+    )
     const elapsedMs = performance.now() - startedAt
 
     return {
