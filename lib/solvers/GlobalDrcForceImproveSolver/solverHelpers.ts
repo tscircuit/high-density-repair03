@@ -2316,6 +2316,7 @@ const pushViaSegmentPair = (
   connMap?: ConnectivityMap,
   maxMove = BROAD_MAX_MOVE,
   moveDivisor = 2,
+  moveViaNode = true,
 ) => {
   if (sharesNet(via.rootConnectionName, segment.rootConnectionName, connMap))
     return false
@@ -2349,13 +2350,9 @@ const pushViaSegmentPair = (
         ? (segmentX / segmentLength) * fallbackSign
         : 0
   const move = Math.min(maxMove, penetration / moveDivisor)
-  const movedVia = moveVia(
-    routes,
-    via,
-    directionX * move,
-    directionY * move,
-    srj,
-  )
+  const movedVia =
+    moveViaNode &&
+    moveVia(routes, via, directionX * move, directionY * move, srj)
   const movedSegment = moveSegmentByDistribution(
     routes,
     segment,
@@ -3380,6 +3377,7 @@ export const applyDrcErrorForces = (
             connMap,
             TRACE_PAD_REPAIR_MAX_MOVE * Math.abs(scale),
             1,
+            false,
           ) || changed
       }
 
@@ -3413,6 +3411,7 @@ export const applyDrcErrorForces = (
 
     const nearestVia = getNearestVia(vias, center)
     if (
+      getDrcErrorType(error) !== "pcb_via_trace_clearance_error" &&
       nearestVia &&
       Math.hypot(nearestVia.x - center.x, nearestVia.y - center.y) < 0.35
     ) {

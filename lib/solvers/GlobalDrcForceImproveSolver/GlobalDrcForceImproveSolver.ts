@@ -323,8 +323,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     const targetedSweepErrors = this.enableTargetedErrorSweep
       ? getTargetedClearanceSweepErrors(centeredErrors, this.effort)
       : []
-    const shouldTryTracePairTopology =
-      (this.initialDrcIssueCount ?? bestIssueCount) <= 3
+    const shouldTryTracePairTopology = bestIssueCount <= 3
     const padTraceErrors = centeredErrors.filter(
       (error) =>
         error.type === "pcb_pad_trace_clearance_error" ||
@@ -336,9 +335,12 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           (this.padTopologyErrorCursor + offset) % padTraceErrors.length
         ]!,
     )
-    for (const error of this.enableViaInPadLayerMoves
+    const topologyErrors = this.enableViaInPadLayerMoves
       ? orderedPadTopologyErrors
-      : []) {
+      : orderedPadTopologyErrors.filter(
+          (error) => error.type === "pcb_trace_error",
+        )
+    for (const error of topologyErrors) {
       if (
         acceptedCandidate ||
         candidateAttemptsThisStep >= maxCandidateAttemptsThisStep
@@ -441,7 +443,10 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         }
         this.tracePairDetourCursorByErrorId.set(traceErrorKey, detourCursor)
       }
-      for (const endpointSide of ["start", "end"] as const) {
+      const terminalViaSides = this.enableViaInPadLayerMoves
+        ? (["start", "end"] as const)
+        : []
+      for (const endpointSide of terminalViaSides) {
         if (candidateAttemptsThisStep >= maxCandidateAttemptsThisStep) break
         if (traceRouteIndex === undefined) break
         const candidateRoutes = cloneRoutesForIndexes(bestRoutes, [
@@ -496,7 +501,10 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           }
         }
       }
-      for (let targetZ = 0; targetZ < this.srj.layerCount; targetZ += 1) {
+      const viaInPadLayerCount = this.enableViaInPadLayerMoves
+        ? this.srj.layerCount
+        : 0
+      for (let targetZ = 0; targetZ < viaInPadLayerCount; targetZ += 1) {
         if (candidateAttemptsThisStep >= maxCandidateAttemptsThisStep) break
         if (traceRouteIndex === undefined) break
         const candidateRoutes = cloneRoutesForIndexes(bestRoutes, [
@@ -599,6 +607,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
               bestViaInPadCandidate?.viaIssueCount ?? bestViaIssueCount
 
             if (
+              candidateViaIssueCount <= bestViaIssueCount &&
               isBetterDrcSnapshot(
                 candidateSnapshot,
                 candidateViaIssueCount,
