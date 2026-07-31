@@ -323,8 +323,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     const targetedSweepErrors = this.enableTargetedErrorSweep
       ? getTargetedClearanceSweepErrors(centeredErrors, this.effort)
       : []
-    const shouldTryTracePairTopology =
-      (this.initialDrcIssueCount ?? bestIssueCount) <= 3
+    const shouldTryTracePairTopology = bestIssueCount <= 3
     const padTraceErrors = centeredErrors.filter(
       (error) =>
         error.type === "pcb_pad_trace_clearance_error" ||

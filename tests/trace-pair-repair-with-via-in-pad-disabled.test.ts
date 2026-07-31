@@ -60,6 +60,13 @@ const tracePairError = {
   center: { x: 0, y: 0 },
 }
 
+const initialTraceErrors = [
+  { x: -0.3, y: 0 },
+  { x: 0, y: 0.3 },
+  { x: 0.3, y: 0 },
+  { x: 0, y: -0.3 },
+].map((center) => ({ ...tracePairError, center }))
+
 const getStepGraphics = (
   graphics: GraphicsObject,
   step: number,
@@ -81,13 +88,23 @@ test("repairs a trace pair without enabling via-in-pad moves", () => {
     const movedToAnotherLayer = routes?.some((route) =>
       route.route.some((point) => point.z !== 1),
     )
-    return movedToAnotherLayer ? [] : [tracePairError]
+    if (movedToAnotherLayer) return []
+
+    const movedInXy = routes?.some((route, routeIndex) =>
+      route.route.some((point, pointIndex) => {
+        const inputPoint = hdRoutes[routeIndex]?.route[pointIndex]
+        return (
+          !inputPoint || point.x !== inputPoint.x || point.y !== inputPoint.y
+        )
+      }),
+    )
+    return movedInXy ? [tracePairError] : initialTraceErrors
   }
   const solver = new GlobalDrcForceImproveSolver({
     srj,
     hdRoutes,
     drcEvaluator,
-    maxIterations: 2,
+    maxIterations: 3,
     enableLargeBoardBroadFallback: false,
     enablePostSolveClearanceRelaxation: false,
     enableViaInPadLayerMoves: false,
@@ -98,6 +115,7 @@ test("repairs a trace pair without enabling via-in-pad moves", () => {
   const outputHdRoutes = solver.getOutput()
   expect(solver.solved).toBe(true)
   expect(solver.failed).toBe(false)
+  expect(solver.stats.initialDrcIssueCount).toBe(4)
   expect(solver.stats.finalDrcIssueCount).toBe(0)
   expect(outputHdRoutes.flatMap((route) => route.vias)).toHaveLength(2)
   expect(
@@ -114,7 +132,7 @@ test("repairs a trace pair without enabling via-in-pad moves", () => {
       ],
       {
         titles: [
-          "Before: colliding traces",
+          "Before: four DRC errors",
           "Trace-pair layer move",
           "After: zero DRC errors",
         ],
