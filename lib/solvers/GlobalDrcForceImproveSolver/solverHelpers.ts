@@ -3411,6 +3411,7 @@ export const applyDrcErrorForces = (
 
     const nearestVia = getNearestVia(vias, center)
     if (
+      getDrcErrorType(error) !== "pcb_via_trace_clearance_error" &&
       nearestVia &&
       Math.hypot(nearestVia.x - center.x, nearestVia.y - center.y) < 0.35
     ) {
