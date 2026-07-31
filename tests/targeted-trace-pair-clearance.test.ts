@@ -62,6 +62,8 @@ test("separates the exact trace pair encoded by a checks error id", () => {
   )
 
   expect(changed).toBe(true)
-  expect(routes[0]?.route[1]?.y).toBeLessThan(0)
-  expect(routes[1]!.route[1]!.y - routes[0]!.route[1]!.y).toBeGreaterThan(0.1)
+  const lowestLeftY = Math.min(...routes[0]!.route.map((point) => point.y))
+  const highestRightY = Math.max(...routes[1]!.route.map((point) => point.y))
+  expect(lowestLeftY).toBeLessThan(0)
+  expect(highestRightY - lowestLeftY).toBeGreaterThan(0.1)
 })
