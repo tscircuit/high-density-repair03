@@ -607,6 +607,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
               bestViaInPadCandidate?.viaIssueCount ?? bestViaIssueCount
 
             if (
+              candidateViaIssueCount <= bestViaIssueCount &&
               isBetterDrcSnapshot(
                 candidateSnapshot,
                 candidateViaIssueCount,
