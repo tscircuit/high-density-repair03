@@ -323,12 +323,10 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     const targetedSweepErrors = this.enableTargetedErrorSweep
       ? getTargetedClearanceSweepErrors(centeredErrors, this.effort)
       : []
-    const shouldTryTracePairTopology =
-      (this.initialDrcIssueCount ?? bestIssueCount) <= 3
     const padTraceErrors = centeredErrors.filter(
       (error) =>
         error.type === "pcb_pad_trace_clearance_error" ||
-        (shouldTryTracePairTopology && error.type === "pcb_trace_error"),
+        error.type === "pcb_trace_error",
     )
     const orderedPadTopologyErrors = padTraceErrors.map(
       (_, offset) =>
@@ -338,7 +336,9 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     )
     for (const error of this.enableViaInPadLayerMoves
       ? orderedPadTopologyErrors
-      : []) {
+      : orderedPadTopologyErrors.filter(
+          (error) => error.type === "pcb_trace_error",
+        )) {
       if (
         acceptedCandidate ||
         candidateAttemptsThisStep >= maxCandidateAttemptsThisStep
@@ -370,17 +370,11 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         error,
         bestSnapshot.traceRouteIndexById,
       )
-      if (
-        shouldTryTracePairTopology &&
-        this.iterations % 2 === 0 &&
-        bestIssueCount <= 1 &&
-        traceErrorKey &&
-        traceRoutePair
-      ) {
-        const detourVariants = ([0, 1] as const).flatMap((routeSide) =>
-          [0.2, 0.4, 0.8, 1.2].flatMap((halfSpan) =>
-            [0.2, 0.3, 0.45, 0.6].flatMap((offset) =>
-              ([-1, 1] as const).map((directionSign) => ({
+      if (this.iterations % 2 === 0 && traceErrorKey && traceRoutePair) {
+        const detourVariants = [1.2, 0.8, 0.4, 0.2].flatMap((halfSpan) =>
+          [1.2, 0.9, 0.6, 0.45, 0.3, 0.2].flatMap((offset) =>
+            ([-1, 1] as const).flatMap((directionSign) =>
+              ([0, 1] as const).map((routeSide) => ({
                 routeSide,
                 halfSpan,
                 offset,
@@ -441,7 +435,9 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         }
         this.tracePairDetourCursorByErrorId.set(traceErrorKey, detourCursor)
       }
-      for (const endpointSide of ["start", "end"] as const) {
+      for (const endpointSide of this.enableViaInPadLayerMoves
+        ? (["start", "end"] as const)
+        : []) {
         if (candidateAttemptsThisStep >= maxCandidateAttemptsThisStep) break
         if (traceRouteIndex === undefined) break
         const candidateRoutes = cloneRoutesForIndexes(bestRoutes, [
@@ -496,7 +492,10 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           }
         }
       }
-      for (let targetZ = 0; targetZ < this.srj.layerCount; targetZ += 1) {
+      const viaInPadLayerCount = this.enableViaInPadLayerMoves
+        ? this.srj.layerCount
+        : 0
+      for (let targetZ = 0; targetZ < viaInPadLayerCount; targetZ += 1) {
         if (candidateAttemptsThisStep >= maxCandidateAttemptsThisStep) break
         if (traceRouteIndex === undefined) break
         const candidateRoutes = cloneRoutesForIndexes(bestRoutes, [
@@ -551,7 +550,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           }
         }
       }
-      if (shouldTryTracePairTopology && traceRoutePair) {
+      if (traceRoutePair) {
         const routeSides =
           this.iterations % 2 === 0 ? ([0, 1] as const) : ([1, 0] as const)
         const spanExpansion = this.iterations % 3
@@ -572,6 +571,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
               spanExpansion,
               this.connMap,
               this.viaHoleDiameter,
+              this.enableViaInPadLayerMoves,
             )
             if (!changed) continue
 

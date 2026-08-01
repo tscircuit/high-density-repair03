@@ -1758,6 +1758,7 @@ const insertDetourPointAwayFromPoint = (
     ...route.route[segment.startIndex]!,
     x: projection.x + detourTranslation.x,
     y: projection.y + detourTranslation.y,
+    pcb_port_id: undefined,
   }
   clampToBounds(detourPoint, srj.bounds)
   if (
@@ -1971,6 +1972,7 @@ const moveSegmentAwayFromObstacle = (
             y:
               obstacle.center.y +
               repulsion.direction.y * (halfHeight + requiredDistance),
+            pcb_port_id: undefined,
           },
           {
             ...route.route[segment.startIndex]!,
@@ -1978,6 +1980,7 @@ const moveSegmentAwayFromObstacle = (
             y:
               obstacle.center.y +
               repulsion.direction.y * (halfHeight + requiredDistance),
+            pcb_port_id: undefined,
           },
         ]
       : [
@@ -1987,6 +1990,7 @@ const moveSegmentAwayFromObstacle = (
               obstacle.center.x +
               repulsion.direction.x * (halfWidth + requiredDistance),
             y: obstacle.center.y - halfHeight - requiredDistance,
+            pcb_port_id: undefined,
           },
           {
             ...route.route[segment.startIndex]!,
@@ -1994,6 +1998,7 @@ const moveSegmentAwayFromObstacle = (
               obstacle.center.x +
               repulsion.direction.x * (halfWidth + requiredDistance),
             y: obstacle.center.y + halfHeight + requiredDistance,
+            pcb_port_id: undefined,
           },
         ]
 
@@ -2151,6 +2156,36 @@ const getNearestViaPair = (vias: ViaNode[], point: Point) => {
     .map(({ via }) => via)
 
   return nearest.length === 2 ? (nearest as [ViaNode, ViaNode]) : undefined
+}
+
+const mergeOverlappingSameNetViaPair = (
+  routes: MutableRoute[],
+  left: ViaNode,
+  right: ViaNode,
+  srj: SimpleRouteJson,
+  scale: number,
+) => {
+  const distance = Math.hypot(left.x - right.x, left.y - right.y)
+  if (distance > left.radius + right.radius + COORDINATE_EPSILON) return false
+
+  const leftLayers = [...left.zLayers].sort((a, b) => a - b)
+  const rightLayers = [...right.zLayers].sort((a, b) => a - b)
+  if (
+    leftLayers.length !== rightLayers.length ||
+    leftLayers.some((layer, index) => layer !== rightLayers[index])
+  ) {
+    return false
+  }
+
+  const viaToMove = scale < 0 ? left : right
+  const retainedVia = scale < 0 ? right : left
+  return moveVia(
+    routes,
+    viaToMove,
+    retainedVia.x - viaToMove.x,
+    retainedVia.y - viaToMove.y,
+    srj,
+  )
 }
 
 const moveViaAwayFromPoint = (
@@ -3124,6 +3159,7 @@ export const applyTracePairLayerMoveForError = (
   spanExpansion = 0,
   connMap?: ConnectivityMap,
   viaHoleDiameter?: number,
+  allowTerminalViaInPad = false,
 ) => {
   if (getDrcErrorType(error) !== "pcb_trace_error") return false
   if (targetZ < 0 || targetZ >= srj.layerCount) return false
@@ -3149,6 +3185,8 @@ export const applyTracePairLayerMoveForError = (
     if (followingPoint?.z === segment.z) spanEndIndex += 1
   }
   if (
+    (!allowTerminalViaInPad &&
+      (spanStartIndex === 0 || spanEndIndex === route.route.length - 1)) ||
     (spanStartIndex === 0 &&
       route.route[0]?.pcb_port_id &&
       !isRouteEndpointEligibleForViaInPad(
@@ -3174,6 +3212,14 @@ export const applyTracePairLayerMoveForError = (
   const start = route.route[spanStartIndex]
   const end = route.route[spanEndIndex]
   if (!start || !end || start.z !== end.z) return false
+  if (
+    !allowTerminalViaInPad &&
+    route.route
+      .slice(spanStartIndex, spanEndIndex + 1)
+      .some((point) => point.pcb_port_id)
+  ) {
+    return false
+  }
   const movedSpan = route.route
     .slice(spanStartIndex, spanEndIndex + 1)
     .map((point) => ({ ...point, z: targetZ, pcb_port_id: undefined }))
@@ -3294,7 +3340,23 @@ export const applyDrcErrorForces = (
             (typeof error.pcb_error_id === "string" &&
               (error.pcb_error_id.startsWith("same_net_vias_close_") ||
                 error.pcb_error_id.startsWith("different_net_vias_close_"))))
+        const isSameNetPair = sharesNet(
+          nearestViaPair[0].rootConnectionName,
+          nearestViaPair[1].rootConnectionName,
+          connMap,
+        )
+        const mergedSameNetPair =
+          isCanonicalViaPairError &&
+          isSameNetPair &&
+          mergeOverlappingSameNetViaPair(
+            routes,
+            nearestViaPair[0],
+            nearestViaPair[1],
+            srj,
+            scale,
+          )
         changed =
+          mergedSameNetPair ||
           pushViaViaPair(
             routes,
             nearestViaPair[0],
@@ -3303,7 +3365,8 @@ export const applyDrcErrorForces = (
             connMap,
             VIA_PAIR_REPAIR_MAX_MOVE * Math.abs(scale),
             isCanonicalViaPairError,
-          ) || changed
+          ) ||
+          changed
       } else {
         const nearestVia = getNearestVia(vias, center)
         if (nearestVia) {
