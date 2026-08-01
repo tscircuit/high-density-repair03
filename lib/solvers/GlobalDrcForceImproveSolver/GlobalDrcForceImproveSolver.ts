@@ -72,6 +72,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   readonly configuredMaxIterations?: number
   readonly enableLargeBoardBroadFallback: boolean
   readonly enableRouteDisjointBatching: boolean
+  readonly routeDisjointBatchMinDrcCount: number
   readonly enableTargetedErrorSweep: boolean
   readonly enablePostSolveClearanceRelaxation: boolean
   readonly enableViaInPadLayerMoves: boolean
@@ -130,6 +131,16 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       params.enableLargeBoardBroadFallback ?? true
     this.enableRouteDisjointBatching =
       params.enableRouteDisjointBatching ?? true
+    this.routeDisjointBatchMinDrcCount =
+      params.routeDisjointBatchMinDrcCount ?? 2
+    if (
+      !Number.isInteger(this.routeDisjointBatchMinDrcCount) ||
+      this.routeDisjointBatchMinDrcCount < 2
+    ) {
+      throw new Error(
+        "routeDisjointBatchMinDrcCount must be an integer greater than or equal to 2",
+      )
+    }
     this.enableTargetedErrorSweep = params.enableTargetedErrorSweep ?? false
     this.enablePostSolveClearanceRelaxation =
       params.enablePostSolveClearanceRelaxation ?? true
@@ -152,6 +163,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         maxIterations: this.configuredMaxIterations,
         enableLargeBoardBroadFallback: this.enableLargeBoardBroadFallback,
         enableRouteDisjointBatching: this.enableRouteDisjointBatching,
+        routeDisjointBatchMinDrcCount: this.routeDisjointBatchMinDrcCount,
         enableTargetedErrorSweep: this.enableTargetedErrorSweep,
         enablePostSolveClearanceRelaxation:
           this.enablePostSolveClearanceRelaxation,
@@ -346,6 +358,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       : []
     const routeDisjointBatch =
       this.enableRouteDisjointBatching &&
+      bestSnapshot.count >= this.routeDisjointBatchMinDrcCount &&
       bestRoutes.length > BROAD_FALLBACK_SMALL_ROUTE_LIMIT &&
       this.routeDisjointBatchConsecutiveMisses <
         MAX_ROUTE_DISJOINT_BATCH_CONSECUTIVE_MISSES

@@ -142,3 +142,18 @@ test("allows a coarse pipeline stage to opt out of batched candidates", () => {
   expect(solver.stats.globalDrcForceImproveRouteDisjointBatchAttempts).toBe(0)
   expect(solver.stats.globalDrcForceImproveCandidateAttempts).toBe(3)
 })
+
+test("switches to precise candidates below the configured DRC count", () => {
+  const solver = new GlobalDrcForceImproveSolver({
+    ...createLargeBoardMissScenario(),
+    maxIterations: 1,
+    enableLargeBoardBroadFallback: false,
+    routeDisjointBatchMinDrcCount: 3,
+    enablePostSolveClearanceRelaxation: false,
+  })
+
+  solver.solve()
+
+  expect(solver.stats.globalDrcForceImproveRouteDisjointBatchAttempts).toBe(0)
+  expect(solver.stats.globalDrcForceImproveCandidateAttempts).toBe(3)
+})
