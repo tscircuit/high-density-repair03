@@ -377,7 +377,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       ) {
         const detourVariants = ([0, 1] as const).flatMap((routeSide) =>
           [0.2, 0.4, 0.8, 1.2].flatMap((halfSpan) =>
-            [0.2, 0.3, 0.45, 0.6].flatMap((offset) =>
+            [0.2, 0.3, 0.45, 0.6, 0.9, 1.2].flatMap((offset) =>
               ([-1, 1] as const).map((directionSign) => ({
                 routeSide,
                 halfSpan,
