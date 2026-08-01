@@ -370,11 +370,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         error,
         bestSnapshot.traceRouteIndexById,
       )
-      if (
-        this.iterations % 2 === 0 &&
-        traceErrorKey &&
-        traceRoutePair
-      ) {
+      if (this.iterations % 2 === 0 && traceErrorKey && traceRoutePair) {
         const detourVariants = [1.2, 0.8, 0.4, 0.2].flatMap((halfSpan) =>
           [1.2, 0.9, 0.6, 0.45, 0.3, 0.2].flatMap((offset) =>
             ([-1, 1] as const).flatMap((directionSign) =>

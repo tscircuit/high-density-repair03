@@ -1,11 +1,7 @@
 import { expect, test } from "bun:test"
 import { ConnectivityMap } from "circuit-json-to-connectivity-map"
 import { VisualizedGlobalDrcForceImproveSolver } from "../fixture-support/VisualizedGlobalDrcForceImproveSolver"
-import type {
-  DrcEvaluator,
-  HighDensityRoute,
-  SimpleRouteJson,
-} from "../lib"
+import type { DrcEvaluator, HighDensityRoute, SimpleRouteJson } from "../lib"
 
 const getViaCenters = (routes: HighDensityRoute[]) =>
   routes.flatMap((route) =>
