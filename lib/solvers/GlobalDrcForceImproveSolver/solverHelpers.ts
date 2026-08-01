@@ -3154,6 +3154,7 @@ export const applyTracePairLayerMoveForError = (
   spanExpansion = 0,
   connMap?: ConnectivityMap,
   viaHoleDiameter?: number,
+  allowTerminalViaInPad = false,
 ) => {
   if (getDrcErrorType(error) !== "pcb_trace_error") return false
   if (targetZ < 0 || targetZ >= srj.layerCount) return false
@@ -3179,6 +3180,8 @@ export const applyTracePairLayerMoveForError = (
     if (followingPoint?.z === segment.z) spanEndIndex += 1
   }
   if (
+    (!allowTerminalViaInPad &&
+      (spanStartIndex === 0 || spanEndIndex === route.route.length - 1)) ||
     (spanStartIndex === 0 &&
       route.route[0]?.pcb_port_id &&
       !isRouteEndpointEligibleForViaInPad(

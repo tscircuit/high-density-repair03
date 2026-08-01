@@ -550,7 +550,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           }
         }
       }
-      if (this.enableViaInPadLayerMoves && traceRoutePair) {
+      if (traceRoutePair) {
         const routeSides =
           this.iterations % 2 === 0 ? ([0, 1] as const) : ([1, 0] as const)
         const spanExpansion = this.iterations % 3
@@ -571,6 +571,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
               spanExpansion,
               this.connMap,
               this.viaHoleDiameter,
+              this.enableViaInPadLayerMoves,
             )
             if (!changed) continue
 
