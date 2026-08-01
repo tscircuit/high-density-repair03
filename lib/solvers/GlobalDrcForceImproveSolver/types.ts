@@ -39,11 +39,6 @@ export type GlobalDrcForceImproveSolverParams = {
    * final acceptance objective.
    */
   enableRouteDisjointBatching?: boolean
-  /**
-   * Keeps route-disjoint batching in the high-conflict part of the search.
-   * Below this count the solver uses precise single-error candidates.
-   */
-  routeDisjointBatchMinDrcCount?: number
   enableTargetedErrorSweep?: boolean
   enablePostSolveClearanceRelaxation?: boolean
   enableViaInPadLayerMoves?: boolean

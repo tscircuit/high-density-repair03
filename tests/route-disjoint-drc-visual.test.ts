@@ -29,63 +29,54 @@ const createEmptyRoute = (connectionName: string): HighDensityRoute => ({
 })
 
 test("visualizes route-disjoint batch selection before and after repair", async () => {
-  const activeRoutes = [createActiveRoute("A", 0), createActiveRoute("B", 4)]
-  const emptyRoutes = Array.from({ length: 119 }, (_, index) =>
+  const activeRouteSpecs = [
+    { connectionName: "A", y: 0, obstacleX: 2 },
+    { connectionName: "B", y: 4, obstacleX: 8 },
+    { connectionName: "C", y: 8, obstacleX: 2 },
+    { connectionName: "D", y: 12, obstacleX: 8 },
+  ]
+  const activeRoutes = activeRouteSpecs.map(({ connectionName, y }) =>
+    createActiveRoute(connectionName, y),
+  )
+  const emptyRoutes = Array.from({ length: 117 }, (_, index) =>
     createEmptyRoute(`unused_${index}`),
   )
   const hdRoutes = [...activeRoutes, ...emptyRoutes]
   const srj: SimpleRouteJson = {
-    bounds: { minX: -1, minY: -2, maxX: 11, maxY: 6 },
+    bounds: { minX: -1, minY: -2, maxX: 11, maxY: 14 },
     connections: hdRoutes.map((route) => ({
       name: route.connectionName,
       pointsToConnect: [],
     })),
-    obstacles: [
-      {
-        type: "rect",
-        center: { x: 2, y: 0 },
-        width: 1,
-        height: 1,
-        layers: ["top"],
-        connectedTo: ["pad_a"],
-        obstacleId: "pad_a",
-      },
-      {
-        type: "rect",
-        center: { x: 8, y: 4 },
-        width: 1,
-        height: 1,
-        layers: ["top"],
-        connectedTo: ["pad_b"],
-        obstacleId: "pad_b",
-      },
-    ],
+    obstacles: activeRouteSpecs.map(({ connectionName, y, obstacleX }) => ({
+      type: "rect",
+      center: { x: obstacleX, y },
+      width: 1,
+      height: 1,
+      layers: ["top"],
+      connectedTo: [`pad_${connectionName.toLowerCase()}`],
+      obstacleId: `pad_${connectionName.toLowerCase()}`,
+    })),
     layerCount: 2,
     minTraceWidth: 0.1,
     minViaDiameter: 0.3,
   }
   const drcEvaluator: DrcEvaluator = ({ routes }) => {
     const errors: Record<string, unknown>[] = []
-    if ((routes?.[0]?.route[1]?.y ?? 0) < 0.2) {
+    for (let index = 0; index < activeRouteSpecs.length; index += 1) {
+      const spec = activeRouteSpecs[index]!
+      if (Math.abs((routes?.[index]?.route[1]?.y ?? spec.y) - spec.y) >= 0.2) {
+        continue
+      }
+      const traceId = `${spec.connectionName}_0`
+      const obstacleId = `pad_${spec.connectionName.toLowerCase()}`
       errors.push({
         type: "pcb_trace_error",
-        message:
-          'PCB trace A_0 overlaps with pcb_smtpad "pad_a" (gap: -0.050mm)',
-        center: { x: 2, y: 0 },
-        pcb_trace_id: "A_0",
-        pcb_trace_ids: ["A_0"],
-        pcb_obstacle_id: "pad_a",
-      })
-    }
-    if (Math.abs((routes?.[1]?.route[1]?.y ?? 4) - 4) < 0.2) {
-      errors.push({
-        type: "pcb_trace_error",
-        message:
-          'PCB trace B_0 overlaps with pcb_smtpad "pad_b" (gap: -0.050mm)',
-        center: { x: 8, y: 4 },
-        pcb_trace_id: "B_0",
-        pcb_trace_ids: ["B_0"],
-        pcb_obstacle_id: "pad_b",
+        message: `PCB trace ${traceId} overlaps with pcb_smtpad "${obstacleId}" (gap: -0.050mm)`,
+        center: { x: spec.obstacleX, y: spec.y },
+        pcb_trace_id: traceId,
+        pcb_trace_ids: [traceId],
+        pcb_obstacle_id: obstacleId,
       })
     }
     return errors
