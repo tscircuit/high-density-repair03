@@ -2153,6 +2153,36 @@ const getNearestViaPair = (vias: ViaNode[], point: Point) => {
   return nearest.length === 2 ? (nearest as [ViaNode, ViaNode]) : undefined
 }
 
+const mergeOverlappingSameNetViaPair = (
+  routes: MutableRoute[],
+  left: ViaNode,
+  right: ViaNode,
+  srj: SimpleRouteJson,
+  scale: number,
+) => {
+  const distance = Math.hypot(left.x - right.x, left.y - right.y)
+  if (distance > left.radius + right.radius + COORDINATE_EPSILON) return false
+
+  const leftLayers = [...left.zLayers].sort((a, b) => a - b)
+  const rightLayers = [...right.zLayers].sort((a, b) => a - b)
+  if (
+    leftLayers.length !== rightLayers.length ||
+    leftLayers.some((layer, index) => layer !== rightLayers[index])
+  ) {
+    return false
+  }
+
+  const viaToMove = scale < 0 ? left : right
+  const retainedVia = scale < 0 ? right : left
+  return moveVia(
+    routes,
+    viaToMove,
+    retainedVia.x - viaToMove.x,
+    retainedVia.y - viaToMove.y,
+    srj,
+  )
+}
+
 const moveViaAwayFromPoint = (
   routes: MutableRoute[],
   via: ViaNode,
@@ -3294,7 +3324,23 @@ export const applyDrcErrorForces = (
             (typeof error.pcb_error_id === "string" &&
               (error.pcb_error_id.startsWith("same_net_vias_close_") ||
                 error.pcb_error_id.startsWith("different_net_vias_close_"))))
+        const isSameNetPair = sharesNet(
+          nearestViaPair[0].rootConnectionName,
+          nearestViaPair[1].rootConnectionName,
+          connMap,
+        )
+        const mergedSameNetPair =
+          isCanonicalViaPairError &&
+          isSameNetPair &&
+          mergeOverlappingSameNetViaPair(
+            routes,
+            nearestViaPair[0],
+            nearestViaPair[1],
+            srj,
+            scale,
+          )
         changed =
+          mergedSameNetPair ||
           pushViaViaPair(
             routes,
             nearestViaPair[0],
@@ -3303,7 +3349,8 @@ export const applyDrcErrorForces = (
             connMap,
             VIA_PAIR_REPAIR_MAX_MOVE * Math.abs(scale),
             isCanonicalViaPairError,
-          ) || changed
+          ) ||
+          changed
       } else {
         const nearestVia = getNearestVia(vias, center)
         if (nearestVia) {
