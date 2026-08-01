@@ -1,8 +1,10 @@
 import { expect, test } from "bun:test"
+import { GlobalDrcForceImproveSolver } from "../lib"
 import {
   getDrcErrorRouteIndexes,
   getRouteDisjointDrcErrorBatch,
 } from "../lib/solvers/GlobalDrcForceImproveSolver/solverHelpers"
+import type { DrcEvaluator, HighDensityRoute, SimpleRouteJson } from "../lib"
 
 const createPadError = (traceId: string, center: { x: number; y: number }) => ({
   type: "pcb_trace_error",
@@ -52,4 +54,91 @@ test("resolves every explicit trace participant to its owning route", () => {
   )
 
   expect(routeIndexes).toEqual([4, 9])
+})
+
+const createLargeBoardMissScenario = () => {
+  const activeRoutes: HighDensityRoute[] = [
+    {
+      connectionName: "A",
+      route: [
+        { x: 0, y: 0, z: 0 },
+        { x: 10, y: 0, z: 0 },
+      ],
+      vias: [],
+      traceThickness: 0.1,
+      viaDiameter: 0.3,
+    },
+    {
+      connectionName: "B",
+      route: [
+        { x: 0, y: 4, z: 0 },
+        { x: 10, y: 4, z: 0 },
+      ],
+      vias: [],
+      traceThickness: 0.1,
+      viaDiameter: 0.3,
+    },
+  ]
+  const emptyRoutes: HighDensityRoute[] = Array.from(
+    { length: 119 },
+    (_, index) => ({
+      connectionName: `unused_${index}`,
+      route: [],
+      vias: [],
+      traceThickness: 0.1,
+      viaDiameter: 0.3,
+    }),
+  )
+  const hdRoutes = [...activeRoutes, ...emptyRoutes]
+  const srj: SimpleRouteJson = {
+    bounds: { minX: -1, minY: -2, maxX: 11, maxY: 6 },
+    connections: hdRoutes.map((route) => ({
+      name: route.connectionName,
+      pointsToConnect: [],
+    })),
+    obstacles: [
+      {
+        type: "rect",
+        center: { x: 2, y: 0 },
+        width: 1,
+        height: 1,
+        layers: ["top"],
+        connectedTo: ["pad_a"],
+        obstacleId: "pad_a",
+      },
+      {
+        type: "rect",
+        center: { x: 8, y: 4 },
+        width: 1,
+        height: 1,
+        layers: ["top"],
+        connectedTo: ["pad_b"],
+        obstacleId: "pad_b",
+      },
+    ],
+    layerCount: 2,
+    minTraceWidth: 0.1,
+    minViaDiameter: 0.3,
+  }
+  const drcEvaluator: DrcEvaluator = () => [
+    createPadError("A_0", { x: 2, y: 0 }),
+    createPadError("B_0", { x: 8, y: 4 }),
+  ]
+
+  return { srj, hdRoutes, drcEvaluator }
+}
+
+test("allows a coarse pipeline stage to opt out of batched candidates", () => {
+  const solver = new GlobalDrcForceImproveSolver({
+    ...createLargeBoardMissScenario(),
+    maxIterations: 1,
+    enableLargeBoardBroadFallback: false,
+    enableRouteDisjointBatching: false,
+    enablePostSolveClearanceRelaxation: false,
+  })
+
+  solver.solve()
+
+  expect(solver.stats.globalDrcForceImproveRouteDisjointBatchAttempts).toBe(0)
+  expect(solver.stats.globalDrcForceImproveCandidateAttempts).toBe(3)
 })

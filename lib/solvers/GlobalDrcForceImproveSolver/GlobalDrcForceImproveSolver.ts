@@ -71,6 +71,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   readonly viaHoleDiameter?: number
   readonly configuredMaxIterations?: number
   readonly enableLargeBoardBroadFallback: boolean
+  readonly enableRouteDisjointBatching: boolean
   readonly enableTargetedErrorSweep: boolean
   readonly enablePostSolveClearanceRelaxation: boolean
   readonly enableViaInPadLayerMoves: boolean
@@ -127,6 +128,8 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     this.configuredMaxIterations = params.maxIterations
     this.enableLargeBoardBroadFallback =
       params.enableLargeBoardBroadFallback ?? true
+    this.enableRouteDisjointBatching =
+      params.enableRouteDisjointBatching ?? true
     this.enableTargetedErrorSweep = params.enableTargetedErrorSweep ?? false
     this.enablePostSolveClearanceRelaxation =
       params.enablePostSolveClearanceRelaxation ?? true
@@ -148,6 +151,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         viaHoleDiameter: this.viaHoleDiameter,
         maxIterations: this.configuredMaxIterations,
         enableLargeBoardBroadFallback: this.enableLargeBoardBroadFallback,
+        enableRouteDisjointBatching: this.enableRouteDisjointBatching,
         enableTargetedErrorSweep: this.enableTargetedErrorSweep,
         enablePostSolveClearanceRelaxation:
           this.enablePostSolveClearanceRelaxation,
@@ -341,6 +345,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       ? getTargetedClearanceSweepErrors(centeredErrors, this.effort)
       : []
     const routeDisjointBatch =
+      this.enableRouteDisjointBatching &&
       bestRoutes.length > BROAD_FALLBACK_SMALL_ROUTE_LIMIT &&
       this.routeDisjointBatchConsecutiveMisses <
         MAX_ROUTE_DISJOINT_BATCH_CONSECUTIVE_MISSES

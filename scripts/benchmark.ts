@@ -35,6 +35,7 @@ type CapturedSolverOptions = {
   effort?: number
   maxIterations?: number
   enableLargeBoardBroadFallback?: boolean
+  enableRouteDisjointBatching?: boolean
   enableTargetedErrorSweep?: boolean
   enablePostSolveClearanceRelaxation?: boolean
   enableViaInPadLayerMoves?: boolean

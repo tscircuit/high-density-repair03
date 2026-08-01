@@ -14,6 +14,7 @@ type CapturedSolverOptions = Pick<
   | "effort"
   | "maxIterations"
   | "enableLargeBoardBroadFallback"
+  | "enableRouteDisjointBatching"
   | "enableTargetedErrorSweep"
   | "enablePostSolveClearanceRelaxation"
   | "enableViaInPadLayerMoves"

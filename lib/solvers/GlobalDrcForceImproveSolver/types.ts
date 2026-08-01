@@ -33,6 +33,12 @@ export type GlobalDrcForceImproveSolverParams = {
   viaHoleDiameter?: number
   maxIterations?: number
   enableLargeBoardBroadFallback?: boolean
+  /**
+   * Evaluates route-disjoint DRC repairs as an additional candidate family.
+   * Disable this for coarse pipeline stages whose DRC evaluator is not the
+   * final acceptance objective.
+   */
+  enableRouteDisjointBatching?: boolean
   enableTargetedErrorSweep?: boolean
   enablePostSolveClearanceRelaxation?: boolean
   enableViaInPadLayerMoves?: boolean
