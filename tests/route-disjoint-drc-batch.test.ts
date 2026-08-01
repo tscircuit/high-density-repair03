@@ -156,3 +156,29 @@ test("uses precise candidates when the candidate budget covers every error", () 
   expect(solver.stats.globalDrcForceImproveRouteDisjointBatchAttempts).toBe(0)
   expect(solver.stats.globalDrcForceImproveCandidateAttempts).toBe(3)
 })
+
+test("uses precise search when the disjoint batch fits the candidate budget", () => {
+  const scenario = createLargeBoardMissScenario()
+  const inputRouteA = scenario.hdRoutes[0]
+  const errors = [
+    createPadError("A_0", { x: 2, y: 0 }),
+    createPadError("B_0", { x: 8, y: 4 }),
+    createPadError("A_0", { x: 5, y: 0 }),
+    createPadError("B_0", { x: 5, y: 4 }),
+  ]
+  const drcEvaluator: DrcEvaluator = ({ routes }) =>
+    routes?.[0] === inputRouteA ? errors : errors.slice(1)
+  const solver = new GlobalDrcForceImproveSolver({
+    ...scenario,
+    drcEvaluator,
+    maxIterations: 1,
+    enableLargeBoardBroadFallback: false,
+    enablePostSolveClearanceRelaxation: false,
+  })
+
+  solver.solve()
+
+  expect(solver.stats.globalDrcForceImproveRouteDisjointBatchAttempts).toBe(0)
+  expect(solver.stats.globalDrcForceImproveRouteDisjointBatchesAccepted).toBe(0)
+  expect(solver.stats.finalDrcIssueCount).toBe(3)
+})

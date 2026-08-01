@@ -662,7 +662,10 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       }
     }
 
-    if (!acceptedCandidate && routeDisjointBatch.errors.length >= 2) {
+    if (
+      !acceptedCandidate &&
+      routeDisjointBatch.errors.length > maxCandidateAttemptsThisStep
+    ) {
       this.routeDisjointBatchAttempts += 1
       this.routeDisjointBatchErrorsAttempted += routeDisjointBatch.errors.length
       const candidateRoutes = cloneRoutesForIndexes(
