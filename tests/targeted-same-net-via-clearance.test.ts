@@ -6,7 +6,7 @@ import {
 } from "../lib/solvers/GlobalDrcForceImproveSolver/solverHelpers"
 import type { SimpleRouteJson } from "../lib/types"
 
-test("separates an explicitly identified same-net via clearance pair", () => {
+test("coalesces an explicitly identified overlapping same-net via pair", () => {
   const srj: SimpleRouteJson = {
     bounds: { minX: -2, minY: -2, maxX: 2, maxY: 2 },
     connections: [
@@ -68,6 +68,7 @@ test("separates an explicitly identified same-net via clearance pair", () => {
   )
 
   expect(changed).toBe(true)
-  expect(routes[0]?.route[1]?.x).toBeLessThan(0)
-  expect(routes[1]?.route[1]?.x).toBeGreaterThan(0.05)
+  expect(routes[0]?.route[1]).toMatchObject({ x: 0, y: 0 })
+  expect(routes[1]?.route[1]).toMatchObject({ x: 0, y: 0 })
+  expect(routes[1]?.route[2]).toMatchObject({ x: 0, y: 0 })
 })

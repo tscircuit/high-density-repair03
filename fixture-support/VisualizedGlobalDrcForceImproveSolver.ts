@@ -328,21 +328,69 @@ export const visualizeGlobalDrcForceImproveSolver = (
   selectedDrcMarkerId?: string,
 ): GraphicsObject => {
   const visibleZ = getVisibleZ(solver.srj, visibleLayer)
-  const routes = solver.outputHdRoutes
+  const inputDrcCount = getDrcSnapshot(
+    solver.srj,
+    solver.inputHdRoutes,
+    solver.drcEvaluator,
+  ).count
+  const outputDrcCount = getDrcSnapshot(
+    solver.srj,
+    solver.outputHdRoutes,
+    solver.drcEvaluator,
+  ).count
 
   const graphics: GraphicsObject = {
-    title: `Global DRC Force Improve (${visibleLayer})`,
+    title: `Global DRC Force Improve: ${inputDrcCount} → ${outputDrcCount} errors (${visibleLayer})`,
     coordinateSystem: "cartesian",
     rects: [
       getBoardRect(solver.srj),
       ...getObstacleRects(solver.srj, visibleLayer, visibleZ),
     ],
-    lines: getRouteLines(routes, visibleZ),
+    lines: [
+      ...getRouteLines(solver.inputHdRoutes, visibleZ).map((line) => ({
+        ...line,
+        label: `Before: ${line.label}`,
+        step: 1,
+      })),
+      ...getRouteLines(solver.outputHdRoutes, visibleZ).map((line) => ({
+        ...line,
+        label: `After: ${line.label}`,
+        step: 2,
+      })),
+    ],
     circles: [
-      ...getViaCircles(routes, visibleZ),
-      ...getDrcMarkerCircles(solver, selectedDrcMarkerId),
+      ...getViaCircles(solver.inputHdRoutes, visibleZ).map((circle) => ({
+        ...circle,
+        label: `Before: ${circle.label}`,
+        step: 1,
+      })),
+      ...getViaCircles(solver.outputHdRoutes, visibleZ).map((circle) => ({
+        ...circle,
+        label: `After: ${circle.label}`,
+        step: 2,
+      })),
+      ...getDrcMarkerCircles(solver, selectedDrcMarkerId).map((circle) => ({
+        ...circle,
+        step: 2,
+      })),
     ],
     points: getConnectionPoints(solver.srj, visibleLayer),
+    texts: [
+      {
+        x: solver.srj.bounds.minX,
+        y: solver.srj.bounds.maxY,
+        text: `Before repair: ${inputDrcCount} DRC errors`,
+        color: "#b91c1c",
+        step: 1,
+      },
+      {
+        x: solver.srj.bounds.minX,
+        y: solver.srj.bounds.maxY,
+        text: `After repair: ${outputDrcCount} DRC errors`,
+        color: "#15803d",
+        step: 2,
+      },
+    ],
   }
 
   getDrcMarkerById(solver, selectedDrcMarkerId)
