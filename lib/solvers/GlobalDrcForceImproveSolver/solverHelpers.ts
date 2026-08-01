@@ -2819,6 +2819,15 @@ const isViaDrcError = (error: Record<string, unknown>) =>
 export const getViaDrcIssueCount = (snapshot: DrcSnapshot) =>
   snapshot.errors.filter(isViaDrcError).length
 
+export const getSafeTraceLayerDrcIssueCount = (snapshot: DrcSnapshot) =>
+  snapshot.errors.filter((error) => {
+    const errorType = getDrcErrorType(error)
+    return (
+      errorType === "pcb_trace_error" ||
+      errorType === "pcb_pad_trace_clearance_error"
+    )
+  }).length
+
 export const getTraceRouteIndexForError = (
   error: Record<string, unknown>,
   traceRouteIndexById: Map<string, number>,
@@ -2864,6 +2873,339 @@ const isRouteEndpointEligibleForViaInPad = (
       obstacleSharesNet(route.connectionName, obstacle, connMap)
     )
   })
+}
+
+const getRouteEndpointPad = (
+  srj: SimpleRouteJson,
+  route: MutableRoute,
+  endpoint: MutableRoute["route"][number],
+  connMap?: ConnectivityMap,
+) => {
+  const pcbPortId = endpoint.pcb_port_id
+  if (!pcbPortId) return undefined
+
+  return srj.obstacles.find((obstacle) => {
+    const obstacleZLayers = getObstacleZLayers(obstacle, srj.layerCount)
+    if (
+      obstacleZLayers.length !== 1 ||
+      obstacleZLayers[0] !== endpoint.z ||
+      !obstacle.connectedTo.includes(pcbPortId) ||
+      !pointIsInsideRectObstacle(endpoint, obstacle)
+    ) {
+      return false
+    }
+
+    return (
+      obstacleSharesNet(getRootConnectionName(route), obstacle, connMap) ||
+      obstacleSharesNet(route.connectionName, obstacle, connMap)
+    )
+  })
+}
+
+const TERMINAL_ESCAPE_EIGHTH_TURNS = [0, 1, -1, 2, -2, 3, -3, 4] as const
+
+const TERMINAL_ESCAPE_ROTATION_PAIRS = TERMINAL_ESCAPE_EIGHTH_TURNS.flatMap(
+  (startRotation) =>
+    TERMINAL_ESCAPE_EIGHTH_TURNS.map(
+      (endRotation) => [startRotation, endRotation] as const,
+    ),
+).sort(
+  ([startA, endA], [startB, endB]) =>
+    Math.abs(startA) + Math.abs(endA) - Math.abs(startB) - Math.abs(endB),
+)
+
+export const SAFE_TRACE_LAYER_DIRECTION_VARIANT_COUNT =
+  TERMINAL_ESCAPE_ROTATION_PAIRS.length
+
+const getTerminalTangent = (
+  points: MutableRoute["route"],
+  endpointSide: "start" | "end",
+) => {
+  const endpoint = endpointSide === "start" ? points[0] : points.at(-1)
+  if (!endpoint) return undefined
+
+  const indexes =
+    endpointSide === "start"
+      ? Array.from({ length: points.length - 1 }, (_, index) => index + 1)
+      : Array.from(
+          { length: points.length - 1 },
+          (_, index) => points.length - index - 2,
+        )
+  for (const index of indexes) {
+    const point = points[index]
+    if (!point) continue
+    const dx = point.x - endpoint.x
+    const dy = point.y - endpoint.y
+    const length = Math.hypot(dx, dy)
+    if (length <= POSITION_EPSILON) continue
+    return { x: dx / length, y: dy / length }
+  }
+  return undefined
+}
+
+const rotateDirection = (direction: Point, eighthTurns: number) => {
+  const angle = (eighthTurns * Math.PI) / 4
+  const cos = Math.cos(angle)
+  const sin = Math.sin(angle)
+  return {
+    x: direction.x * cos - direction.y * sin,
+    y: direction.x * sin + direction.y * cos,
+  }
+}
+
+const getExternalViaPoint = (
+  endpoint: Point,
+  pad: SimpleRouteJson["obstacles"][number],
+  direction: Point,
+  viaRadius: number,
+) => {
+  let insideDistance = 0
+  let outsideDistance = Math.hypot(pad.width, pad.height) + viaRadius * 2
+  const requiredDistance = viaRadius + POSITION_EPSILON
+  const pointAtDistance = (distance: number) => ({
+    x: endpoint.x + direction.x * distance,
+    y: endpoint.y + direction.y * distance,
+  })
+  if (
+    getPointToObstacleDistance(pointAtDistance(outsideDistance), pad) <
+    requiredDistance
+  ) {
+    return undefined
+  }
+
+  while (outsideDistance - insideDistance > POSITION_EPSILON) {
+    const candidateDistance = (insideDistance + outsideDistance) / 2
+    if (
+      getPointToObstacleDistance(pointAtDistance(candidateDistance), pad) >=
+      requiredDistance
+    ) {
+      outsideDistance = candidateDistance
+    } else {
+      insideDistance = candidateDistance
+    }
+  }
+  return pointAtDistance(outsideDistance)
+}
+
+const isViaInsideBounds = (
+  point: Point,
+  viaRadius: number,
+  bounds: SimpleRouteJson["bounds"],
+) =>
+  point.x - viaRadius >= bounds.minX - POSITION_EPSILON &&
+  point.x + viaRadius <= bounds.maxX + POSITION_EPSILON &&
+  point.y - viaRadius >= bounds.minY - POSITION_EPSILON &&
+  point.y + viaRadius <= bounds.maxY + POSITION_EPSILON
+
+const appendDistinctRoutePoint = (
+  points: MutableRoute["route"],
+  point: MutableRoute["route"][number],
+) => {
+  const previous = points.at(-1)
+  if (
+    previous &&
+    areSameXY(previous, point) &&
+    previous.z === point.z &&
+    previous.pcb_port_id === point.pcb_port_id
+  ) {
+    return
+  }
+  points.push(point)
+}
+
+export type SafeTraceLayerMoveSpanExpansion = number | "full"
+
+/**
+ * Moves a span containing the reported conflict onto another layer. Layer
+ * transitions inside the route stay at their existing coordinates;
+ * transitions at connected terminals are moved fully outside their pads. The
+ * caller scores every candidate against full-board DRC.
+ */
+export const applySafeTraceLayerMoveForError = (
+  srj: SimpleRouteJson,
+  routes: MutableRoute[],
+  error: Record<string, unknown>,
+  routeIndex: number,
+  targetZ: number,
+  spanExpansion: SafeTraceLayerMoveSpanExpansion,
+  connMap?: ConnectivityMap,
+  directionVariant = 0,
+) => {
+  const errorType = getDrcErrorType(error)
+  if (
+    errorType !== "pcb_pad_trace_clearance_error" &&
+    errorType !== "pcb_trace_error"
+  ) {
+    return false
+  }
+  if (targetZ < 0 || targetZ >= srj.layerCount) {
+    return false
+  }
+
+  const route = routes[routeIndex]
+  if (!route || route.route.length < 2) return false
+
+  const originalPoints = route.route.map((point) => ({ ...point }))
+  const first = originalPoints[0]
+  const last = originalPoints.at(-1)
+  if (!first || !last) return false
+
+  const center = getErrorCenter(error)
+  if (!center) return false
+  const segment = getNearestSegment(
+    collectSegmentsForRoute(route, routeIndex),
+    center,
+  )
+  if (!segment || segment.z === targetZ) return false
+
+  let spanStartIndex = segment.startIndex
+  let spanEndIndex = segment.endIndex
+  const maxExpansions =
+    spanExpansion === "full" ? originalPoints.length : spanExpansion
+  for (let expansion = 0; expansion < maxExpansions; expansion += 1) {
+    let expanded = false
+    const precedingPoint = originalPoints[spanStartIndex - 1]
+    if (precedingPoint?.z === segment.z) {
+      spanStartIndex -= 1
+      expanded = true
+    }
+    const followingPoint = originalPoints[spanEndIndex + 1]
+    if (followingPoint?.z === segment.z) {
+      spanEndIndex += 1
+      expanded = true
+    }
+    if (!expanded) break
+  }
+
+  const movesStartTerminal = spanStartIndex === 0 && first.pcb_port_id
+  const movesEndTerminal =
+    spanEndIndex === originalPoints.length - 1 && last.pcb_port_id
+
+  const viaRadius = route.viaDiameter / 2
+  const rotationPair =
+    TERMINAL_ESCAPE_ROTATION_PAIRS[
+      directionVariant % SAFE_TRACE_LAYER_DIRECTION_VARIANT_COUNT
+    ]!
+
+  const getTerminalEscape = (endpointSide: "start" | "end") => {
+    const endpoint = endpointSide === "start" ? first : last
+    const pad = getRouteEndpointPad(srj, route, endpoint, connMap)
+    const tangent = getTerminalTangent(originalPoints, endpointSide)
+    if (!pad || !tangent) return undefined
+    const rotation =
+      endpointSide === "start" ? rotationPair[0] : rotationPair[1]
+    const escape = getExternalViaPoint(
+      endpoint,
+      pad,
+      rotateDirection(tangent, rotation),
+      viaRadius,
+    )
+    if (
+      !escape ||
+      !isViaInsideBounds(escape, viaRadius, srj.bounds) ||
+      getPointToObstacleDistance(escape, pad) + POSITION_EPSILON < viaRadius
+    ) {
+      return undefined
+    }
+    return escape
+  }
+
+  const startEscape = movesStartTerminal
+    ? getTerminalEscape("start")
+    : undefined
+  const endEscape = movesEndTerminal ? getTerminalEscape("end") : undefined
+  if (
+    (movesStartTerminal && !startEscape) ||
+    (movesEndTerminal && !endEscape)
+  ) {
+    return false
+  }
+
+  const movedRoute: MutableRoute["route"] = []
+  for (let index = 0; index < spanStartIndex; index += 1) {
+    appendDistinctRoutePoint(movedRoute, originalPoints[index]!)
+  }
+
+  const spanStart = originalPoints[spanStartIndex]!
+  const startsAtExistingTransition =
+    spanStartIndex > 0 &&
+    areSameXY(originalPoints[spanStartIndex - 1]!, spanStart)
+  const spanEnd = originalPoints[spanEndIndex]!
+  const endsAtExistingTransition =
+    spanEndIndex < originalPoints.length - 1 &&
+    areSameXY(originalPoints[spanEndIndex + 1]!, spanEnd)
+
+  if (movesStartTerminal) {
+    appendDistinctRoutePoint(movedRoute, first)
+    appendDistinctRoutePoint(movedRoute, {
+      ...first,
+      ...startEscape!,
+      pcb_port_id: undefined,
+    })
+    appendDistinctRoutePoint(movedRoute, {
+      ...first,
+      ...startEscape!,
+      z: targetZ,
+      pcb_port_id: undefined,
+    })
+  } else {
+    if (!startsAtExistingTransition) {
+      appendDistinctRoutePoint(movedRoute, {
+        ...spanStart,
+        pcb_port_id: undefined,
+      })
+    }
+    appendDistinctRoutePoint(movedRoute, {
+      ...spanStart,
+      z: targetZ,
+      pcb_port_id: undefined,
+    })
+  }
+
+  const firstMovedIndex = spanStartIndex + 1
+  const lastMovedIndex = movesEndTerminal ? spanEndIndex - 1 : spanEndIndex
+  for (let index = firstMovedIndex; index <= lastMovedIndex; index += 1) {
+    appendDistinctRoutePoint(movedRoute, {
+      ...originalPoints[index]!,
+      z: targetZ,
+      pcb_port_id: undefined,
+    })
+  }
+
+  if (movesEndTerminal) {
+    appendDistinctRoutePoint(movedRoute, {
+      ...last,
+      ...endEscape!,
+      z: targetZ,
+      pcb_port_id: undefined,
+    })
+    appendDistinctRoutePoint(movedRoute, {
+      ...last,
+      ...endEscape!,
+      pcb_port_id: undefined,
+    })
+    appendDistinctRoutePoint(movedRoute, last)
+  } else if (!endsAtExistingTransition) {
+    appendDistinctRoutePoint(movedRoute, {
+      ...spanEnd,
+      pcb_port_id: undefined,
+    })
+  }
+
+  for (
+    let index = spanEndIndex + 1;
+    index < originalPoints.length;
+    index += 1
+  ) {
+    appendDistinctRoutePoint(movedRoute, originalPoints[index]!)
+  }
+
+  for (let index = 1; index < movedRoute.length - 1; index += 1) {
+    movedRoute[index]!.pcb_port_id = undefined
+  }
+
+  route.route = movedRoute
+  return true
 }
 
 /**

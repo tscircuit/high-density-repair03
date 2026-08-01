@@ -1,8 +1,5 @@
 import type { Circle, GraphicsObject, Line, Point, Rect } from "graphics-debug"
-import {
-  GlobalDrcForceImproveSolver,
-  setGlobalDrcForceImproveSolverVisualizer,
-} from "../lib/solvers/GlobalDrcForceImproveSolver"
+import { GlobalDrcForceImproveSolver } from "../lib/solvers/GlobalDrcForceImproveSolver"
 import { getDrcSnapshot } from "../lib/solvers/GlobalDrcForceImproveSolver/drc-snapshot"
 import type {
   GlobalDrcForceImproveSolverParams,
@@ -348,10 +345,6 @@ export const visualizeGlobalDrcForceImproveSolver = (
   getDrcMarkerById(solver, selectedDrcMarkerId)
   return graphics
 }
-
-setGlobalDrcForceImproveSolverVisualizer((solver) =>
-  visualizeGlobalDrcForceImproveSolver(solver, "all"),
-)
 
 export class VisualizedGlobalDrcForceImproveSolver extends GlobalDrcForceImproveSolver {
   private readonly visibleLayer: "all" | string

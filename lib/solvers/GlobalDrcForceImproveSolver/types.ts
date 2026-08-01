@@ -35,6 +35,7 @@ export type GlobalDrcForceImproveSolverParams = {
   enableLargeBoardBroadFallback?: boolean
   enableTargetedErrorSweep?: boolean
   enablePostSolveClearanceRelaxation?: boolean
+  enableSafeTraceLayerMoves?: boolean
   enableViaInPadLayerMoves?: boolean
 }
 
