@@ -1758,6 +1758,7 @@ const insertDetourPointAwayFromPoint = (
     ...route.route[segment.startIndex]!,
     x: projection.x + detourTranslation.x,
     y: projection.y + detourTranslation.y,
+    pcb_port_id: undefined,
   }
   clampToBounds(detourPoint, srj.bounds)
   if (
@@ -1971,6 +1972,7 @@ const moveSegmentAwayFromObstacle = (
             y:
               obstacle.center.y +
               repulsion.direction.y * (halfHeight + requiredDistance),
+            pcb_port_id: undefined,
           },
           {
             ...route.route[segment.startIndex]!,
@@ -1978,6 +1980,7 @@ const moveSegmentAwayFromObstacle = (
             y:
               obstacle.center.y +
               repulsion.direction.y * (halfHeight + requiredDistance),
+            pcb_port_id: undefined,
           },
         ]
       : [
@@ -1987,6 +1990,7 @@ const moveSegmentAwayFromObstacle = (
               obstacle.center.x +
               repulsion.direction.x * (halfWidth + requiredDistance),
             y: obstacle.center.y - halfHeight - requiredDistance,
+            pcb_port_id: undefined,
           },
           {
             ...route.route[segment.startIndex]!,
@@ -1994,6 +1998,7 @@ const moveSegmentAwayFromObstacle = (
               obstacle.center.x +
               repulsion.direction.x * (halfWidth + requiredDistance),
             y: obstacle.center.y + halfHeight + requiredDistance,
+            pcb_port_id: undefined,
           },
         ]
 
