@@ -3207,6 +3207,14 @@ export const applyTracePairLayerMoveForError = (
   const start = route.route[spanStartIndex]
   const end = route.route[spanEndIndex]
   if (!start || !end || start.z !== end.z) return false
+  if (
+    !allowTerminalViaInPad &&
+    route.route
+      .slice(spanStartIndex, spanEndIndex + 1)
+      .some((point) => point.pcb_port_id)
+  ) {
+    return false
+  }
   const movedSpan = route.route
     .slice(spanStartIndex, spanEndIndex + 1)
     .map((point) => ({ ...point, z: targetZ, pcb_port_id: undefined }))
