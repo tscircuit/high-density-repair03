@@ -3771,23 +3771,21 @@ export const applyTracePairLayerMoveForError = (
 }
 
 /** Routes one exact trace segment around an endpoint of the blocking segment. */
-export const applyTracePairDetourForError = (
-  {
-    srj,
-    routes,
-    error,
-    traceRouteIndexById,
-    routeSide,
-    blockingEndpointSide,
-  }: {
-    srj: SimpleRouteJson
-    routes: MutableRoute[]
-    error: Record<string, unknown>
-    traceRouteIndexById: Map<string, number>
-    routeSide: 0 | 1
-    blockingEndpointSide: 0 | 1
-  },
-) => {
+export const applyTracePairDetourForError = ({
+  srj,
+  routes,
+  error,
+  traceRouteIndexById,
+  routeSide,
+  blockingEndpointSide,
+}: {
+  srj: SimpleRouteJson
+  routes: MutableRoute[]
+  error: Record<string, unknown>
+  traceRouteIndexById: Map<string, number>
+  routeSide: 0 | 1
+  blockingEndpointSide: 0 | 1
+}) => {
   if (getDrcErrorType(error) !== "pcb_trace_error") return false
   const center = getErrorCenter(error)
   const routePair = getTraceRoutePairForError(error, traceRouteIndexById)

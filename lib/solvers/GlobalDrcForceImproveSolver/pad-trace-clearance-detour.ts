@@ -65,17 +65,15 @@ type TransitionRelocation = {
   target: RoutePoint
 }
 
-const selectExactObstacle = (
-  {
-    srj,
-    padId,
-    errorCenter,
-  }: {
-    srj: SimpleRouteJson
-    padId: string
-    errorCenter: Point
-  },
-): Obstacle | undefined => {
+const selectExactObstacle = ({
+  srj,
+  padId,
+  errorCenter,
+}: {
+  srj: SimpleRouteJson
+  padId: string
+  errorCenter: Point
+}): Obstacle | undefined => {
   const candidates = srj.obstacles.filter(
     (obstacle) =>
       obstacle.obstacleId === padId || obstacle.connectedTo.includes(padId),
@@ -93,17 +91,15 @@ const selectExactObstacle = (
   })[0]
 }
 
-const projectPointOntoSegment = (
-  {
-    point,
-    start,
-    end,
-  }: {
-    point: Point
-    start: Point
-    end: Point
-  },
-): Point => {
+const projectPointOntoSegment = ({
+  point,
+  start,
+  end,
+}: {
+  point: Point
+  start: Point
+  end: Point
+}): Point => {
   const dx = end.x - start.x
   const dy = end.y - start.y
   const lengthSquared = dx * dx + dy * dy
@@ -117,21 +113,19 @@ const projectPointOntoSegment = (
   return { x: start.x + dx * t, y: start.y + dy * t }
 }
 
-const getAffectedRun = (
-  {
-    route,
-    obstacle,
-    srj,
-    errorCenter,
-    clearance,
-  }: {
-    route: MutableRoute
-    obstacle: Obstacle
-    srj: SimpleRouteJson
-    errorCenter: Point
-    clearance: number
-  },
-): number[] | undefined => {
+const getAffectedRun = ({
+  route,
+  obstacle,
+  srj,
+  errorCenter,
+  clearance,
+}: {
+  route: MutableRoute
+  obstacle: Obstacle
+  srj: SimpleRouteJson
+  errorCenter: Point
+  clearance: number
+}): number[] | undefined => {
   const obstacleBounds = getObstacleBounds(obstacle)
   const obstacleLayers = new Set(getObstacleLayers(obstacle, srj.layerCount))
   const affectedSegmentIndexes: number[] = []
@@ -180,17 +174,15 @@ const getAffectedRun = (
   })[0]
 }
 
-const segmentCrossesBoundsInterior = (
-  {
-    start,
-    end,
-    bounds,
-  }: {
-    start: Point
-    end: Point
-    bounds: Bounds2D
-  },
-): boolean => {
+const segmentCrossesBoundsInterior = ({
+  start,
+  end,
+  bounds,
+}: {
+  start: Point
+  end: Point
+  bounds: Bounds2D
+}): boolean => {
   const interior = {
     minX: bounds.minX + POSITION_EPSILON,
     minY: bounds.minY + POSITION_EPSILON,
@@ -249,19 +241,17 @@ const isPointOnBoard = (point: Point, srj: SimpleRouteJson): boolean => {
   return inside
 }
 
-const getTransitionRelocation = (
-  {
-    route,
-    anchorIndex,
-    bounds,
-    srj,
-  }: {
-    route: MutableRoute
-    anchorIndex: number
-    bounds: Bounds2D
-    srj: SimpleRouteJson
-  },
-): TransitionRelocation | undefined => {
+const getTransitionRelocation = ({
+  route,
+  anchorIndex,
+  bounds,
+  srj,
+}: {
+  route: MutableRoute
+  anchorIndex: number
+  bounds: Bounds2D
+  srj: SimpleRouteJson
+}): TransitionRelocation | undefined => {
   const anchor = route.route[anchorIndex]
   if (!anchor) return undefined
 
@@ -325,19 +315,17 @@ const getPathLength = ({
   }, 0)
 }
 
-const getValidDetourPaths = (
-  {
-    start,
-    end,
-    bounds,
-    srj,
-  }: {
-    start: Point
-    end: Point
-    bounds: Bounds2D
-    srj: SimpleRouteJson
-  },
-): Point[][] => {
+const getValidDetourPaths = ({
+  start,
+  end,
+  bounds,
+  srj,
+}: {
+  start: Point
+  end: Point
+  bounds: Bounds2D
+  srj: SimpleRouteJson
+}): Point[][] => {
   const topLeft = { x: bounds.minX, y: bounds.maxY }
   const topRight = { x: bounds.maxX, y: bounds.maxY }
   const bottomRight = { x: bounds.maxX, y: bounds.minY }
