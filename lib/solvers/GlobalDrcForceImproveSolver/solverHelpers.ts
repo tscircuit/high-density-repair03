@@ -2308,14 +2308,89 @@ const pushViaViaPair = (
   return movedLeft || movedRight
 }
 
+const addLocalDetourToSegment = (
+  routes: MutableRoute[],
+  segment: Segment,
+  collisionT: number,
+  direction: Point,
+  offset: number,
+  srj: SimpleRouteJson,
+) => {
+  const route = routes[segment.routeIndex]
+  if (!route || offset <= POSITION_EPSILON) return false
+
+  const segmentX = segment.end.x - segment.start.x
+  const segmentY = segment.end.y - segment.start.y
+  const segmentLength = Math.hypot(segmentX, segmentY)
+  if (segmentLength <= POSITION_EPSILON) return false
+
+  const halfSpan = Math.min(segmentLength * 0.45, Math.max(0.08, offset * 1.5))
+  const beforeT = clampValue(collisionT - halfSpan / segmentLength, 0.02, 0.98)
+  const afterT = clampValue(collisionT + halfSpan / segmentLength, 0.02, 0.98)
+  if (beforeT >= afterT) return false
+
+  const pointAt = (t: number) => ({
+    x: segment.start.x + segmentX * t,
+    y: segment.start.y + segmentY * t,
+    z: segment.z,
+  })
+  const before = pointAt(beforeT)
+  const after = pointAt(afterT)
+  const detourBefore = {
+    ...before,
+    x: before.x + direction.x * offset,
+    y: before.y + direction.y * offset,
+  }
+  const detourAfter = {
+    ...after,
+    x: after.x + direction.x * offset,
+    y: after.y + direction.y * offset,
+  }
+  const candidateSegments = [
+    [segment.start, before],
+    [before, detourBefore],
+    [detourBefore, detourAfter],
+    [detourAfter, after],
+    [after, segment.end],
+  ] as const
+  if (
+    candidateSegments.some(
+      ([start, end]) =>
+        getSegmentBoardClearance(srj, start, end) <
+        segment.radius - COORDINATE_EPSILON,
+    )
+  ) {
+    return false
+  }
+
+  const originalStart = route.route[segment.startIndex]
+  const originalEnd = route.route[segment.endIndex]
+  if (!originalStart || !originalEnd) return false
+  route.route.splice(
+    segment.startIndex,
+    2,
+    { ...originalStart },
+    before,
+    detourBefore,
+    detourAfter,
+    after,
+    { ...originalEnd },
+  )
+  return true
+}
+
 const pushViaSegmentPair = (
   routes: MutableRoute[],
   via: ViaNode,
   segment: Segment,
   srj: SimpleRouteJson,
   connMap?: ConnectivityMap,
-  maxMove = BROAD_MAX_MOVE,
-  moveDivisor = 2,
+  options: {
+    maxMove?: number
+    moveDivisor?: number
+    preferLocalDetour?: boolean
+    detourScale?: number
+  } = {},
 ) => {
   if (sharesNet(via.rootConnectionName, segment.rootConnectionName, connMap))
     return false
@@ -2348,6 +2423,25 @@ const pushViaSegmentPair = (
       : segmentLength > POSITION_EPSILON
         ? (segmentX / segmentLength) * fallbackSign
         : 0
+  const maxMove = options.maxMove ?? BROAD_MAX_MOVE
+  const moveDivisor = options.moveDivisor ?? 2
+  const detourScale = options.detourScale ?? 1
+  if (
+    options.preferLocalDetour &&
+    addLocalDetourToSegment(
+      routes,
+      segment,
+      projection.t,
+      {
+        x: -directionX * Math.sign(detourScale),
+        y: -directionY * Math.sign(detourScale),
+      },
+      Math.min(TRACE_PAD_REPAIR_MAX_MOVE, penetration * Math.abs(detourScale)),
+      srj,
+    )
+  ) {
+    return true
+  }
   const move = Math.min(maxMove, penetration / moveDivisor)
   const movedVia = moveVia(
     routes,
@@ -2373,6 +2467,7 @@ const pushSegmentSegmentPair = (
   right: Segment,
   srj: SimpleRouteJson,
   connMap?: ConnectivityMap,
+  options: { preferLocalDetour?: boolean; detourScale?: number } = {},
 ) => {
   if (
     left.z !== right.z ||
@@ -2411,6 +2506,23 @@ const pushSegmentSegmentPair = (
       : fallbackLength > POSITION_EPSILON
         ? (leftVectorX / fallbackLength) * fallbackSign
         : 0
+  const detourScale = options.detourScale ?? 1
+  if (
+    options.preferLocalDetour &&
+    addLocalDetourToSegment(
+      routes,
+      left,
+      candidate.leftT,
+      {
+        x: directionX * Math.sign(detourScale),
+        y: directionY * Math.sign(detourScale),
+      },
+      Math.min(TRACE_PAD_REPAIR_MAX_MOVE, penetration * Math.abs(detourScale)),
+      srj,
+    )
+  ) {
+    return true
+  }
   const move = Math.min(BROAD_MAX_MOVE, penetration / 2)
   const movedLeft = moveSegmentByDistribution(
     routes,
@@ -3672,7 +3784,14 @@ export const applyDrcErrorForces = (
       if (
         leftSegment &&
         rightSegment &&
-        pushSegmentSegmentPair(routes, leftSegment, rightSegment, srj, connMap)
+        pushSegmentSegmentPair(
+          routes,
+          leftSegment,
+          rightSegment,
+          srj,
+          connMap,
+          { preferLocalDetour: true, detourScale: scale },
+        )
       ) {
         changed = true
         continue
@@ -3714,15 +3833,12 @@ export const applyDrcErrorForces = (
           Math.hypot(nearestVia.x - center.x, nearestVia.y - center.y) < 0.45)
       ) {
         changed =
-          pushViaSegmentPair(
-            routes,
-            nearestVia,
-            nearestSegment,
-            srj,
-            connMap,
-            TRACE_PAD_REPAIR_MAX_MOVE * Math.abs(scale),
-            1,
-          ) || changed
+          pushViaSegmentPair(routes, nearestVia, nearestSegment, srj, connMap, {
+            maxMove: TRACE_PAD_REPAIR_MAX_MOVE * Math.abs(scale),
+            moveDivisor: 1,
+            preferLocalDetour: true,
+            detourScale: scale,
+          }) || changed
       }
 
       const shouldUseObstacleMove =
