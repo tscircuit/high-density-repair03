@@ -729,6 +729,8 @@ export class AutoroutingDrcEngine {
       pcb_pad_id: obstacle.obstacleId,
       source_trace_id: "",
       pcb_trace_error_id: errorId,
+      minimum_clearance: this.traceClearance,
+      actual_clearance: gap,
       pcb_component_ids: [],
       pcb_port_ids: [
         ...new Set([

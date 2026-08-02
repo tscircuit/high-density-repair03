@@ -3,10 +3,8 @@ import type { SimpleRouteJson } from "../../types"
 import { mapZToLayerName } from "../../utils/mapZToLayerName"
 import type { Bounds2D, MutableRoute, Point } from "./internalTypes"
 import {
-  CLEARANCE_SLACK,
   COORDINATE_EPSILON,
   POSITION_EPSILON,
-  getTraceToPadEdgeClearance,
 } from "./solverConfig"
 import { clampValue } from "./spatialIndex"
 
@@ -275,10 +273,14 @@ export const applyPadTraceClearanceDetour = (params: {
   const obstacle = selectExactObstacle(srj, padId, errorCenter)
   if (!route || !obstacle) return false
 
+  const minimumClearance =
+    typeof error.minimum_clearance === "number"
+      ? error.minimum_clearance
+      : (srj.minTraceToPadEdgeClearance ?? 0.1)
   const clearance =
     (route.traceThickness ?? srj.minTraceWidth) / 2 +
-    getTraceToPadEdgeClearance(srj) +
-    CLEARANCE_SLACK
+    minimumClearance +
+    POSITION_EPSILON
   const affectedRun = getAffectedRun(
     route,
     obstacle,
