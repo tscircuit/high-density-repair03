@@ -4,6 +4,7 @@ import {
   getDrcErrorRouteIndexes,
   getRouteDisjointDrcErrorBatch,
 } from "../lib/solvers/GlobalDrcForceImproveSolver/solverHelpers"
+import { getBackoffForceScaleForIteration } from "../lib/solvers/GlobalDrcForceImproveSolver/solverConfig"
 import type { DrcEvaluator, HighDensityRoute, SimpleRouteJson } from "../lib"
 
 const createPadError = (traceId: string, center: { x: number; y: number }) => ({
@@ -252,4 +253,12 @@ test("does not charge a rejected disjoint batch to the precise candidate budget"
   expect(solver.stats.globalDrcForceImproveRouteDisjointBatchesAccepted).toBe(0)
   expect(solver.stats.globalDrcForceImproveCandidateAttempts).toBe(4)
   expect(solver.stats.finalDrcIssueCount).toBe(4)
+})
+
+test("rotates precise force scales after batch backoff", () => {
+  expect(
+    [1, 2, 3, 4].map((iteration) =>
+      getBackoffForceScaleForIteration(1, iteration),
+    ),
+  ).toEqual([1, 1.75, -1, 1])
 })

@@ -11,6 +11,7 @@ import {
   MAX_ROUTE_DISJOINT_BATCH_CONSECUTIVE_MISSES,
   MIN_ITERATIONS_FOR_LARGE_BOARD_BROAD_FALLBACK,
   getBaseMaxIterations,
+  getBackoffForceScaleForIteration,
   getDrcCountImprovementCheckInterval,
   getDrcScaledMaxIterations,
   getForceScalesForEffort,
@@ -799,12 +800,13 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
 
       this.errorCursor = (errorIndex + 1) % centeredErrors.length
 
-      const forceScales =
+      const forceScalesForEffort = getForceScalesForEffort(this.effort)
+      const forceScales: readonly number[] =
         routeDisjointBatchMissedThisStep ||
         this.routeDisjointBatchConsecutiveMisses <
           MAX_ROUTE_DISJOINT_BATCH_CONSECUTIVE_MISSES
-          ? getForceScalesForEffort(this.effort)
-          : ([1] as const)
+          ? forceScalesForEffort
+          : [getBackoffForceScaleForIteration(this.effort, this.iterations)]
       for (const scale of forceScales) {
         if (candidateAttemptsThisStep >= maxCandidateAttemptsThisStep) break
 

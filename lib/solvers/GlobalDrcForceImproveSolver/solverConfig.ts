@@ -76,6 +76,15 @@ export const getDrcCountImprovementCheckInterval = (
 export const getForceScalesForEffort = (effort: number) =>
   effort >= 2 ? DEEP_ERROR_FORCE_SCALES : FAST_ERROR_FORCE_SCALES
 
+export const getBackoffForceScaleForIteration = (
+  effort: number,
+  iteration: number,
+) => {
+  const forceScales = getForceScalesForEffort(effort)
+  const iterationIndex = Math.max(0, Math.floor(iteration) - 1)
+  return forceScales[iterationIndex % forceScales.length]!
+}
+
 export const getMaxTargetedCandidateAttemptsForEffort = (effort: number) =>
   Math.max(
     1,
