@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test"
 import { GlobalDrcForceImproveSolver } from "../lib"
 import {
+  applyDrcErrorForces,
   getDrcErrorRouteIndexes,
   getRouteDisjointDrcErrorBatch,
 } from "../lib/solvers/GlobalDrcForceImproveSolver/solverHelpers"
@@ -55,6 +56,79 @@ test("resolves every explicit trace participant to its owning route", () => {
   )
 
   expect(routeIndexes).toEqual([4, 9])
+})
+
+test("batch ownership scoping does not change precise candidate behavior", () => {
+  const srj: SimpleRouteJson = {
+    bounds: { minX: -2, minY: -2, maxX: 2, maxY: 2 },
+    connections: [
+      { name: "trace_route", pointsToConnect: [] },
+      { name: "via_route", pointsToConnect: [] },
+    ],
+    obstacles: [
+      {
+        type: "rect",
+        center: { x: 0, y: 0 },
+        width: 0.4,
+        height: 0.4,
+        layers: ["top"],
+        connectedTo: ["pad"],
+        obstacleId: "pad",
+      },
+    ],
+    layerCount: 2,
+    minTraceWidth: 0.1,
+    minViaDiameter: 0.3,
+  }
+  const routes: HighDensityRoute[] = [
+    {
+      connectionName: "trace_route",
+      route: [
+        { x: -1, y: 0, z: 0 },
+        { x: 1, y: 0, z: 0 },
+      ],
+      vias: [],
+      traceThickness: 0.1,
+      viaDiameter: 0.3,
+    },
+    {
+      connectionName: "via_route",
+      route: [
+        { x: -1, y: 0.1, z: 0 },
+        { x: 0, y: 0.1, z: 0 },
+        { x: 0, y: 0.1, z: 1 },
+        { x: 1, y: 0.1, z: 1 },
+      ],
+      vias: [],
+      traceThickness: 0.1,
+      viaDiameter: 0.3,
+    },
+  ]
+  const error = {
+    ...createPadError("trace_route_0", { x: 0, y: 0 }),
+    pcb_obstacle_id: "pad",
+  }
+  const traceRouteIndexById = new Map([
+    ["trace_route_0", 0],
+    ["via_route_0", 1],
+  ])
+  const preciseRoutes = structuredClone(routes)
+  const batchRoutes = structuredClone(routes)
+
+  applyDrcErrorForces(srj, preciseRoutes, [error], traceRouteIndexById, 1)
+  applyDrcErrorForces(
+    srj,
+    batchRoutes,
+    [error],
+    traceRouteIndexById,
+    1,
+    undefined,
+    true,
+    [0],
+  )
+
+  expect(preciseRoutes[1]!.route[1]).not.toEqual(routes[1]!.route[1])
+  expect(batchRoutes[1]!.route).toEqual(routes[1]!.route)
 })
 
 const createLargeBoardMissScenario = () => {

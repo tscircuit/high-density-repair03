@@ -3786,15 +3786,16 @@ export const applyDrcErrorForces = (
     const viaIds = error.pcb_via_ids
     if (Array.isArray(viaIds) && viaIds.length > 0) {
       repulsionPoint = getRepulsionPointForError(srj, error, center)
-      const ownedRouteIndexes = getDrcErrorRouteIndexes(
-        error,
-        traceRouteIndexById,
-      )
-      const ownedVias =
-        ownedRouteIndexes.length > 0
-          ? vias.filter((via) => ownedRouteIndexes.includes(via.routeIndex))
+      const batchOwnedRouteIndexes = selectedRouteIndexSet
+        ? getDrcErrorRouteIndexes(error, traceRouteIndexById)
+        : []
+      const candidateVias =
+        batchOwnedRouteIndexes.length > 0
+          ? vias.filter((via) =>
+              batchOwnedRouteIndexes.includes(via.routeIndex),
+            )
           : vias
-      const nearestViaPair = getNearestViaPair(ownedVias, center)
+      const nearestViaPair = getNearestViaPair(candidateVias, center)
       if (nearestViaPair) {
         const isCanonicalViaPairError =
           enableCanonicalPairRepairs &&
@@ -3874,19 +3875,23 @@ export const applyDrcErrorForces = (
         explicitViaTraceId === undefined
           ? undefined
           : traceRouteIndexById.get(explicitViaTraceId)
-      const nearestVia = getNearestVia(vias, center, explicitViaRouteIndex)
+      const nearestVia = getNearestVia(
+        vias,
+        center,
+        selectedRouteIndexSet ? explicitViaRouteIndex : undefined,
+      )
       const isExactViaTraceError =
         getDrcErrorType(error) === "pcb_via_trace_clearance_error"
       if (
         nearestVia &&
-        !isObstacleError &&
+        (!selectedRouteIndexSet || !isObstacleError) &&
         !sharesNet(
           nearestVia.rootConnectionName,
           nearestSegment.rootConnectionName,
           connMap,
         ) &&
         (isExactViaTraceError ||
-          explicitViaRouteIndex !== undefined ||
+          (selectedRouteIndexSet && explicitViaRouteIndex !== undefined) ||
           Math.hypot(nearestVia.x - center.x, nearestVia.y - center.y) < 0.45)
       ) {
         changed =
@@ -3938,10 +3943,14 @@ export const applyDrcErrorForces = (
       explicitViaTraceId === undefined
         ? undefined
         : traceRouteIndexById.get(explicitViaTraceId)
-    const nearestVia = getNearestVia(vias, center, explicitViaRouteIndex)
+    const nearestVia = getNearestVia(
+      vias,
+      center,
+      selectedRouteIndexSet ? explicitViaRouteIndex : undefined,
+    )
     if (
       nearestVia &&
-      !isObstacleError &&
+      (!selectedRouteIndexSet || !isObstacleError) &&
       Math.hypot(nearestVia.x - center.x, nearestVia.y - center.y) < 0.35
     ) {
       changed =
