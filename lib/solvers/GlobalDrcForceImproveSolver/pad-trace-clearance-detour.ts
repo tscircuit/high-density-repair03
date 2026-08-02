@@ -371,20 +371,10 @@ export const applyPadTraceClearanceDetour = (params: {
     maxY: obstacleBounds.maxY + clearance,
   }
   const startRelocation = pointIsInsideBounds(startAnchor, clearanceBounds)
-    ? getTransitionRelocation(
-        route,
-        firstSegmentIndex,
-        clearanceBounds,
-        srj,
-      )
+    ? getTransitionRelocation(route, firstSegmentIndex, clearanceBounds, srj)
     : undefined
   const endRelocation = pointIsInsideBounds(endAnchor, clearanceBounds)
-    ? getTransitionRelocation(
-        route,
-        lastSegmentIndex + 1,
-        clearanceBounds,
-        srj,
-      )
+    ? getTransitionRelocation(route, lastSegmentIndex + 1, clearanceBounds, srj)
     : undefined
   if (
     (pointIsInsideBounds(startAnchor, clearanceBounds) && !startRelocation) ||
