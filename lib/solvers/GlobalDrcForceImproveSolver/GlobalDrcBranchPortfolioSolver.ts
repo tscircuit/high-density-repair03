@@ -16,7 +16,7 @@ type PortfolioPhase =
   | "baseline"
   | "broad"
   | "safeTraceLayer"
-  | "padTraceClearance"
+  | "safeTopologyFinalization"
   | "viaInPad"
   | "done"
 
@@ -38,7 +38,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
   private safeTraceLayerInputSnapshot?: DrcSnapshot
   private safeTraceLayerSolver?: GlobalDrcForceImproveSolver
   private safeTraceLayerPhaseAccepted = false
-  private padTraceClearanceSolver?: GlobalDrcForceImproveSolver
+  private safeTopologyFinalizationSolver?: GlobalDrcForceImproveSolver
   private viaInPadSolver?: GlobalDrcForceImproveSolver
   private portfolioSelectedSolver?: GlobalDrcForceImproveSolver
   private selectedSolver?: GlobalDrcForceImproveSolver
@@ -139,8 +139,8 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       ),
       drcBranchPortfolioSafeTraceLayerPhaseAccepted:
         this.safeTraceLayerPhaseAccepted,
-      drcBranchPortfolioPadTraceClearancePhaseAttempted: Boolean(
-        this.padTraceClearanceSolver,
+      drcBranchPortfolioSafeTopologyFinalizationPhaseAttempted: Boolean(
+        this.safeTopologyFinalizationSolver,
       ),
       drcBranchPortfolioViaInPadPhaseAttempted: Boolean(this.viaInPadSolver),
       drcBranchPortfolioViaInPadMaxIterations:
@@ -190,8 +190,8 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
     this.phase = "safeTraceLayer"
   }
 
-  private startPadTraceClearancePhase(routes: HighDensityRoute[]) {
-    this.padTraceClearanceSolver = new GlobalDrcForceImproveSolver({
+  private startSafeTopologyFinalizationPhase(routes: HighDensityRoute[]) {
+    this.safeTopologyFinalizationSolver = new GlobalDrcForceImproveSolver({
       ...this.params,
       hdRoutes: routes,
       drcEvaluator: this.params.drcEvaluator,
@@ -202,10 +202,10 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       enablePostSolveClearanceRelaxation: false,
       enableSafeTraceLayerMoves: false,
       enableViaInPadLayerMoves: false,
-      repairMode: "pad_trace_clearance_only",
+      repairMode: "safe_topology_only",
     })
-    this.activeSubSolver = this.padTraceClearanceSolver
-    this.phase = "padTraceClearance"
+    this.activeSubSolver = this.safeTopologyFinalizationSolver
+    this.phase = "safeTopologyFinalization"
   }
 
   private startViaInPadPhase(
@@ -357,7 +357,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         !this.safeTraceLayerPhaseAccepted &&
         safeTraceLayerSnapshot.count < this.safeTraceLayerInputSnapshot!.count
       ) {
-        this.startPadTraceClearancePhase(safeTraceLayerRoutes)
+        this.startSafeTopologyFinalizationPhase(safeTraceLayerRoutes)
         return
       }
       const acceptedRoutes = this.safeTraceLayerPhaseAccepted
@@ -384,27 +384,30 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       return
     }
 
-    if (this.phase === "padTraceClearance") {
-      this.stepBranch(this.padTraceClearanceSolver!, "pad-to-trace clearance")
-      if (!this.padTraceClearanceSolver!.solved) return
-      const padTraceClearanceRoutes = this.padTraceClearanceSolver!.getOutput()
-      const padTraceClearanceSnapshot = getDrcSnapshot(
+    if (this.phase === "safeTopologyFinalization") {
+      this.stepBranch(
+        this.safeTopologyFinalizationSolver!,
+        "safe topology finalization",
+      )
+      if (!this.safeTopologyFinalizationSolver!.solved) return
+      const finalizedRoutes = this.safeTopologyFinalizationSolver!.getOutput()
+      const finalizedSnapshot = getDrcSnapshot(
         this.params.srj,
-        padTraceClearanceRoutes,
+        finalizedRoutes,
         this.params.drcEvaluator,
         this.params.connMap,
         this.autoroutingDrcEngine,
       )
       this.safeTraceLayerPhaseAccepted =
-        getSafeTraceLayerDrcIssueCount(padTraceClearanceSnapshot) === 0
+        getSafeTraceLayerDrcIssueCount(finalizedSnapshot) === 0
       const acceptedRoutes = this.safeTraceLayerPhaseAccepted
-        ? padTraceClearanceRoutes
+        ? finalizedRoutes
         : this.safeTraceLayerInputRoutes!
       const acceptedSnapshot = this.safeTraceLayerPhaseAccepted
-        ? padTraceClearanceSnapshot
+        ? finalizedSnapshot
         : this.safeTraceLayerInputSnapshot!
       const acceptedSolver = this.safeTraceLayerPhaseAccepted
-        ? this.padTraceClearanceSolver
+        ? this.safeTopologyFinalizationSolver
         : this.portfolioSelectedSolver
       if (
         this.params.enableViaInPadLayerMoves &&

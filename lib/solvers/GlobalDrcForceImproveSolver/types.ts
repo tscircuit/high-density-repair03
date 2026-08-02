@@ -37,7 +37,8 @@ export type GlobalDrcForceImproveSolverParams = {
   enablePostSolveClearanceRelaxation?: boolean
   enableSafeTraceLayerMoves?: boolean
   enableViaInPadLayerMoves?: boolean
-  repairMode?: "default" | "pad_trace_clearance_only"
+  /** Internal portfolio phase that only applies DRC-scored planar repairs. */
+  repairMode?: "default" | "safe_topology_only"
 }
 
 export type GlobalDrcBranchPortfolioSolverParams = Omit<
