@@ -99,6 +99,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   readonly enablePostSolveClearanceRelaxation: boolean
   readonly enableSafeTraceLayerMoves: boolean
   readonly enableViaInPadLayerMoves: boolean
+  readonly repairMode: "default" | "pad_trace_clearance_only"
   outputHdRoutes: HighDensityRoute[]
   private initialDrcIssueCount: number | undefined
   private broadForceAccepted = false
@@ -109,6 +110,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   private padTraceClearanceDetourAttempts = 0
   private padTopologyErrorCursor = 0
   private padTraceClearanceDetourCursorByErrorId = new Map<string, number>()
+  private padTraceClearanceVariantsCheckedSinceImprovement = 0
   private safeTraceLayerCursorByErrorId = new Map<string, number>()
   private tracePairDetourCursorByErrorId = new Map<string, number>()
   private errorCursor = 0
@@ -155,6 +157,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       params.enablePostSolveClearanceRelaxation ?? true
     this.enableSafeTraceLayerMoves = params.enableSafeTraceLayerMoves ?? false
     this.enableViaInPadLayerMoves = params.enableViaInPadLayerMoves ?? false
+    this.repairMode = params.repairMode ?? "default"
     this.outputHdRoutes = params.hdRoutes
     this.MAX_ITERATIONS =
       this.configuredMaxIterations ?? getBaseMaxIterations(this.effort)
@@ -177,6 +180,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           this.enablePostSolveClearanceRelaxation,
         enableSafeTraceLayerMoves: this.enableSafeTraceLayerMoves,
         enableViaInPadLayerMoves: this.enableViaInPadLayerMoves,
+        repairMode: this.repairMode,
       },
     ] as const
   }
@@ -348,6 +352,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     let candidateAttemptsThisStep = 0
     let safeTraceLayerCandidateAttemptsThisStep = 0
     let padTraceClearanceDetourAttemptsThisStep = 0
+    let padTraceClearanceVariantsCheckedThisStep = 0
     let acceptedCandidate = false
     let attemptedPeriodicLargeBoardBroadFallback = false
     const maxErrorsThisStep = Math.min(
@@ -364,7 +369,9 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     const padTraceErrors = centeredErrors.filter(
       (error) =>
         error.type === "pcb_pad_trace_clearance_error" ||
-        ((this.enableSafeTraceLayerMoves || shouldTryTracePairTopology) &&
+        ((this.enableSafeTraceLayerMoves ||
+          this.repairMode === "pad_trace_clearance_only" ||
+          shouldTryTracePairTopology) &&
           error.type === "pcb_trace_error"),
     )
     const orderedPadTopologyErrors = padTraceErrors.map(
@@ -373,8 +380,32 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           (this.padTopologyErrorCursor + offset) % padTraceErrors.length
         ]!,
     )
+    const eligiblePadTraceClearanceErrorCount = padTraceErrors.filter(
+      (error) => {
+        const traceErrorKey =
+          typeof error.pcb_trace_error_id === "string"
+            ? error.pcb_trace_error_id
+            : typeof error.pcb_trace_id === "string"
+              ? error.pcb_trace_id
+              : undefined
+        const padTraceErrorKey =
+          typeof error.pcb_pad_trace_clearance_error_id === "string"
+            ? error.pcb_pad_trace_clearance_error_id
+            : typeof error.pcb_pad_id === "string"
+              ? traceErrorKey
+              : undefined
+        return (
+          padTraceErrorKey !== undefined &&
+          getTraceRouteIndexForError(
+            error,
+            bestSnapshot.traceRouteIndexById,
+          ) !== undefined
+        )
+      },
+    ).length
     for (const error of this.enableSafeTraceLayerMoves ||
-    this.enableViaInPadLayerMoves
+    this.enableViaInPadLayerMoves ||
+    this.repairMode === "pad_trace_clearance_only"
       ? orderedPadTopologyErrors
       : []) {
       const safeTraceLayerBudgetExhausted =
@@ -383,9 +414,15 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       const viaInPadBudgetExhausted =
         !this.enableViaInPadLayerMoves ||
         candidateAttemptsThisStep >= maxCandidateAttemptsThisStep
+      const padTraceClearanceBudgetExhausted =
+        this.repairMode !== "pad_trace_clearance_only" ||
+        padTraceClearanceDetourAttemptsThisStep >=
+          maxCandidateAttemptsThisStep
       if (
         acceptedCandidate ||
-        (safeTraceLayerBudgetExhausted && viaInPadBudgetExhausted)
+        (safeTraceLayerBudgetExhausted &&
+          viaInPadBudgetExhausted &&
+          padTraceClearanceBudgetExhausted)
       ) {
         break
       }
@@ -422,8 +459,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         bestSnapshot.traceRouteIndexById,
       )
       if (
-        this.enableSafeTraceLayerMoves &&
-        this.stalledIterations > 0 &&
+        this.repairMode === "pad_trace_clearance_only" &&
         traceRouteIndex !== undefined &&
         padTraceErrorKey
       ) {
@@ -440,6 +476,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           detourCursor =
             (detourCursor + 1) % PAD_TRACE_CLEARANCE_DETOUR_VARIANT_COUNT
           variantsChecked += 1
+          padTraceClearanceVariantsCheckedThisStep += 1
           const candidateRoutes = cloneRoutesForIndexes(bestRoutes, [
             traceRouteIndex,
           ])
@@ -864,6 +901,29 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         }
         acceptedCandidate = true
       }
+    }
+
+    if (this.repairMode === "pad_trace_clearance_only") {
+      this.outputHdRoutes = bestRoutes
+      this.outputSnapshot = bestSnapshot
+      if (acceptedCandidate) {
+        this.padTraceClearanceDetourCursorByErrorId.clear()
+        this.padTraceClearanceVariantsCheckedSinceImprovement = 0
+      } else {
+        this.padTraceClearanceVariantsCheckedSinceImprovement +=
+          padTraceClearanceVariantsCheckedThisStep
+      }
+      this.updateStats(bestSnapshot)
+      const allVariantsChecked =
+        eligiblePadTraceClearanceErrorCount === 0 ||
+        this.padTraceClearanceVariantsCheckedSinceImprovement >=
+          eligiblePadTraceClearanceErrorCount *
+            PAD_TRACE_CLEARANCE_DETOUR_VARIANT_COUNT
+      if (bestSnapshot.count === 0 || allVariantsChecked) {
+        this.solved = true
+        this.progress = 1
+      }
+      return
     }
 
     if (!acceptedCandidate && targetedSweepErrors.length >= 2) {

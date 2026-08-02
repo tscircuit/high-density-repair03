@@ -37,10 +37,13 @@ export type GlobalDrcForceImproveSolverParams = {
   enablePostSolveClearanceRelaxation?: boolean
   enableSafeTraceLayerMoves?: boolean
   enableViaInPadLayerMoves?: boolean
+  repairMode?: "default" | "pad_trace_clearance_only"
 }
 
-export type GlobalDrcBranchPortfolioSolverParams =
-  GlobalDrcForceImproveSolverParams & {
+export type GlobalDrcBranchPortfolioSolverParams = Omit<
+  GlobalDrcForceImproveSolverParams,
+  "repairMode"
+> & {
     broadMaxIterations: number
     broadPassMultiplier: number
     viaInPadDrcEvaluator?: DrcEvaluator
