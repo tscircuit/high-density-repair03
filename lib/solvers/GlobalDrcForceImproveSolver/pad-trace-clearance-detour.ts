@@ -60,61 +60,9 @@ const pointIsInsideBounds = (point: Point, bounds: Bounds2D): boolean =>
   point.y > bounds.minY + POSITION_EPSILON &&
   point.y < bounds.maxY - POSITION_EPSILON
 
-type TransitionRetreat = {
+type TransitionRelocation = {
   pointIndexes: number[]
   target: RoutePoint
-}
-
-const getTransitionRetreat = (
-  route: MutableRoute,
-  anchorIndex: number,
-  direction: "before" | "after",
-  bounds: Bounds2D,
-): TransitionRetreat | undefined => {
-  const anchor = route.route[anchorIndex]
-  if (!anchor) return undefined
-
-  let transitionStartIndex = anchorIndex
-  while (
-    transitionStartIndex > 0 &&
-    pointsSharePosition(route.route[transitionStartIndex - 1]!, anchor)
-  ) {
-    transitionStartIndex -= 1
-  }
-  let transitionEndIndex = anchorIndex
-  while (
-    transitionEndIndex + 1 < route.route.length &&
-    pointsSharePosition(route.route[transitionEndIndex + 1]!, anchor)
-  ) {
-    transitionEndIndex += 1
-  }
-
-  const pointIndexes = Array.from(
-    { length: transitionEndIndex - transitionStartIndex + 1 },
-    (_, offset) => transitionStartIndex + offset,
-  )
-  if (
-    transitionStartIndex === 0 ||
-    transitionEndIndex === route.route.length - 1 ||
-    new Set(pointIndexes.map((index) => route.route[index]!.z)).size < 2
-  ) {
-    return undefined
-  }
-
-  const neighborIndex =
-    direction === "before" ? transitionStartIndex - 1 : transitionEndIndex + 1
-  const transitionEdgeIndex =
-    direction === "before" ? transitionStartIndex : transitionEndIndex
-  const target = route.route[neighborIndex]
-  if (
-    !target ||
-    target.z !== route.route[transitionEdgeIndex]!.z ||
-    pointIsInsideBounds(target, bounds)
-  ) {
-    return undefined
-  }
-
-  return { pointIndexes, target }
 }
 
 const selectExactObstacle = (
@@ -271,6 +219,59 @@ const isPointOnBoard = (point: Point, srj: SimpleRouteJson): boolean => {
   return inside
 }
 
+const getTransitionRelocation = (
+  route: MutableRoute,
+  anchorIndex: number,
+  bounds: Bounds2D,
+  srj: SimpleRouteJson,
+): TransitionRelocation | undefined => {
+  const anchor = route.route[anchorIndex]
+  if (!anchor) return undefined
+
+  let transitionStartIndex = anchorIndex
+  while (
+    transitionStartIndex > 0 &&
+    pointsSharePosition(route.route[transitionStartIndex - 1]!, anchor)
+  ) {
+    transitionStartIndex -= 1
+  }
+  let transitionEndIndex = anchorIndex
+  while (
+    transitionEndIndex + 1 < route.route.length &&
+    pointsSharePosition(route.route[transitionEndIndex + 1]!, anchor)
+  ) {
+    transitionEndIndex += 1
+  }
+
+  const pointIndexes = Array.from(
+    { length: transitionEndIndex - transitionStartIndex + 1 },
+    (_, offset) => transitionStartIndex + offset,
+  )
+  if (
+    transitionStartIndex === 0 ||
+    transitionEndIndex === route.route.length - 1 ||
+    new Set(pointIndexes.map((index) => route.route[index]!.z)).size < 2
+  ) {
+    return undefined
+  }
+
+  const target = [
+    { ...anchor, x: bounds.minX },
+    { ...anchor, x: bounds.maxX },
+    { ...anchor, y: bounds.minY },
+    { ...anchor, y: bounds.maxY },
+  ]
+    .filter((candidate) => isPointOnBoard(candidate, srj))
+    .sort(
+      (left, right) =>
+        Math.hypot(left.x - anchor.x, left.y - anchor.y) -
+        Math.hypot(right.x - anchor.x, right.y - anchor.y),
+    )[0]
+  if (!target) return undefined
+
+  return { pointIndexes, target }
+}
+
 const getPathLength = (start: Point, path: Point[], end: Point): number => {
   const points = [start, ...path, end]
   return points.slice(0, -1).reduce((total, point, index) => {
@@ -369,43 +370,48 @@ export const applyPadTraceClearanceDetour = (params: {
     maxX: obstacleBounds.maxX + clearance,
     maxY: obstacleBounds.maxY + clearance,
   }
-  const startRetreat = pointIsInsideBounds(startAnchor, clearanceBounds)
-    ? getTransitionRetreat(route, firstSegmentIndex, "before", clearanceBounds)
+  const startRelocation = pointIsInsideBounds(startAnchor, clearanceBounds)
+    ? getTransitionRelocation(
+        route,
+        firstSegmentIndex,
+        clearanceBounds,
+        srj,
+      )
     : undefined
-  const endRetreat = pointIsInsideBounds(endAnchor, clearanceBounds)
-    ? getTransitionRetreat(
+  const endRelocation = pointIsInsideBounds(endAnchor, clearanceBounds)
+    ? getTransitionRelocation(
         route,
         lastSegmentIndex + 1,
-        "after",
         clearanceBounds,
+        srj,
       )
     : undefined
   if (
-    (pointIsInsideBounds(startAnchor, clearanceBounds) && !startRetreat) ||
-    (pointIsInsideBounds(endAnchor, clearanceBounds) && !endRetreat) ||
-    (startRetreat &&
-      endRetreat &&
-      startRetreat.pointIndexes.some((index) =>
-        endRetreat.pointIndexes.includes(index),
+    (pointIsInsideBounds(startAnchor, clearanceBounds) && !startRelocation) ||
+    (pointIsInsideBounds(endAnchor, clearanceBounds) && !endRelocation) ||
+    (startRelocation &&
+      endRelocation &&
+      startRelocation.pointIndexes.some((index) =>
+        endRelocation.pointIndexes.includes(index),
       ))
   ) {
     return false
   }
 
   const detourPath = getValidDetourPaths(
-    startRetreat?.target ?? startAnchor,
-    endRetreat?.target ?? endAnchor,
+    startRelocation?.target ?? startAnchor,
+    endRelocation?.target ?? endAnchor,
     clearanceBounds,
     srj,
   )[variantIndex]
   if (!detourPath) return false
 
-  for (const retreat of [startRetreat, endRetreat]) {
-    if (!retreat) continue
-    for (const pointIndex of retreat.pointIndexes) {
+  for (const relocation of [startRelocation, endRelocation]) {
+    if (!relocation) continue
+    for (const pointIndex of relocation.pointIndexes) {
       const point = route.route[pointIndex]!
-      point.x = retreat.target.x
-      point.y = retreat.target.y
+      point.x = relocation.target.x
+      point.y = relocation.target.y
     }
   }
 
