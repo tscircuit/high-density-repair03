@@ -521,7 +521,8 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
               traceId: candidateError.pcb_trace_id,
               padId: candidateError.pcb_pad_id,
               errorId:
-                candidateError.pcb_trace_error_id ?? candidateError.pcb_error_id,
+                candidateError.pcb_trace_error_id ??
+                candidateError.pcb_error_id,
               center: candidateError.center ?? candidateError.pcb_center,
               message: candidateError.message,
             })),
