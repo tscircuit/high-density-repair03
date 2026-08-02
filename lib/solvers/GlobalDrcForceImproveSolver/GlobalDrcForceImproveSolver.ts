@@ -29,6 +29,9 @@ import {
   cloneRoutesForIndexes,
   getCenteredErrors,
   getDrcSnapshot,
+  getSafeTraceLayerMoveSpanExpansion,
+  getSafeTraceLayerMoveSpanExpansionBounds,
+  getSafeTraceLayerMoveSpanExpansionCount,
   getTargetedClearanceSweepErrors,
   getTraceRouteIndexForError,
   getTraceRoutePairForError,
@@ -78,8 +81,6 @@ const TRACE_PAIR_DETOUR_VARIANTS = ([0, 1] as const).flatMap((routeSide) =>
     ...variant,
   })),
 )
-
-const SAFE_TRACE_LAYER_LOCAL_EXPANSIONS = [0, 1, 2] as const
 
 export class GlobalDrcForceImproveSolver extends BaseSolver {
   readonly srj: SimpleRouteJson
@@ -408,10 +409,22 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       )
       if (this.enableSafeTraceLayerMoves && traceRouteIndex !== undefined) {
         const safeRouteIndexes = traceRoutePair ?? [traceRouteIndex]
+        const spanExpansionBounds = safeRouteIndexes.map((routeIndex) =>
+          getSafeTraceLayerMoveSpanExpansionBounds({
+            route: bestRoutes[routeIndex]!,
+            routeIndex,
+            error,
+          }),
+        )
+        const maxLocalSpanExpansionCount = Math.max(
+          ...spanExpansionBounds.map((bounds) =>
+            bounds ? getSafeTraceLayerMoveSpanExpansionCount(bounds) : 0,
+          ),
+        )
         const localSpanVariantCount =
           safeRouteIndexes.length *
           this.srj.layerCount *
-          SAFE_TRACE_LAYER_LOCAL_EXPANSIONS.length
+          maxLocalSpanExpansionCount
         const fullSpanVariantCount =
           safeRouteIndexes.length *
           this.srj.layerCount *
@@ -438,29 +451,36 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
             modeVariantIndex / safeRouteIndexes.length,
           )
           const targetZ = layerVariant % this.srj.layerCount
+          const localSpanCandidateIndex = Math.floor(
+            layerVariant / this.srj.layerCount,
+          )
+          const spanBounds = spanExpansionBounds[routeSide]
           const spanExpansion = isLocalSpan
-            ? SAFE_TRACE_LAYER_LOCAL_EXPANSIONS[
-                Math.floor(layerVariant / this.srj.layerCount) %
-                  SAFE_TRACE_LAYER_LOCAL_EXPANSIONS.length
-              ]!
+            ? spanBounds
+              ? getSafeTraceLayerMoveSpanExpansion(
+                  spanBounds,
+                  localSpanCandidateIndex,
+                )
+              : undefined
             : ("full" as const)
           const directionVariant = isLocalSpan
             ? 0
             : Math.floor(layerVariant / this.srj.layerCount)
+          if (!spanExpansion) continue
           const changedRouteIndex = safeRouteIndexes[routeSide]!
           const candidateRoutes = cloneRoutesForIndexes(bestRoutes, [
             changedRouteIndex,
           ])
-          const changed = applySafeTraceLayerMoveForError(
-            this.srj,
-            candidateRoutes,
+          const changed = applySafeTraceLayerMoveForError({
+            srj: this.srj,
+            routes: candidateRoutes,
             error,
-            changedRouteIndex,
+            routeIndex: changedRouteIndex,
             targetZ,
             spanExpansion,
-            this.connMap,
+            connMap: this.connMap,
             directionVariant,
-          )
+          })
           if (!changed) continue
 
           const materializedCandidateRoutes = materializeRoutesForIndexes(
