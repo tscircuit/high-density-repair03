@@ -416,8 +416,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         candidateAttemptsThisStep >= maxCandidateAttemptsThisStep
       const padTraceClearanceBudgetExhausted =
         this.repairMode !== "pad_trace_clearance_only" ||
-        padTraceClearanceDetourAttemptsThisStep >=
-          maxCandidateAttemptsThisStep
+        padTraceClearanceDetourAttemptsThisStep >= maxCandidateAttemptsThisStep
       if (
         acceptedCandidate ||
         (safeTraceLayerBudgetExhausted &&

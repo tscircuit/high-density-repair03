@@ -385,13 +385,9 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
     }
 
     if (this.phase === "padTraceClearance") {
-      this.stepBranch(
-        this.padTraceClearanceSolver!,
-        "pad-to-trace clearance",
-      )
+      this.stepBranch(this.padTraceClearanceSolver!, "pad-to-trace clearance")
       if (!this.padTraceClearanceSolver!.solved) return
-      const padTraceClearanceRoutes =
-        this.padTraceClearanceSolver!.getOutput()
+      const padTraceClearanceRoutes = this.padTraceClearanceSolver!.getOutput()
       const padTraceClearanceSnapshot = getDrcSnapshot(
         this.params.srj,
         padTraceClearanceRoutes,

@@ -44,11 +44,11 @@ export type GlobalDrcBranchPortfolioSolverParams = Omit<
   GlobalDrcForceImproveSolverParams,
   "repairMode"
 > & {
-    broadMaxIterations: number
-    broadPassMultiplier: number
-    viaInPadDrcEvaluator?: DrcEvaluator
-    viaInPadMaxIterations?: number
-  }
+  broadMaxIterations: number
+  broadPassMultiplier: number
+  viaInPadDrcEvaluator?: DrcEvaluator
+  viaInPadMaxIterations?: number
+}
 
 export type SolverDeps = Record<string, unknown>
 
