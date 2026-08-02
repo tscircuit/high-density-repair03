@@ -141,8 +141,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       drcBranchPortfolioSafeTraceLayerFinalDrcIssueCount:
         this.safeTraceLayerOutputSnapshot?.count,
       drcBranchPortfolioSafeTraceLayerCandidateAttempts:
-        this.safeTraceLayerSolver?.stats
-          .globalDrcForceImproveCandidateAttempts,
+        this.safeTraceLayerSolver?.stats.globalDrcForceImproveCandidateAttempts,
       drcBranchPortfolioSafeTraceLayerPhaseAccepted:
         this.safeTraceLayerPhaseAccepted,
       drcBranchPortfolioViaInPadPhaseAttempted: Boolean(this.viaInPadSolver),
