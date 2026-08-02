@@ -144,6 +144,12 @@ test("moves terminal-reaching trace transitions outside connected pads", () => {
   expect(solver.stats.globalDrcForceImproveViaInPadCandidatesAccepted).toBe(0)
 
   expect(solver.stats.drcBranchPortfolioSafeTraceLayerPhaseAttempted).toBe(true)
+  expect(
+    solver.stats.drcBranchPortfolioSafeTraceLayerInitialDrcIssueCount,
+  ).toBe(4)
+  expect(
+    solver.stats.drcBranchPortfolioSafeTraceLayerFinalDrcIssueCount,
+  ).toBe(0)
   expect(solver.stats.drcBranchPortfolioSafeTraceLayerPhaseAccepted).toBe(true)
 
   const residualError = {
@@ -176,6 +182,12 @@ test("moves terminal-reaching trace transitions outside connected pads", () => {
   expect(
     partialSolver.stats.drcBranchPortfolioSafeTraceLayerPhaseAttempted,
   ).toBe(true)
+  expect(
+    partialSolver.stats.drcBranchPortfolioSafeTraceLayerInitialDrcIssueCount,
+  ).toBe(4)
+  expect(
+    partialSolver.stats.drcBranchPortfolioSafeTraceLayerFinalDrcIssueCount,
+  ).toBe(1)
   expect(
     partialSolver.stats.drcBranchPortfolioSafeTraceLayerPhaseAccepted,
   ).toBe(false)

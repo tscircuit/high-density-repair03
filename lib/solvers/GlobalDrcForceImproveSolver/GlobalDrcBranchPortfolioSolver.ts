@@ -35,6 +35,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
   private broadSolver?: GlobalDrcForceImproveSolver
   private safeTraceLayerInputRoutes?: HighDensityRoute[]
   private safeTraceLayerInputSnapshot?: DrcSnapshot
+  private safeTraceLayerOutputSnapshot?: DrcSnapshot
   private safeTraceLayerSolver?: GlobalDrcForceImproveSolver
   private safeTraceLayerPhaseAccepted = false
   private viaInPadSolver?: GlobalDrcForceImproveSolver
@@ -135,6 +136,13 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       drcBranchPortfolioSafeTraceLayerPhaseAttempted: Boolean(
         this.safeTraceLayerSolver,
       ),
+      drcBranchPortfolioSafeTraceLayerInitialDrcIssueCount:
+        this.safeTraceLayerInputSnapshot?.count,
+      drcBranchPortfolioSafeTraceLayerFinalDrcIssueCount:
+        this.safeTraceLayerOutputSnapshot?.count,
+      drcBranchPortfolioSafeTraceLayerCandidateAttempts:
+        this.safeTraceLayerSolver?.stats
+          .globalDrcForceImproveCandidateAttempts,
       drcBranchPortfolioSafeTraceLayerPhaseAccepted:
         this.safeTraceLayerPhaseAccepted,
       drcBranchPortfolioViaInPadPhaseAttempted: Boolean(this.viaInPadSolver),
@@ -324,6 +332,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         this.params.connMap,
         this.autoroutingDrcEngine,
       )
+      this.safeTraceLayerOutputSnapshot = safeTraceLayerSnapshot
       this.safeTraceLayerPhaseAccepted =
         getSafeTraceLayerDrcIssueCount(safeTraceLayerSnapshot) === 0
       const acceptedRoutes = this.safeTraceLayerPhaseAccepted
