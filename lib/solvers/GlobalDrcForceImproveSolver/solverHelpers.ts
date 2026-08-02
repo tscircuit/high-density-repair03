@@ -52,6 +52,8 @@ import type { HighDensityRoute } from "../../types/high-density-types"
 import { convertHdRouteToSimplifiedRoute } from "../../utils/convertHdRouteToSimplifiedRoute"
 import { mapZToLayerName } from "../../utils/mapZToLayerName"
 
+type TraceRouteId = string
+
 const cloneRoute = (route: HighDensityRoute): MutableRoute => ({
   ...route,
   route: route.route.map((point) => ({ ...point })),
@@ -103,10 +105,10 @@ const createSimplifiedTraces = (
   routes: HighDensityRoute[],
 ): {
   traces: SimplifiedPcbTraces
-  traceRouteIndexById: Map<string, number>
+  traceRouteIndexById: Map<TraceRouteId, number>
 } => {
   const traces: SimplifiedPcbTraces = []
-  const traceRouteIndexById = new Map<string, number>()
+  const traceRouteIndexById = new Map<TraceRouteId, number>()
   const routesByConnectionName = new Map<
     string,
     Array<{ route: HighDensityRoute; routeIndex: number }>
@@ -2835,7 +2837,7 @@ export const getSafeTraceLayerDrcIssueCount = (snapshot: DrcSnapshot) =>
 
 export const getTraceRouteIndexForError = (
   error: Record<string, unknown>,
-  traceRouteIndexById: Map<string, number>,
+  traceRouteIndexById: Map<TraceRouteId, number>,
 ) => {
   const traceId = error.pcb_trace_id
   return typeof traceId === "string"
@@ -3458,7 +3460,7 @@ export const applyViaInPadLayerMoveForError = (
   srj: SimpleRouteJson,
   routes: MutableRoute[],
   error: Record<string, unknown>,
-  traceRouteIndexById: Map<string, number>,
+  traceRouteIndexById: Map<TraceRouteId, number>,
   targetZ: number,
   connMap?: ConnectivityMap,
   viaHoleDiameter?: number,
@@ -3521,7 +3523,7 @@ export const applyTerminalViaRelocationForError = (
   srj: SimpleRouteJson,
   routes: MutableRoute[],
   error: Record<string, unknown>,
-  traceRouteIndexById: Map<string, number>,
+  traceRouteIndexById: Map<TraceRouteId, number>,
   endpointSide: "start" | "end",
   connMap?: ConnectivityMap,
   viaHoleDiameter?: number,
@@ -3662,7 +3664,7 @@ export const applyTerminalViaRelocationForError = (
 
 export const getTraceRoutePairForError = (
   error: Record<string, unknown>,
-  traceRouteIndexById: Map<string, number>,
+  traceRouteIndexById: Map<TraceRouteId, number>,
 ): [number, number] | undefined => {
   const primaryTraceId = error.pcb_trace_id
   if (typeof primaryTraceId !== "string") return undefined
@@ -3701,7 +3703,7 @@ export const applyTracePairLayerMoveForError = (
   srj: SimpleRouteJson,
   routes: MutableRoute[],
   error: Record<string, unknown>,
-  traceRouteIndexById: Map<string, number>,
+  traceRouteIndexById: Map<TraceRouteId, number>,
   routeSide: 0 | 1,
   targetZ: number,
   spanExpansion = 0,
@@ -3782,7 +3784,7 @@ export const applyTracePairDetourForError = ({
   srj: SimpleRouteJson
   routes: MutableRoute[]
   error: Record<string, unknown>
-  traceRouteIndexById: Map<string, number>
+  traceRouteIndexById: Map<TraceRouteId, number>
   routeSide: 0 | 1
   blockingEndpointSide: 0 | 1
 }) => {
@@ -3903,7 +3905,7 @@ export const applyDrcErrorForces = (
   srj: SimpleRouteJson,
   routes: MutableRoute[],
   errors: Array<Record<string, unknown>>,
-  traceRouteIndexById: Map<string, number>,
+  traceRouteIndexById: Map<TraceRouteId, number>,
   scale: number,
   connMap?: ConnectivityMap,
   enableCanonicalPairRepairs = true,

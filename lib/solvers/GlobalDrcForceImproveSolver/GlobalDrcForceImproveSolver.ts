@@ -72,14 +72,21 @@ const TRACE_PAIR_DETOUR_VARIANTS = ([0, 1] as const).flatMap((routeSide) =>
   })),
 )
 
-const getTraceErrorKey = (error: Record<string, unknown>) =>
+type TraceDrcKey = string
+type PadTraceDrcKey = string
+
+const getTraceErrorKey = (
+  error: Record<string, unknown>,
+): TraceDrcKey | undefined =>
   typeof error.pcb_trace_error_id === "string"
     ? error.pcb_trace_error_id
     : typeof error.pcb_trace_id === "string"
       ? error.pcb_trace_id
       : undefined
 
-const getPadTraceErrorKey = (error: Record<string, unknown>) =>
+const getPadTraceErrorKey = (
+  error: Record<string, unknown>,
+): PadTraceDrcKey | undefined =>
   typeof error.pcb_pad_trace_clearance_error_id === "string"
     ? error.pcb_pad_trace_clearance_error_id
     : typeof error.pcb_pad_id === "string"
@@ -113,10 +120,13 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   private padTraceClearanceDetourAttempts = 0
   private tracePairDetourAttempts = 0
   private padTopologyErrorCursor = 0
-  private padTraceClearanceDetourCursorByErrorId = new Map<string, number>()
+  private padTraceClearanceDetourCursorByErrorId = new Map<
+    PadTraceDrcKey,
+    number
+  >()
   private safeTopologyVariantsCheckedSinceImprovement = 0
   private safeTraceLayerCursorByErrorId = new Map<string, number>()
-  private tracePairDetourCursorByErrorId = new Map<string, number>()
+  private tracePairDetourCursorByErrorId = new Map<TraceDrcKey, number>()
   private errorCursor = 0
   private stalledIterations = 0
   private bestDrcIssueCountSeen: number | undefined
