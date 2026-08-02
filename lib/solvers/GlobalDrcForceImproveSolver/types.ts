@@ -37,15 +37,19 @@ export type GlobalDrcForceImproveSolverParams = {
   enablePostSolveClearanceRelaxation?: boolean
   enableSafeTraceLayerMoves?: boolean
   enableViaInPadLayerMoves?: boolean
+  /** Internal portfolio phase that only applies DRC-scored planar repairs. */
+  repairMode?: "default" | "safe_topology_only"
 }
 
-export type GlobalDrcBranchPortfolioSolverParams =
-  GlobalDrcForceImproveSolverParams & {
-    broadMaxIterations: number
-    broadPassMultiplier: number
-    viaInPadDrcEvaluator?: DrcEvaluator
-    viaInPadMaxIterations?: number
-  }
+export type GlobalDrcBranchPortfolioSolverParams = Omit<
+  GlobalDrcForceImproveSolverParams,
+  "repairMode"
+> & {
+  broadMaxIterations: number
+  broadPassMultiplier: number
+  viaInPadDrcEvaluator?: DrcEvaluator
+  viaInPadMaxIterations?: number
+}
 
 export type SolverDeps = Record<string, unknown>
 

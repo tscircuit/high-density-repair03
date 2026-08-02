@@ -5,7 +5,7 @@ import {
 } from "../lib/solvers/GlobalDrcForceImproveSolver/solverHelpers"
 import type { SimpleRouteJson } from "../lib/types"
 
-test("adds a directed copper dogleg to one exact conflicting trace", () => {
+test("routes an exact trace crossing around the blocking segment endpoint", () => {
   const srj: SimpleRouteJson = {
     bounds: { minX: -2, minY: -2, maxX: 2, maxY: 2 },
     connections: [
@@ -40,26 +40,27 @@ test("adds a directed copper dogleg to one exact conflicting trace", () => {
     },
   ])
 
-  const changed = applyTracePairDetourForError(
+  const changed = applyTracePairDetourForError({
+    srj,
     routes,
-    {
+    error: {
       type: "pcb_trace_error",
       pcb_trace_id: "source_net_1_mst0_0",
       pcb_trace_error_id: "overlap_source_net_1_mst0_0_source_net_2_mst0_0",
       center: { x: 0, y: 0 },
     },
-    new Map([
+    traceRouteIndexById: new Map([
       ["source_net_1_mst0_0", 0],
       ["source_net_2_mst0_0", 1],
     ]),
-    0,
-    0.4,
-    0.45,
-    1,
-  )
+    routeSide: 0,
+    blockingEndpointSide: 0,
+  })
 
   expect(changed).toBe(true)
-  expect(routes[0]?.route).toHaveLength(6)
-  expect(Math.max(...routes[0]!.route.map((point) => point.y))).toBe(0.45)
+  expect(routes[0]?.route).toHaveLength(4)
+  expect(Math.min(...routes[0]!.route.map((point) => point.y))).toBeCloseTo(
+    -0.4,
+  )
   expect(routes[1]?.route).toHaveLength(2)
 })

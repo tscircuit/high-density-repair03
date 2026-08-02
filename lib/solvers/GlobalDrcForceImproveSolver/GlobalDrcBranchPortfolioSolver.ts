@@ -16,6 +16,7 @@ type PortfolioPhase =
   | "baseline"
   | "broad"
   | "safeTraceLayer"
+  | "safeTopologyFinalization"
   | "viaInPad"
   | "done"
 
@@ -37,6 +38,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
   private safeTraceLayerInputSnapshot?: DrcSnapshot
   private safeTraceLayerSolver?: GlobalDrcForceImproveSolver
   private safeTraceLayerPhaseAccepted = false
+  private safeTopologyFinalizationSolver?: GlobalDrcForceImproveSolver
   private viaInPadSolver?: GlobalDrcForceImproveSolver
   private portfolioSelectedSolver?: GlobalDrcForceImproveSolver
   private selectedSolver?: GlobalDrcForceImproveSolver
@@ -137,6 +139,9 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       ),
       drcBranchPortfolioSafeTraceLayerPhaseAccepted:
         this.safeTraceLayerPhaseAccepted,
+      drcBranchPortfolioSafeTopologyFinalizationPhaseAttempted: Boolean(
+        this.safeTopologyFinalizationSolver,
+      ),
       drcBranchPortfolioViaInPadPhaseAttempted: Boolean(this.viaInPadSolver),
       drcBranchPortfolioViaInPadMaxIterations:
         this.params.viaInPadMaxIterations,
@@ -150,6 +155,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       hdRoutes: this.inputHdRoutes,
       enableSafeTraceLayerMoves: false,
       enableViaInPadLayerMoves: false,
+      repairMode: "default",
     })
     this.activeSubSolver = this.baselineSolver
     this.phase = "baseline"
@@ -178,9 +184,28 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       enablePostSolveClearanceRelaxation: false,
       enableSafeTraceLayerMoves: true,
       enableViaInPadLayerMoves: false,
+      repairMode: "default",
     })
     this.activeSubSolver = this.safeTraceLayerSolver
     this.phase = "safeTraceLayer"
+  }
+
+  private startSafeTopologyFinalizationPhase(routes: HighDensityRoute[]) {
+    this.safeTopologyFinalizationSolver = new GlobalDrcForceImproveSolver({
+      ...this.params,
+      hdRoutes: routes,
+      drcEvaluator: this.params.drcEvaluator,
+      maxIterations:
+        this.params.viaInPadMaxIterations ?? this.params.maxIterations,
+      enableLargeBoardBroadFallback: false,
+      enableTargetedErrorSweep: false,
+      enablePostSolveClearanceRelaxation: false,
+      enableSafeTraceLayerMoves: false,
+      enableViaInPadLayerMoves: false,
+      repairMode: "safe_topology_only",
+    })
+    this.activeSubSolver = this.safeTopologyFinalizationSolver
+    this.phase = "safeTopologyFinalization"
   }
 
   private startViaInPadPhase(
@@ -207,6 +232,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       enablePostSolveClearanceRelaxation: false,
       enableSafeTraceLayerMoves: false,
       enableViaInPadLayerMoves: true,
+      repairMode: "default",
     })
     this.activeSubSolver = this.viaInPadSolver
     this.phase = "viaInPad"
@@ -241,6 +267,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       maxIterations: this.broadMaxIterations,
       enableSafeTraceLayerMoves: false,
       enableViaInPadLayerMoves: false,
+      repairMode: "default",
     })
     this.activeSubSolver = this.broadSolver
     this.phase = "broad"
@@ -326,6 +353,13 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       )
       this.safeTraceLayerPhaseAccepted =
         getSafeTraceLayerDrcIssueCount(safeTraceLayerSnapshot) === 0
+      if (
+        !this.safeTraceLayerPhaseAccepted &&
+        safeTraceLayerSnapshot.count < this.safeTraceLayerInputSnapshot!.count
+      ) {
+        this.startSafeTopologyFinalizationPhase(safeTraceLayerRoutes)
+        return
+      }
       const acceptedRoutes = this.safeTraceLayerPhaseAccepted
         ? safeTraceLayerRoutes
         : this.safeTraceLayerInputRoutes!
@@ -334,6 +368,46 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         : this.safeTraceLayerInputSnapshot!
       const acceptedSolver = this.safeTraceLayerPhaseAccepted
         ? this.safeTraceLayerSolver
+        : this.portfolioSelectedSolver
+      if (
+        this.params.enableViaInPadLayerMoves &&
+        this.params.viaInPadDrcEvaluator
+      ) {
+        this.startViaInPadPhase(
+          acceptedRoutes,
+          acceptedSnapshot,
+          acceptedSolver,
+        )
+      } else {
+        this.finishWithOutput(acceptedRoutes, acceptedSnapshot, acceptedSolver)
+      }
+      return
+    }
+
+    if (this.phase === "safeTopologyFinalization") {
+      this.stepBranch(
+        this.safeTopologyFinalizationSolver!,
+        "safe topology finalization",
+      )
+      if (!this.safeTopologyFinalizationSolver!.solved) return
+      const finalizedRoutes = this.safeTopologyFinalizationSolver!.getOutput()
+      const finalizedSnapshot = getDrcSnapshot(
+        this.params.srj,
+        finalizedRoutes,
+        this.params.drcEvaluator,
+        this.params.connMap,
+        this.autoroutingDrcEngine,
+      )
+      this.safeTraceLayerPhaseAccepted =
+        getSafeTraceLayerDrcIssueCount(finalizedSnapshot) === 0
+      const acceptedRoutes = this.safeTraceLayerPhaseAccepted
+        ? finalizedRoutes
+        : this.safeTraceLayerInputRoutes!
+      const acceptedSnapshot = this.safeTraceLayerPhaseAccepted
+        ? finalizedSnapshot
+        : this.safeTraceLayerInputSnapshot!
+      const acceptedSolver = this.safeTraceLayerPhaseAccepted
+        ? this.safeTopologyFinalizationSolver
         : this.portfolioSelectedSolver
       if (
         this.params.enableViaInPadLayerMoves &&
