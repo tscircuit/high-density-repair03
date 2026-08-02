@@ -128,6 +128,61 @@ const createLargeBoardMissScenario = () => {
   return { srj, hdRoutes, drcEvaluator }
 }
 
+const createRejectedBatchScenario = () => {
+  const activeRoutes: HighDensityRoute[] = Array.from(
+    { length: 4 },
+    (_, index) => ({
+      connectionName: `route_${index}`,
+      route: [
+        { x: 0, y: index * 4, z: 0 },
+        { x: 10, y: index * 4, z: 0 },
+      ],
+      vias: [],
+      traceThickness: 0.1,
+      viaDiameter: 0.3,
+    }),
+  )
+  const emptyRoutes: HighDensityRoute[] = Array.from(
+    { length: 117 },
+    (_, index) => ({
+      connectionName: `unused_${index}`,
+      route: [],
+      vias: [],
+      traceThickness: 0.1,
+      viaDiameter: 0.3,
+    }),
+  )
+  const hdRoutes = [...activeRoutes, ...emptyRoutes]
+  const srj: SimpleRouteJson = {
+    bounds: { minX: -1, minY: -2, maxX: 11, maxY: 14 },
+    connections: hdRoutes.map((route) => ({
+      name: route.connectionName,
+      pointsToConnect: [],
+    })),
+    obstacles: activeRoutes.map((route, index) => ({
+      type: "rect",
+      center: { x: index % 2 === 0 ? 2 : 8, y: index * 4 },
+      width: 1,
+      height: 1,
+      layers: ["top"],
+      connectedTo: [`pad_${index}`],
+      obstacleId: `pad_${route.connectionName}_0`,
+    })),
+    layerCount: 2,
+    minTraceWidth: 0.1,
+    minViaDiameter: 0.3,
+  }
+  const errors = activeRoutes.map((route, index) =>
+    createPadError(`${route.connectionName}_0`, {
+      x: index % 2 === 0 ? 2 : 8,
+      y: index * 4,
+    }),
+  )
+  const drcEvaluator: DrcEvaluator = () => errors
+
+  return { srj, hdRoutes, drcEvaluator }
+}
+
 test("allows a coarse pipeline stage to opt out of batched candidates", () => {
   const solver = new GlobalDrcForceImproveSolver({
     ...createLargeBoardMissScenario(),
@@ -181,4 +236,20 @@ test("uses precise search when the disjoint batch fits the candidate budget", ()
   expect(solver.stats.globalDrcForceImproveRouteDisjointBatchAttempts).toBe(0)
   expect(solver.stats.globalDrcForceImproveRouteDisjointBatchesAccepted).toBe(0)
   expect(solver.stats.finalDrcIssueCount).toBe(3)
+})
+
+test("does not charge a rejected disjoint batch to the precise candidate budget", () => {
+  const solver = new GlobalDrcForceImproveSolver({
+    ...createRejectedBatchScenario(),
+    maxIterations: 1,
+    enableLargeBoardBroadFallback: false,
+    enablePostSolveClearanceRelaxation: false,
+  })
+
+  solver.solve()
+
+  expect(solver.stats.globalDrcForceImproveRouteDisjointBatchAttempts).toBe(1)
+  expect(solver.stats.globalDrcForceImproveRouteDisjointBatchesAccepted).toBe(0)
+  expect(solver.stats.globalDrcForceImproveCandidateAttempts).toBe(4)
+  expect(solver.stats.finalDrcIssueCount).toBe(4)
 })

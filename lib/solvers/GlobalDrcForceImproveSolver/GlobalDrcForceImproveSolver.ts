@@ -334,6 +334,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       getMaxTargetedCandidateAttemptsForEffort(this.effort)
     let candidateAttemptsThisStep = 0
     let acceptedCandidate = false
+    let routeDisjointBatchMissedThisStep = false
     let attemptedPeriodicLargeBoardBroadFallback = false
     const maxErrorsThisStep = Math.min(
       centeredErrors.length,
@@ -688,7 +689,6 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           candidateRoutes,
           routeDisjointBatch.routeIndexes,
         )
-        candidateAttemptsThisStep += 1
         this.candidateAttempts += 1
         const candidateSnapshot = getDrcSnapshot(
           this.srj,
@@ -726,9 +726,11 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         }
         if (!acceptedCandidate) {
           this.routeDisjointBatchConsecutiveMisses += 1
+          routeDisjointBatchMissedThisStep = true
         }
       } else {
         this.routeDisjointBatchConsecutiveMisses += 1
+        routeDisjointBatchMissedThisStep = true
       }
     }
 
@@ -798,10 +800,11 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       this.errorCursor = (errorIndex + 1) % centeredErrors.length
 
       const forceScales =
-        this.routeDisjointBatchConsecutiveMisses >=
-        MAX_ROUTE_DISJOINT_BATCH_CONSECUTIVE_MISSES
-          ? ([1] as const)
-          : getForceScalesForEffort(this.effort)
+        routeDisjointBatchMissedThisStep ||
+        this.routeDisjointBatchConsecutiveMisses <
+          MAX_ROUTE_DISJOINT_BATCH_CONSECUTIVE_MISSES
+          ? getForceScalesForEffort(this.effort)
+          : ([1] as const)
       for (const scale of forceScales) {
         if (candidateAttemptsThisStep >= maxCandidateAttemptsThisStep) break
 
