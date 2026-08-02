@@ -66,9 +66,15 @@ type TransitionRelocation = {
 }
 
 const selectExactObstacle = (
-  srj: SimpleRouteJson,
-  padId: string,
-  errorCenter: Point,
+  {
+    srj,
+    padId,
+    errorCenter,
+  }: {
+    srj: SimpleRouteJson
+    padId: string
+    errorCenter: Point
+  },
 ): Obstacle | undefined => {
   const candidates = srj.obstacles.filter(
     (obstacle) =>
@@ -88,9 +94,15 @@ const selectExactObstacle = (
 }
 
 const projectPointOntoSegment = (
-  point: Point,
-  start: Point,
-  end: Point,
+  {
+    point,
+    start,
+    end,
+  }: {
+    point: Point
+    start: Point
+    end: Point
+  },
 ): Point => {
   const dx = end.x - start.x
   const dy = end.y - start.y
@@ -106,11 +118,19 @@ const projectPointOntoSegment = (
 }
 
 const getAffectedRun = (
-  route: MutableRoute,
-  obstacle: Obstacle,
-  srj: SimpleRouteJson,
-  errorCenter: Point,
-  clearance: number,
+  {
+    route,
+    obstacle,
+    srj,
+    errorCenter,
+    clearance,
+  }: {
+    route: MutableRoute
+    obstacle: Obstacle
+    srj: SimpleRouteJson
+    errorCenter: Point
+    clearance: number
+  },
 ): number[] | undefined => {
   const obstacleBounds = getObstacleBounds(obstacle)
   const obstacleLayers = new Set(getObstacleLayers(obstacle, srj.layerCount))
@@ -145,7 +165,11 @@ const getAffectedRun = (
         ...run.map((segmentIndex) => {
           const start = route.route[segmentIndex]!
           const end = route.route[segmentIndex + 1]!
-          const projection = projectPointOntoSegment(errorCenter, start, end)
+          const projection = projectPointOntoSegment({
+            point: errorCenter,
+            start,
+            end,
+          })
           return Math.hypot(
             errorCenter.x - projection.x,
             errorCenter.y - projection.y,
@@ -157,9 +181,15 @@ const getAffectedRun = (
 }
 
 const segmentCrossesBoundsInterior = (
-  start: Point,
-  end: Point,
-  bounds: Bounds2D,
+  {
+    start,
+    end,
+    bounds,
+  }: {
+    start: Point
+    end: Point
+    bounds: Bounds2D
+  },
 ): boolean => {
   const interior = {
     minX: bounds.minX + POSITION_EPSILON,
@@ -220,10 +250,17 @@ const isPointOnBoard = (point: Point, srj: SimpleRouteJson): boolean => {
 }
 
 const getTransitionRelocation = (
-  route: MutableRoute,
-  anchorIndex: number,
-  bounds: Bounds2D,
-  srj: SimpleRouteJson,
+  {
+    route,
+    anchorIndex,
+    bounds,
+    srj,
+  }: {
+    route: MutableRoute
+    anchorIndex: number
+    bounds: Bounds2D
+    srj: SimpleRouteJson
+  },
 ): TransitionRelocation | undefined => {
   const anchor = route.route[anchorIndex]
   if (!anchor) return undefined
@@ -272,7 +309,15 @@ const getTransitionRelocation = (
   return { pointIndexes, target }
 }
 
-const getPathLength = (start: Point, path: Point[], end: Point): number => {
+const getPathLength = ({
+  start,
+  path,
+  end,
+}: {
+  start: Point
+  path: Point[]
+  end: Point
+}): number => {
   const points = [start, ...path, end]
   return points.slice(0, -1).reduce((total, point, index) => {
     const next = points[index + 1]!
@@ -281,10 +326,17 @@ const getPathLength = (start: Point, path: Point[], end: Point): number => {
 }
 
 const getValidDetourPaths = (
-  start: Point,
-  end: Point,
-  bounds: Bounds2D,
-  srj: SimpleRouteJson,
+  {
+    start,
+    end,
+    bounds,
+    srj,
+  }: {
+    start: Point
+    end: Point
+    bounds: Bounds2D
+    srj: SimpleRouteJson
+  },
 ): Point[][] => {
   const topLeft = { x: bounds.minX, y: bounds.maxY }
   const topRight = { x: bounds.maxX, y: bounds.maxY }
@@ -306,23 +358,33 @@ const getValidDetourPaths = (
         .slice(0, -1)
         .every(
           (point, index) =>
-            !segmentCrossesBoundsInterior(point, points[index + 1]!, bounds),
+            !segmentCrossesBoundsInterior({
+              start: point,
+              end: points[index + 1]!,
+              bounds,
+            }),
         )
     })
     .sort(
       (left, right) =>
-        getPathLength(start, left, end) - getPathLength(start, right, end),
+        getPathLength({ start, path: left, end }) -
+        getPathLength({ start, path: right, end }),
     )
 }
 
-export const applyPadTraceClearanceDetour = (params: {
+export const applyPadTraceClearanceDetour = ({
+  srj,
+  routes,
+  routeIndex,
+  error,
+  variantIndex,
+}: {
   srj: SimpleRouteJson
   routes: MutableRoute[]
   routeIndex: number
   error: Record<string, unknown>
   variantIndex: number
 }): boolean => {
-  const { srj, routes, routeIndex, error, variantIndex } = params
   const padId = error.pcb_pad_id
   const errorCenter = getErrorCenter(error)
   if (
@@ -335,7 +397,7 @@ export const applyPadTraceClearanceDetour = (params: {
   }
 
   const route = routes[routeIndex]
-  const obstacle = selectExactObstacle(srj, padId, errorCenter)
+  const obstacle = selectExactObstacle({ srj, padId, errorCenter })
   if (!route || !obstacle) return false
 
   const minimumClearance =
@@ -346,13 +408,13 @@ export const applyPadTraceClearanceDetour = (params: {
     (route.traceThickness ?? srj.minTraceWidth) / 2 +
     minimumClearance +
     POSITION_EPSILON
-  const affectedRun = getAffectedRun(
+  const affectedRun = getAffectedRun({
     route,
     obstacle,
     srj,
     errorCenter,
     clearance,
-  )
+  })
   const firstSegmentIndex = affectedRun?.[0]
   const lastSegmentIndex = affectedRun?.at(-1)
   if (firstSegmentIndex === undefined || lastSegmentIndex === undefined) {
@@ -371,10 +433,20 @@ export const applyPadTraceClearanceDetour = (params: {
     maxY: obstacleBounds.maxY + clearance,
   }
   const startRelocation = pointIsInsideBounds(startAnchor, clearanceBounds)
-    ? getTransitionRelocation(route, firstSegmentIndex, clearanceBounds, srj)
+    ? getTransitionRelocation({
+        route,
+        anchorIndex: firstSegmentIndex,
+        bounds: clearanceBounds,
+        srj,
+      })
     : undefined
   const endRelocation = pointIsInsideBounds(endAnchor, clearanceBounds)
-    ? getTransitionRelocation(route, lastSegmentIndex + 1, clearanceBounds, srj)
+    ? getTransitionRelocation({
+        route,
+        anchorIndex: lastSegmentIndex + 1,
+        bounds: clearanceBounds,
+        srj,
+      })
     : undefined
   if (
     (pointIsInsideBounds(startAnchor, clearanceBounds) && !startRelocation) ||
@@ -388,12 +460,12 @@ export const applyPadTraceClearanceDetour = (params: {
     return false
   }
 
-  const detourPath = getValidDetourPaths(
-    startRelocation?.target ?? startAnchor,
-    endRelocation?.target ?? endAnchor,
-    clearanceBounds,
+  const detourPath = getValidDetourPaths({
+    start: startRelocation?.target ?? startAnchor,
+    end: endRelocation?.target ?? endAnchor,
+    bounds: clearanceBounds,
     srj,
-  )[variantIndex]
+  })[variantIndex]
   if (!detourPath) return false
 
   for (const relocation of [startRelocation, endRelocation]) {

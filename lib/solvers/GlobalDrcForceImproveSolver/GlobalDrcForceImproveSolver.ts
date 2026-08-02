@@ -684,14 +684,14 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           const candidateRoutes = cloneRoutesForIndexes(bestRoutes, [
             changedRouteIndex,
           ])
-          const changed = applyTracePairDetourForError(
-            this.srj,
-            candidateRoutes,
+          const changed = applyTracePairDetourForError({
+            srj: this.srj,
+            routes: candidateRoutes,
             error,
-            bestSnapshot.traceRouteIndexById,
-            variant.routeSide,
-            variant.blockingEndpointSide,
-          )
+            traceRouteIndexById: bestSnapshot.traceRouteIndexById,
+            routeSide: variant.routeSide,
+            blockingEndpointSide: variant.blockingEndpointSide,
+          })
           if (!changed) continue
 
           const materializedCandidateRoutes = materializeRoutesForIndexes(

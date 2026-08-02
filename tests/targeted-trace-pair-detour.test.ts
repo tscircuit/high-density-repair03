@@ -40,22 +40,22 @@ test("routes an exact trace crossing around the blocking segment endpoint", () =
     },
   ])
 
-  const changed = applyTracePairDetourForError(
+  const changed = applyTracePairDetourForError({
     srj,
     routes,
-    {
+    error: {
       type: "pcb_trace_error",
       pcb_trace_id: "source_net_1_mst0_0",
       pcb_trace_error_id: "overlap_source_net_1_mst0_0_source_net_2_mst0_0",
       center: { x: 0, y: 0 },
     },
-    new Map([
+    traceRouteIndexById: new Map([
       ["source_net_1_mst0_0", 0],
       ["source_net_2_mst0_0", 1],
     ]),
-    0,
-    0,
-  )
+    routeSide: 0,
+    blockingEndpointSide: 0,
+  })
 
   expect(changed).toBe(true)
   expect(routes[0]?.route).toHaveLength(4)
