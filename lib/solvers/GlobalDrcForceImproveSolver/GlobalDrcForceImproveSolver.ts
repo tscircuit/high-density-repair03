@@ -149,6 +149,8 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     count: number
     issueScore: number
     errorIds: Array<unknown>
+    targetError: Record<string, unknown> | undefined
+    changedRoutePoints: HighDensityRoute["route"]
   }> = []
 
   constructor(params: GlobalDrcForceImproveSolverParams) {
@@ -719,6 +721,10 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
             this.autoroutingDrcEngine,
           )
           const candidateViaIssueCount = getViaDrcIssueCount(candidateSnapshot)
+          const candidateTargetError = candidateSnapshot.errors.find(
+            (candidateError) =>
+              candidateError.pcb_trace_error_id === traceErrorKey,
+          )
           this.tracePairDetourCandidateDiagnostics.push({
             targetErrorId: traceErrorKey,
             routeSide: variant.routeSide,
@@ -730,6 +736,17 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
                 candidateError.pcb_trace_error_id ??
                 candidateError.pcb_error_id,
             ),
+            targetError: candidateTargetError
+              ? {
+                  center:
+                    candidateTargetError.center ??
+                    candidateTargetError.pcb_center,
+                  actualClearance: candidateTargetError.actual_clearance,
+                  message: candidateTargetError.message,
+                }
+              : undefined,
+            changedRoutePoints:
+              materializedCandidateRoutes[changedRouteIndex]?.route ?? [],
           })
           const comparisonCount =
             bestTopologyCandidate?.snapshot.count ?? bestIssueCount
