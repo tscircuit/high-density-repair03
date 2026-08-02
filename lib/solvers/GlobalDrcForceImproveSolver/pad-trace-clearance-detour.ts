@@ -2,10 +2,7 @@ import { segmentToBoundsMinDistance } from "@tscircuit/math-utils"
 import type { SimpleRouteJson } from "../../types"
 import { mapZToLayerName } from "../../utils/mapZToLayerName"
 import type { Bounds2D, MutableRoute, Point } from "./internalTypes"
-import {
-  COORDINATE_EPSILON,
-  POSITION_EPSILON,
-} from "./solverConfig"
+import { COORDINATE_EPSILON, POSITION_EPSILON } from "./solverConfig"
 import { clampValue } from "./spatialIndex"
 
 export const PAD_TRACE_CLEARANCE_DETOUR_VARIANT_COUNT = 8
