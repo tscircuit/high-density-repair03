@@ -69,16 +69,15 @@ const drcEvaluator: DrcEvaluator = ({ hdRoutes, routes }) => {
   )
   const usesRequiredTransitionPair =
     movingRoute?.vias.length === 2 &&
-    Math.abs(movingRoute.vias[0]!.x + 1) < 1e-6 &&
-    Math.abs(movingRoute.vias[1]!.x - 3) < 1e-6
+    Math.abs(movingRoute.vias[0]!.x) < 1e-6 &&
+    Math.abs(movingRoute.vias[1]!.x - 2) < 1e-6
 
   return usesRequiredTransitionPair
     ? { errors: [], errorsWithCenters: [] }
     : { errors: [traceError], errorsWithCenters: [traceError] }
 }
 
-const getPanelX = (x: number, offsetX: number): number =>
-  offsetX + 140 + x * 24
+const getPanelX = (x: number, offsetX: number): number => offsetX + 140 + x * 24
 
 const getPanelY = (y: number): number => 120 - y * 40
 
@@ -198,8 +197,8 @@ test("searches independent internal layer-move boundaries", () => {
   expect(solver.failed).toBe(false)
   expect(getDrcSnapshot(srj, outputRoutes, drcEvaluator).count).toBe(0)
   expect(outputMovingRoute.vias).toEqual([
-    { x: -1, y: 0 },
-    { x: 3, y: 0 },
+    { x: 0, y: 0 },
+    { x: 2, y: 0 },
   ])
   expect(outputMovingRoute.route.some((point) => point.z === 1)).toBe(true)
 
