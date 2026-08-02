@@ -41,6 +41,7 @@ export type GlobalDrcForceImproveSolverParams = {
   enableRouteDisjointBatching?: boolean
   enableTargetedErrorSweep?: boolean
   enablePostSolveClearanceRelaxation?: boolean
+  enableSafeTraceLayerMoves?: boolean
   enableViaInPadLayerMoves?: boolean
 }
 

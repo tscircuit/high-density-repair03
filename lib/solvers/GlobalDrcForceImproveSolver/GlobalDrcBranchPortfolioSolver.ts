@@ -5,10 +5,19 @@ import type { HighDensityRoute } from "../../types/high-density-types"
 import { GlobalDrcForceImproveSolver } from "./GlobalDrcForceImproveSolver"
 import { RELAXED_DRC_OPTIONS } from "./drcPresets"
 import { getDrcSnapshot } from "./drc-snapshot"
-import { applyBroadRepulsionForces } from "./solverHelpers"
+import {
+  applyBroadRepulsionForces,
+  getSafeTraceLayerDrcIssueCount,
+} from "./solverHelpers"
 import type { DrcSnapshot, GlobalDrcBranchPortfolioSolverParams } from "./types"
 
-type PortfolioPhase = "start" | "baseline" | "broad" | "viaInPad" | "done"
+type PortfolioPhase =
+  | "start"
+  | "baseline"
+  | "broad"
+  | "safeTraceLayer"
+  | "viaInPad"
+  | "done"
 
 export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
   readonly params: GlobalDrcBranchPortfolioSolverParams
@@ -24,6 +33,10 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
   private broadInputSnapshot?: DrcSnapshot
   private broadSnapshot?: DrcSnapshot
   private broadSolver?: GlobalDrcForceImproveSolver
+  private safeTraceLayerInputRoutes?: HighDensityRoute[]
+  private safeTraceLayerInputSnapshot?: DrcSnapshot
+  private safeTraceLayerSolver?: GlobalDrcForceImproveSolver
+  private safeTraceLayerPhaseAccepted = false
   private viaInPadSolver?: GlobalDrcForceImproveSolver
   private portfolioSelectedSolver?: GlobalDrcForceImproveSolver
   private selectedSolver?: GlobalDrcForceImproveSolver
@@ -119,6 +132,11 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       drcBranchPortfolioBroadBranchAccepted:
         this.portfolioSelectedSolver !== undefined &&
         this.portfolioSelectedSolver === this.broadSolver,
+      drcBranchPortfolioSafeTraceLayerPhaseAttempted: Boolean(
+        this.safeTraceLayerSolver,
+      ),
+      drcBranchPortfolioSafeTraceLayerPhaseAccepted:
+        this.safeTraceLayerPhaseAccepted,
       drcBranchPortfolioViaInPadPhaseAttempted: Boolean(this.viaInPadSolver),
       drcBranchPortfolioViaInPadMaxIterations:
         this.params.viaInPadMaxIterations,
@@ -130,10 +148,39 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
     this.baselineSolver = new GlobalDrcForceImproveSolver({
       ...this.params,
       hdRoutes: this.inputHdRoutes,
+      enableSafeTraceLayerMoves: false,
       enableViaInPadLayerMoves: false,
     })
     this.activeSubSolver = this.baselineSolver
     this.phase = "baseline"
+  }
+
+  private startSafeTraceLayerPhase(
+    routes: HighDensityRoute[],
+    snapshot: DrcSnapshot,
+    portfolioSelectedSolver?: GlobalDrcForceImproveSolver,
+  ) {
+    this.portfolioSelectedSolver = portfolioSelectedSolver
+    if (!this.params.enableSafeTraceLayerMoves) {
+      this.startViaInPadPhase(routes, snapshot, portfolioSelectedSolver)
+      return
+    }
+    this.safeTraceLayerInputRoutes = routes
+    this.safeTraceLayerInputSnapshot = snapshot
+    this.safeTraceLayerSolver = new GlobalDrcForceImproveSolver({
+      ...this.params,
+      hdRoutes: routes,
+      drcEvaluator: this.params.drcEvaluator,
+      maxIterations:
+        this.params.viaInPadMaxIterations ?? this.params.maxIterations,
+      enableLargeBoardBroadFallback: false,
+      enableTargetedErrorSweep: false,
+      enablePostSolveClearanceRelaxation: false,
+      enableSafeTraceLayerMoves: true,
+      enableViaInPadLayerMoves: false,
+    })
+    this.activeSubSolver = this.safeTraceLayerSolver
+    this.phase = "safeTraceLayer"
   }
 
   private startViaInPadPhase(
@@ -158,6 +205,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       enableLargeBoardBroadFallback: false,
       enableTargetedErrorSweep: false,
       enablePostSolveClearanceRelaxation: false,
+      enableSafeTraceLayerMoves: false,
       enableViaInPadLayerMoves: true,
     })
     this.activeSubSolver = this.viaInPadSolver
@@ -180,7 +228,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       this.autoroutingDrcEngine,
     )
     if (this.broadInputSnapshot.count >= this.baselineSnapshot!.count) {
-      this.startViaInPadPhase(
+      this.startSafeTraceLayerPhase(
         this.baselineSolver!.getOutput(),
         this.baselineSnapshot!,
         this.baselineSolver,
@@ -191,6 +239,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       ...this.params,
       hdRoutes: broadInputRoutes,
       maxIterations: this.broadMaxIterations,
+      enableSafeTraceLayerMoves: false,
       enableViaInPadLayerMoves: false,
     })
     this.activeSubSolver = this.broadSolver
@@ -249,18 +298,55 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         this.autoroutingDrcEngine,
       )
       if (this.broadSnapshot.count < this.baselineSnapshot!.count) {
-        this.startViaInPadPhase(
+        this.startSafeTraceLayerPhase(
           broadRoutes,
           this.broadSnapshot,
           this.broadSolver,
         )
         return
       }
-      this.startViaInPadPhase(
+      this.startSafeTraceLayerPhase(
         this.baselineSolver!.getOutput(),
         this.baselineSnapshot!,
         this.baselineSolver,
       )
+      return
+    }
+
+    if (this.phase === "safeTraceLayer") {
+      this.stepBranch(this.safeTraceLayerSolver!, "safe trace-layer")
+      if (!this.safeTraceLayerSolver!.solved) return
+      const safeTraceLayerRoutes = this.safeTraceLayerSolver!.getOutput()
+      const safeTraceLayerSnapshot = getDrcSnapshot(
+        this.params.srj,
+        safeTraceLayerRoutes,
+        this.params.drcEvaluator,
+        this.params.connMap,
+        this.autoroutingDrcEngine,
+      )
+      this.safeTraceLayerPhaseAccepted =
+        getSafeTraceLayerDrcIssueCount(safeTraceLayerSnapshot) === 0
+      const acceptedRoutes = this.safeTraceLayerPhaseAccepted
+        ? safeTraceLayerRoutes
+        : this.safeTraceLayerInputRoutes!
+      const acceptedSnapshot = this.safeTraceLayerPhaseAccepted
+        ? safeTraceLayerSnapshot
+        : this.safeTraceLayerInputSnapshot!
+      const acceptedSolver = this.safeTraceLayerPhaseAccepted
+        ? this.safeTraceLayerSolver
+        : this.portfolioSelectedSolver
+      if (
+        this.params.enableViaInPadLayerMoves &&
+        this.params.viaInPadDrcEvaluator
+      ) {
+        this.startViaInPadPhase(
+          acceptedRoutes,
+          acceptedSnapshot,
+          acceptedSolver,
+        )
+      } else {
+        this.finishWithOutput(acceptedRoutes, acceptedSnapshot, acceptedSolver)
+      }
       return
     }
 
