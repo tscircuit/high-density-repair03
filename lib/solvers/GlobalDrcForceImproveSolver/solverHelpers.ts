@@ -3823,15 +3823,15 @@ export const applyTracePairDetourForError = (
   const minimumClearance =
     typeof error.minimum_clearance === "number"
       ? error.minimum_clearance
-      : (srj.minTraceToPadEdgeClearance ?? RELAXED_DRC_OPTIONS.traceClearance)
+      : (srj.minTraceToPadEdgeClearance ??
+        RELAXED_DRC_OPTIONS.traceClearance ??
+        0.1)
   const requiredCenterlineClearance =
     movingSegment.radius +
     blockingSegment.radius +
     minimumClearance +
     POSITION_EPSILON
-  const createDetourPoint = (
-    side: number,
-  ): MutableRoute["route"][number] => ({
+  const createDetourPoint = (side: number): MutableRoute["route"][number] => ({
     x:
       blockingEndpoint.x +
       tangentX * outwardSign * requiredCenterlineClearance +
@@ -3853,12 +3853,7 @@ export const applyTracePairDetourForError = (
 
   const originalStart = route.route[movingSegment.startIndex]!
   const originalEnd = route.route[movingSegment.endIndex]!
-  const candidatePoints = [
-    originalStart,
-    startDetour,
-    endDetour,
-    originalEnd,
-  ]
+  const candidatePoints = [originalStart, startDetour, endDetour, originalEnd]
   const clearsBlockingSegment = candidatePoints
     .slice(0, -1)
     .every(
@@ -3868,7 +3863,8 @@ export const applyTracePairDetourForError = (
           candidatePoints[index + 1]!,
           blockingSegment.start,
           blockingSegment.end,
-        ) >= requiredCenterlineClearance - POSITION_EPSILON,
+        ) >=
+        requiredCenterlineClearance - POSITION_EPSILON,
     )
   if (!clearsBlockingSegment) return false
 
