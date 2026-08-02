@@ -342,16 +342,14 @@ const getValidDetourPaths = ({
     .filter((path) => path.every((point) => isPointOnBoard(point, srj)))
     .filter((path) => {
       const points = [start, ...path, end]
-      return points
-        .slice(0, -1)
-        .every(
-          (point, index) =>
-            !segmentCrossesBoundsInterior({
-              start: point,
-              end: points[index + 1]!,
-              bounds,
-            }),
-        )
+      return points.slice(0, -1).every(
+        (point, index) =>
+          !segmentCrossesBoundsInterior({
+            start: point,
+            end: points[index + 1]!,
+            bounds,
+          }),
+      )
     })
     .sort(
       (left, right) =>
