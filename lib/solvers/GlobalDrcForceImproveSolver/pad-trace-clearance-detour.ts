@@ -102,9 +102,7 @@ const getTransitionRetreat = (
   }
 
   const neighborIndex =
-    direction === "before"
-      ? transitionStartIndex - 1
-      : transitionEndIndex + 1
+    direction === "before" ? transitionStartIndex - 1 : transitionEndIndex + 1
   const transitionEdgeIndex =
     direction === "before" ? transitionStartIndex : transitionEndIndex
   const target = route.route[neighborIndex]
@@ -372,12 +370,7 @@ export const applyPadTraceClearanceDetour = (params: {
     maxY: obstacleBounds.maxY + clearance,
   }
   const startRetreat = pointIsInsideBounds(startAnchor, clearanceBounds)
-    ? getTransitionRetreat(
-        route,
-        firstSegmentIndex,
-        "before",
-        clearanceBounds,
-      )
+    ? getTransitionRetreat(route, firstSegmentIndex, "before", clearanceBounds)
     : undefined
   const endRetreat = pointIsInsideBounds(endAnchor, clearanceBounds)
     ? getTransitionRetreat(
