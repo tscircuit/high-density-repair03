@@ -2,9 +2,7 @@ import type { GraphicsObject } from "graphics-debug"
 import type { HighDensityRoute } from "../../types/high-density-types"
 
 const getLayerColor = (z: number, opacity: number) =>
-  z === 0
-    ? `rgba(220, 38, 38, ${opacity})`
-    : `rgba(37, 99, 235, ${opacity})`
+  z === 0 ? `rgba(220, 38, 38, ${opacity})` : `rgba(37, 99, 235, ${opacity})`
 
 const addRouteFrame = ({
   graphics,
@@ -12,15 +10,17 @@ const addRouteFrame = ({
   step,
   isOutput,
 }: {
-  graphics: Required<
-    Pick<GraphicsObject, "lines" | "circles" | "points" | "arrows">
-  >
+  graphics: Required<Pick<GraphicsObject, "lines" | "circles" | "points">>
   routes: HighDensityRoute[]
   step: number
   isOutput: boolean
 }) => {
   for (const route of routes) {
-    for (let pointIndex = 0; pointIndex < route.route.length - 1; pointIndex++) {
+    for (
+      let pointIndex = 0;
+      pointIndex < route.route.length - 1;
+      pointIndex++
+    ) {
       const start = route.route[pointIndex]!
       const end = route.route[pointIndex + 1]!
       if (start.z !== end.z) continue
@@ -55,15 +55,12 @@ export const visualizeGlobalDrcRouteChanges = ({
   outputHdRoutes: HighDensityRoute[]
 }): GraphicsObject => {
   const graphics: GraphicsObject &
-    Required<
-      Pick<GraphicsObject, "lines" | "circles" | "points" | "arrows">
-    > = {
+    Required<Pick<GraphicsObject, "lines" | "circles" | "points">> = {
     coordinateSystem: "cartesian",
     title: "Global DRC Force Improve Solver: before / after",
     lines: [],
     circles: [],
     points: [],
-    arrows: [],
   }
 
   addRouteFrame({ graphics, routes: inputHdRoutes, step: 1, isOutput: false })
@@ -78,10 +75,11 @@ export const visualizeGlobalDrcRouteChanges = ({
       const outputVia = outputRoute.vias[viaIndex]
       if (!inputVia || !outputVia) continue
       if (inputVia.x === outputVia.x && inputVia.y === outputVia.y) continue
-      graphics.arrows.push({
-        start: inputVia,
-        end: outputVia,
-        color: "#7c3aed",
+      graphics.lines.push({
+        points: [inputVia, outputVia],
+        strokeColor: "#7c3aed",
+        strokeWidth: 0.03,
+        strokeDash: [0.04, 0.03],
         label: `${outputRoute.connectionName}: accepted via move`,
         step: 2,
       })
