@@ -647,6 +647,8 @@ export class AutoroutingDrcEngine {
       pcb_trace_id: segmentA.traceId,
       source_trace_id: "",
       pcb_trace_error_id: forwardId,
+      minimum_clearance: this.traceClearance,
+      actual_clearance: gap,
       pcb_component_ids: [],
       pcb_port_ids: [
         ...new Set([...segmentA.pcbPortIds, ...segmentB.pcbPortIds]),

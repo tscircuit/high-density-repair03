@@ -65,21 +65,10 @@ export const setGlobalDrcForceImproveSolverVisualizer = (
   registeredVisualizer = visualizer
 }
 
-const TRACE_PAIR_DETOUR_GEOMETRY_VARIANTS = [0.2, 0.4, 0.8, 1.2].flatMap(
-  (halfSpan) =>
-    [0.2, 0.3, 0.45, 0.6].flatMap((offset) =>
-      ([-1, 1] as const).map((directionSign) => ({
-        halfSpan,
-        offset,
-        directionSign,
-      })),
-    ),
-)
-
 const TRACE_PAIR_DETOUR_VARIANTS = ([0, 1] as const).flatMap((routeSide) =>
-  TRACE_PAIR_DETOUR_GEOMETRY_VARIANTS.map((variant) => ({
+  ([0, 1] as const).map((blockingEndpointSide) => ({
     routeSide,
-    ...variant,
+    blockingEndpointSide,
   })),
 )
 
@@ -146,9 +135,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   readonly tracePairDetourCandidateDiagnostics: Array<{
     targetErrorId: string
     routeSide: 0 | 1
-    halfSpan: number
-    offset: number
-    directionSign: -1 | 1
+    blockingEndpointSide: 0 | 1
     count: number
     issueScore: number
     errorIds: Array<unknown>
@@ -698,13 +685,12 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
             changedRouteIndex,
           ])
           const changed = applyTracePairDetourForError(
+            this.srj,
             candidateRoutes,
             error,
             bestSnapshot.traceRouteIndexById,
             variant.routeSide,
-            variant.halfSpan,
-            variant.offset,
-            variant.directionSign,
+            variant.blockingEndpointSide,
           )
           if (!changed) continue
 
@@ -726,9 +712,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           this.tracePairDetourCandidateDiagnostics.push({
             targetErrorId: traceErrorKey,
             routeSide: variant.routeSide,
-            halfSpan: variant.halfSpan,
-            offset: variant.offset,
-            directionSign: variant.directionSign,
+            blockingEndpointSide: variant.blockingEndpointSide,
             count: candidateSnapshot.count,
             issueScore: candidateSnapshot.issueScore,
             errorIds: candidateSnapshot.errors.map(
