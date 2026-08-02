@@ -73,7 +73,6 @@ export const evaluateTracePairLayerMoveCandidate = ({
   srj,
   candidateRoutes,
   targetError,
-  baselineIssueCount,
   drcEvaluator,
   connMap,
   autoroutingDrcEngine,
@@ -81,7 +80,6 @@ export const evaluateTracePairLayerMoveCandidate = ({
   srj: SimpleRouteJson
   candidateRoutes: HighDensityRoute[]
   targetError: Record<string, unknown>
-  baselineIssueCount: number
   drcEvaluator?: DrcEvaluator
   connMap?: ConnectivityMap
   autoroutingDrcEngine?: AutoroutingDrcEngine
@@ -102,8 +100,6 @@ export const evaluateTracePairLayerMoveCandidate = ({
     followUpAttemptCount: 0,
     usedFollowUpRepair: false,
   }
-  if (firstSnapshot.count > baselineIssueCount) return firstEvaluation
-
   const targetErrorId = targetError.pcb_trace_error_id
   const targetCenter = getDrcErrorCenter(targetError)
   if (typeof targetErrorId !== "string" || !targetCenter) {

@@ -479,7 +479,6 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
             srj: this.srj,
             candidateRoutes: materializedCandidateRoutes,
             targetError: error,
-            baselineIssueCount: bestIssueCount,
             drcEvaluator: this.drcEvaluator,
             connMap: this.connMap,
             autoroutingDrcEngine: this.autoroutingDrcEngine,

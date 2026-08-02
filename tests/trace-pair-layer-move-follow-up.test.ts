@@ -68,6 +68,15 @@ const makeTracePairError = (center: { x: number; y: number }) => ({
   center,
 })
 
+const transientIntermediateError = {
+  type: "pcb_trace_error",
+  error_type: "pcb_trace_error",
+  message: "Temporary intermediate clearance error",
+  pcb_trace_id: "B_0",
+  pcb_trace_error_id: "overlap_B_0_transient_0",
+  center: { x: 2, y: 0 },
+}
+
 const getStepGraphics = (
   graphics: GraphicsObject,
   step: number,
@@ -106,7 +115,10 @@ test("completes a repeated trace-pair repair as one transaction", () => {
       lowerBlockingPoint !== undefined &&
       Math.abs(lowerBlockingPoint.y + 2) > 1e-4
     if (!lowerRoutePointMoved && !lowerBlockingPointMoved) {
-      return [makeTracePairError({ x: 1, y: -2 })]
+      return [
+        makeTracePairError({ x: 1, y: -2 }),
+        transientIntermediateError,
+      ]
     }
 
     return []
