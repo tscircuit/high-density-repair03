@@ -50,6 +50,75 @@ const getPointToBoundsDistance = (point: Point, bounds: Bounds2D): number => {
   return Math.hypot(dx, dy)
 }
 
+const pointsSharePosition = (left: Point, right: Point): boolean =>
+  Math.abs(left.x - right.x) <= COORDINATE_EPSILON &&
+  Math.abs(left.y - right.y) <= COORDINATE_EPSILON
+
+const pointIsInsideBounds = (point: Point, bounds: Bounds2D): boolean =>
+  point.x > bounds.minX + POSITION_EPSILON &&
+  point.x < bounds.maxX - POSITION_EPSILON &&
+  point.y > bounds.minY + POSITION_EPSILON &&
+  point.y < bounds.maxY - POSITION_EPSILON
+
+type TransitionRetreat = {
+  pointIndexes: number[]
+  target: RoutePoint
+}
+
+const getTransitionRetreat = (
+  route: MutableRoute,
+  anchorIndex: number,
+  direction: "before" | "after",
+  bounds: Bounds2D,
+): TransitionRetreat | undefined => {
+  const anchor = route.route[anchorIndex]
+  if (!anchor) return undefined
+
+  let transitionStartIndex = anchorIndex
+  while (
+    transitionStartIndex > 0 &&
+    pointsSharePosition(route.route[transitionStartIndex - 1]!, anchor)
+  ) {
+    transitionStartIndex -= 1
+  }
+  let transitionEndIndex = anchorIndex
+  while (
+    transitionEndIndex + 1 < route.route.length &&
+    pointsSharePosition(route.route[transitionEndIndex + 1]!, anchor)
+  ) {
+    transitionEndIndex += 1
+  }
+
+  const pointIndexes = Array.from(
+    { length: transitionEndIndex - transitionStartIndex + 1 },
+    (_, offset) => transitionStartIndex + offset,
+  )
+  if (
+    transitionStartIndex === 0 ||
+    transitionEndIndex === route.route.length - 1 ||
+    new Set(pointIndexes.map((index) => route.route[index]!.z)).size < 2
+  ) {
+    return undefined
+  }
+
+  const neighborIndex =
+    direction === "before"
+      ? transitionStartIndex - 1
+      : transitionEndIndex + 1
+  const transitionEdgeIndex =
+    direction === "before" ? transitionStartIndex : transitionEndIndex
+  const target = route.route[neighborIndex]
+  if (
+    !target ||
+    target.z !== route.route[transitionEdgeIndex]!.z ||
+    pointIsInsideBounds(target, bounds)
+  ) {
+    return undefined
+  }
+
+  return { pointIndexes, target }
+}
+
 const selectExactObstacle = (
   srj: SimpleRouteJson,
   padId: string,
@@ -302,13 +371,50 @@ export const applyPadTraceClearanceDetour = (params: {
     maxX: obstacleBounds.maxX + clearance,
     maxY: obstacleBounds.maxY + clearance,
   }
+  const startRetreat = pointIsInsideBounds(startAnchor, clearanceBounds)
+    ? getTransitionRetreat(
+        route,
+        firstSegmentIndex,
+        "before",
+        clearanceBounds,
+      )
+    : undefined
+  const endRetreat = pointIsInsideBounds(endAnchor, clearanceBounds)
+    ? getTransitionRetreat(
+        route,
+        lastSegmentIndex + 1,
+        "after",
+        clearanceBounds,
+      )
+    : undefined
+  if (
+    (pointIsInsideBounds(startAnchor, clearanceBounds) && !startRetreat) ||
+    (pointIsInsideBounds(endAnchor, clearanceBounds) && !endRetreat) ||
+    (startRetreat &&
+      endRetreat &&
+      startRetreat.pointIndexes.some((index) =>
+        endRetreat.pointIndexes.includes(index),
+      ))
+  ) {
+    return false
+  }
+
   const detourPath = getValidDetourPaths(
-    startAnchor,
-    endAnchor,
+    startRetreat?.target ?? startAnchor,
+    endRetreat?.target ?? endAnchor,
     clearanceBounds,
     srj,
   )[variantIndex]
   if (!detourPath) return false
+
+  for (const retreat of [startRetreat, endRetreat]) {
+    if (!retreat) continue
+    for (const pointIndex of retreat.pointIndexes) {
+      const point = route.route[pointIndex]!
+      point.x = retreat.target.x
+      point.y = retreat.target.y
+    }
+  }
 
   const detourPoints: RoutePoint[] = detourPath.map((point) => ({
     ...startAnchor,
