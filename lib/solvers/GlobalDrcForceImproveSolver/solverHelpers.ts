@@ -2888,7 +2888,6 @@ const getRouteEndpointPad = (
     const obstacleZLayers = getObstacleZLayers(obstacle, srj.layerCount)
     if (
       obstacleZLayers.length !== 1 ||
-      obstacleZLayers[0] !== endpoint.z ||
       !obstacle.connectedTo.includes(pcbPortId) ||
       !pointIsInsideRectObstacle(endpoint, obstacle)
     ) {
@@ -3087,11 +3086,16 @@ export const applySafeTraceLayerMoveForError = (
       directionVariant % SAFE_TRACE_LAYER_DIRECTION_VARIANT_COUNT
     ]!
 
-  const getTerminalEscape = (endpointSide: "start" | "end") => {
+  const getTerminalTransition = (endpointSide: "start" | "end") => {
     const endpoint = endpointSide === "start" ? first : last
     const pad = getRouteEndpointPad(srj, route, endpoint, connMap)
+    if (!pad) return undefined
+
+    const terminalZ = getObstacleZLayers(pad, srj.layerCount)[0]!
+    if (terminalZ === targetZ) return { terminalZ }
+
     const tangent = getTerminalTangent(originalPoints, endpointSide)
-    if (!pad || !tangent) return undefined
+    if (!tangent) return undefined
     const rotation =
       endpointSide === "start" ? rotationPair[0] : rotationPair[1]
     const escape = getExternalViaPoint(
@@ -3107,16 +3111,18 @@ export const applySafeTraceLayerMoveForError = (
     ) {
       return undefined
     }
-    return escape
+    return { terminalZ, escape }
   }
 
-  const startEscape = movesStartTerminal
-    ? getTerminalEscape("start")
+  const startTransition = movesStartTerminal
+    ? getTerminalTransition("start")
     : undefined
-  const endEscape = movesEndTerminal ? getTerminalEscape("end") : undefined
+  const endTransition = movesEndTerminal
+    ? getTerminalTransition("end")
+    : undefined
   if (
-    (movesStartTerminal && !startEscape) ||
-    (movesEndTerminal && !endEscape)
+    (movesStartTerminal && !startTransition) ||
+    (movesEndTerminal && !endTransition)
   ) {
     return false
   }
@@ -3136,18 +3142,21 @@ export const applySafeTraceLayerMoveForError = (
     areSameXY(originalPoints[spanEndIndex + 1]!, spanEnd)
 
   if (movesStartTerminal) {
-    appendDistinctRoutePoint(movedRoute, first)
-    appendDistinctRoutePoint(movedRoute, {
-      ...first,
-      ...startEscape!,
-      pcb_port_id: undefined,
-    })
-    appendDistinctRoutePoint(movedRoute, {
-      ...first,
-      ...startEscape!,
-      z: targetZ,
-      pcb_port_id: undefined,
-    })
+    const terminalPoint = { ...first, z: startTransition!.terminalZ }
+    appendDistinctRoutePoint(movedRoute, terminalPoint)
+    if (startTransition!.escape) {
+      appendDistinctRoutePoint(movedRoute, {
+        ...terminalPoint,
+        ...startTransition!.escape,
+        pcb_port_id: undefined,
+      })
+      appendDistinctRoutePoint(movedRoute, {
+        ...terminalPoint,
+        ...startTransition!.escape,
+        z: targetZ,
+        pcb_port_id: undefined,
+      })
+    }
   } else {
     if (!startsAtExistingTransition) {
       appendDistinctRoutePoint(movedRoute, {
@@ -3173,18 +3182,21 @@ export const applySafeTraceLayerMoveForError = (
   }
 
   if (movesEndTerminal) {
-    appendDistinctRoutePoint(movedRoute, {
-      ...last,
-      ...endEscape!,
-      z: targetZ,
-      pcb_port_id: undefined,
-    })
-    appendDistinctRoutePoint(movedRoute, {
-      ...last,
-      ...endEscape!,
-      pcb_port_id: undefined,
-    })
-    appendDistinctRoutePoint(movedRoute, last)
+    const terminalPoint = { ...last, z: endTransition!.terminalZ }
+    if (endTransition!.escape) {
+      appendDistinctRoutePoint(movedRoute, {
+        ...terminalPoint,
+        ...endTransition!.escape,
+        z: targetZ,
+        pcb_port_id: undefined,
+      })
+      appendDistinctRoutePoint(movedRoute, {
+        ...terminalPoint,
+        ...endTransition!.escape,
+        pcb_port_id: undefined,
+      })
+    }
+    appendDistinctRoutePoint(movedRoute, terminalPoint)
   } else if (!endsAtExistingTransition) {
     appendDistinctRoutePoint(movedRoute, {
       ...spanEnd,
