@@ -726,6 +726,7 @@ export class AutoroutingDrcEngine {
         gap,
       ),
       pcb_trace_id: segment.traceId,
+      pcb_pad_id: obstacle.obstacleId,
       source_trace_id: "",
       pcb_trace_error_id: errorId,
       pcb_component_ids: [],

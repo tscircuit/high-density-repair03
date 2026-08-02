@@ -41,6 +41,10 @@ import {
 import { applyTraceToPadClearanceRelaxation } from "./traceToPadClearanceRelaxation"
 import { applyViaToPadClearanceRelaxation } from "./viaToPadClearanceRelaxation"
 import { RELAXED_DRC_OPTIONS } from "./drcPresets"
+import {
+  applyPadTraceClearanceDetour,
+  PAD_TRACE_CLEARANCE_DETOUR_VARIANT_COUNT,
+} from "./pad-trace-clearance-detour"
 import type {
   DrcEvaluator,
   DrcSnapshot,
@@ -102,7 +106,9 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   private candidateAttempts = 0
   private viaInPadCandidateAttempts = 0
   private viaInPadCandidatesAccepted = 0
+  private padTraceClearanceDetourAttempts = 0
   private padTopologyErrorCursor = 0
+  private padTraceClearanceDetourCursorByErrorId = new Map<string, number>()
   private safeTraceLayerCursorByErrorId = new Map<string, number>()
   private tracePairDetourCursorByErrorId = new Map<string, number>()
   private errorCursor = 0
@@ -187,6 +193,8 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         this.viaInPadCandidateAttempts,
       globalDrcForceImproveViaInPadCandidatesAccepted:
         this.viaInPadCandidatesAccepted,
+      globalDrcForceImprovePadTraceClearanceDetourAttempts:
+        this.padTraceClearanceDetourAttempts,
       globalDrcForceImproveStalledIterations: this.stalledIterations,
       globalDrcForceImproveBestDrcIssueCountSeen:
         this.bestDrcIssueCountSeen ?? snapshot.count,
@@ -339,6 +347,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       getMaxTargetedCandidateAttemptsForEffort(this.effort)
     let candidateAttemptsThisStep = 0
     let safeTraceLayerCandidateAttemptsThisStep = 0
+    let padTraceClearanceDetourAttemptsThisStep = 0
     let acceptedCandidate = false
     let attemptedPeriodicLargeBoardBroadFallback = false
     const maxErrorsThisStep = Math.min(
@@ -398,6 +407,12 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           : typeof error.pcb_trace_id === "string"
             ? error.pcb_trace_id
             : undefined
+      const padTraceErrorKey =
+        typeof error.pcb_pad_trace_clearance_error_id === "string"
+          ? error.pcb_pad_trace_clearance_error_id
+          : typeof error.pcb_pad_id === "string"
+            ? traceErrorKey
+            : undefined
       const traceRouteIndex = getTraceRouteIndexForError(
         error,
         bestSnapshot.traceRouteIndexById,
@@ -406,6 +421,82 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         error,
         bestSnapshot.traceRouteIndexById,
       )
+      if (
+        this.enableSafeTraceLayerMoves &&
+        this.stalledIterations > 0 &&
+        traceRouteIndex !== undefined &&
+        padTraceErrorKey
+      ) {
+        let detourCursor =
+          this.padTraceClearanceDetourCursorByErrorId.get(padTraceErrorKey) ?? 0
+        let variantsChecked = 0
+        while (
+          padTraceClearanceDetourAttemptsThisStep <
+            maxCandidateAttemptsThisStep &&
+          variantsChecked < PAD_TRACE_CLEARANCE_DETOUR_VARIANT_COUNT
+        ) {
+          const variantIndex =
+            detourCursor % PAD_TRACE_CLEARANCE_DETOUR_VARIANT_COUNT
+          detourCursor =
+            (detourCursor + 1) % PAD_TRACE_CLEARANCE_DETOUR_VARIANT_COUNT
+          variantsChecked += 1
+          const candidateRoutes = cloneRoutesForIndexes(bestRoutes, [
+            traceRouteIndex,
+          ])
+          const changed = applyPadTraceClearanceDetour({
+            srj: this.srj,
+            routes: candidateRoutes,
+            routeIndex: traceRouteIndex,
+            error,
+            variantIndex,
+          })
+          if (!changed) continue
+
+          const materializedCandidateRoutes = materializeRoutesForIndexes(
+            candidateRoutes,
+            [traceRouteIndex],
+          )
+          padTraceClearanceDetourAttemptsThisStep += 1
+          this.candidateAttempts += 1
+          this.padTraceClearanceDetourAttempts += 1
+          const candidateSnapshot = getDrcSnapshot(
+            this.srj,
+            materializedCandidateRoutes,
+            this.drcEvaluator,
+            this.connMap,
+            this.autoroutingDrcEngine,
+          )
+          const candidateViaIssueCount = getViaDrcIssueCount(candidateSnapshot)
+          const comparisonCount =
+            bestTopologyCandidate?.snapshot.count ?? bestIssueCount
+          const comparisonScore =
+            bestTopologyCandidate?.snapshot.issueScore ?? bestIssueScore
+          const comparisonViaIssueCount =
+            bestTopologyCandidate?.viaIssueCount ?? bestViaIssueCount
+
+          if (
+            candidateViaIssueCount <= bestViaIssueCount &&
+            isBetterDrcSnapshot(
+              candidateSnapshot,
+              candidateViaIssueCount,
+              comparisonCount,
+              comparisonScore,
+              comparisonViaIssueCount,
+            )
+          ) {
+            bestTopologyCandidate = {
+              routes: materializedCandidateRoutes,
+              snapshot: candidateSnapshot,
+              viaIssueCount: candidateViaIssueCount,
+              usesViaInPad: false,
+            }
+          }
+        }
+        this.padTraceClearanceDetourCursorByErrorId.set(
+          padTraceErrorKey,
+          detourCursor,
+        )
+      }
       if (this.enableSafeTraceLayerMoves && traceRouteIndex !== undefined) {
         const safeRouteIndexes = traceRoutePair ?? [traceRouteIndex]
         const localSpanVariantCount =
