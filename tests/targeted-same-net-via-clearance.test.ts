@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { ConnectivityMap } from "circuit-json-to-connectivity-map"
-import { existsSync, readFileSync } from "node:fs"
+import { readFileSync } from "node:fs"
 import { getSvgFromGraphicsObject } from "graphics-debug"
 import { AutoroutingDrcEngine } from "../lib/drc"
 import { GlobalDrcForceImproveSolver } from "../lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcForceImproveSolver"
@@ -106,10 +106,5 @@ test("canonicalizes an explicitly identified same-net via clearance pair", () =>
     "./__snapshots__/targeted-same-net-via-clearance.snap.svg",
     import.meta.url,
   )
-  if (!existsSync(snapshotUrl)) {
-    throw new Error(
-      `SVG_SNAPSHOT_BASE64 ${Buffer.from(svg).toString("base64")}`,
-    )
-  }
-  expect(svg).toBe(readFileSync(snapshotUrl, "utf8"))
+  expect(svg.trim()).toBe(readFileSync(snapshotUrl, "utf8").trim())
 })
