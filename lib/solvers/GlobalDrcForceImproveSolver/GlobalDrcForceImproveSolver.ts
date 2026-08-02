@@ -733,7 +733,8 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
             issueScore: candidateSnapshot.issueScore,
             errorIds: candidateSnapshot.errors.map(
               (candidateError) =>
-                candidateError.pcb_trace_error_id ?? candidateError.pcb_error_id,
+                candidateError.pcb_trace_error_id ??
+                candidateError.pcb_error_id,
             ),
           })
           const comparisonCount =
