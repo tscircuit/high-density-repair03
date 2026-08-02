@@ -3086,9 +3086,7 @@ const isTerminalEscapeClearOfForeignCopper = (
         foreignVia.rootConnectionName,
         connMap,
       ) ||
-      !foreignVia.zLayers.some(
-        (viaZ) => viaZ >= minimumZ && viaZ <= maximumZ,
-      )
+      !foreignVia.zLayers.some((viaZ) => viaZ >= minimumZ && viaZ <= maximumZ)
     ) {
       continue
     }
@@ -3134,10 +3132,7 @@ const isTerminalEscapeSegmentClear = (
       minY: obstacle.center.y - obstacle.height / 2,
       maxY: obstacle.center.y + obstacle.height / 2,
     })
-    if (
-      obstacleDistance + POSITION_EPSILON <
-      routeRadius + requiredClearance
-    ) {
+    if (obstacleDistance + POSITION_EPSILON < routeRadius + requiredClearance) {
       return false
     }
   }
@@ -3158,12 +3153,8 @@ const isTerminalEscapeSegmentClear = (
     for (const segment of collectSegmentsForRoute(foreignRoute, routeIndex)) {
       if (segment.z !== z) continue
       if (
-        segmentToSegmentMinDistance(
-          start,
-          end,
-          segment.start,
-          segment.end,
-        ) + POSITION_EPSILON <
+        segmentToSegmentMinDistance(start, end, segment.start, segment.end) +
+          POSITION_EPSILON <
         routeRadius + segment.radius + requiredClearance
       ) {
         return false
