@@ -136,6 +136,13 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   private drcCountPlateauChecks = 0
   private largeBoardBroadFallbackMisses = 0
   private outputSnapshot: DrcSnapshot | undefined
+  readonly padTraceClearanceCandidateDiagnostics: Array<{
+    targetErrorId: string | undefined
+    variantIndex: number
+    count: number
+    issueScore: number
+    errors: Array<Record<string, unknown>>
+  }> = []
 
   constructor(params: GlobalDrcForceImproveSolverParams) {
     super()
@@ -504,6 +511,21 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
             this.autoroutingDrcEngine,
           )
           const candidateViaIssueCount = getViaDrcIssueCount(candidateSnapshot)
+          this.padTraceClearanceCandidateDiagnostics.push({
+            targetErrorId: padTraceErrorKey,
+            variantIndex,
+            count: candidateSnapshot.count,
+            issueScore: candidateSnapshot.issueScore,
+            errors: candidateSnapshot.errors.map((candidateError) => ({
+              type: candidateError.type,
+              traceId: candidateError.pcb_trace_id,
+              padId: candidateError.pcb_pad_id,
+              errorId:
+                candidateError.pcb_trace_error_id ?? candidateError.pcb_error_id,
+              center: candidateError.center ?? candidateError.pcb_center,
+              message: candidateError.message,
+            })),
+          })
           const comparisonCount =
             bestTopologyCandidate?.snapshot.count ?? bestIssueCount
           const comparisonScore =
