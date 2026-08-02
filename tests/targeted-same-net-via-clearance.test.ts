@@ -23,7 +23,7 @@ test("canonicalizes an explicitly identified same-net via clearance pair", () =>
     minTraceWidth: 0.1,
     minViaDiameter: 0.3,
   }
-  const routes = cloneRoutes([
+  const inputHdRoutes = [
     {
       connectionName: "source_net_5_mst0",
       route: [
@@ -48,7 +48,8 @@ test("canonicalizes an explicitly identified same-net via clearance pair", () =>
       traceThickness: 0.1,
       viaDiameter: 0.3,
     },
-  ])
+  ]
+  const routes = cloneRoutes(inputHdRoutes)
   const connMap = new ConnectivityMap({})
   connMap.addConnections([
     ["source_net_5_mst0", "source_net_5"],
@@ -78,17 +79,6 @@ test("canonicalizes an explicitly identified same-net via clearance pair", () =>
   expect(routes[0]?.route[2]?.x).toBe(0)
   expect(routes[1]?.route[2]?.x).toBe(0)
 
-  const inputHdRoutes = routes.map((route, routeIndex) => ({
-    ...route,
-    route: route.route.map((point) => ({
-      ...point,
-      x: routeIndex === 0 ? point.x : point.x + 0.05,
-    })),
-    vias: route.vias.map((via) => ({
-      ...via,
-      x: routeIndex === 0 ? via.x : via.x + 0.05,
-    })),
-  }))
   const drcEngine = new AutoroutingDrcEngine(srj, { connMap })
   const solver = new GlobalDrcForceImproveSolver({
     srj,
