@@ -311,6 +311,19 @@ const getDrcMarkerCircles = (
     }
   })
 
+const getInitialDrcMarkerCircles = (
+  solver: GlobalDrcForceImproveSolver,
+): Circle[] =>
+  getDrcMarkersForSolver(solver)
+    .filter((marker) => marker.status !== "created")
+    .map((marker) => ({
+      center: marker.center,
+      radius: 0.22,
+      fill: "rgba(147, 51, 234, 0.38)",
+      stroke: "#7e22ce",
+      label: `before repair: ${marker.message}`,
+    }))
+
 const getDrcMarkerById = (
   solver: GlobalDrcForceImproveSolver,
   markerId: string | undefined,
@@ -344,6 +357,79 @@ export const visualizeGlobalDrcForceImproveSolver = (
 
   getDrcMarkerById(solver, selectedDrcMarkerId)
   return graphics
+}
+
+/**
+ * Adds step metadata for before/after snapshot sheets without changing the
+ * regular solver visualization consumed by fixtures and downstream callers.
+ */
+export const visualizeGlobalDrcForceImproveSolverSteps = (
+  solver: GlobalDrcForceImproveSolver,
+  visibleLayer: "all" | string,
+): GraphicsObject => {
+  const visibleZ = getVisibleZ(solver.srj, visibleLayer)
+  const boardAndObstacles = [
+    getBoardRect(solver.srj),
+    ...getObstacleRects(solver.srj, visibleLayer, visibleZ),
+  ]
+  const connectionPoints = getConnectionPoints(solver.srj, visibleLayer)
+
+  return {
+    title: `Global DRC Force Improve (${visibleLayer})`,
+    coordinateSystem: "cartesian",
+    rects: [1, 2, 3].flatMap((step) =>
+      boardAndObstacles.map((rect) => ({ ...rect, step })),
+    ),
+    lines: [
+      ...getRouteLines(solver.inputHdRoutes, visibleZ).map((line) => ({
+        ...line,
+        label: `before repair: ${line.label}`,
+        step: 1,
+      })),
+      ...getRouteLines(solver.outputHdRoutes, visibleZ).flatMap((line) => [
+        {
+          ...line,
+          label: `repaired geometry: ${line.label}`,
+          step: 2,
+        },
+        {
+          ...line,
+          label: `after repair: ${line.label}`,
+          step: 3,
+        },
+      ]),
+    ],
+    circles: [
+      ...getViaCircles(solver.inputHdRoutes, visibleZ).map((circle) => ({
+        ...circle,
+        label: `before repair: ${circle.label}`,
+        step: 1,
+      })),
+      ...getInitialDrcMarkerCircles(solver).map((circle) => ({
+        ...circle,
+        step: 1,
+      })),
+      ...getViaCircles(solver.outputHdRoutes, visibleZ).flatMap((circle) => [
+        {
+          ...circle,
+          label: `repaired geometry: ${circle.label}`,
+          step: 2,
+        },
+        {
+          ...circle,
+          label: `after repair: ${circle.label}`,
+          step: 3,
+        },
+      ]),
+      ...getDrcMarkerCircles(solver).map((circle) => ({
+        ...circle,
+        step: 3,
+      })),
+    ],
+    points: [1, 2, 3].flatMap((step) =>
+      connectionPoints.map((point) => ({ ...point, step })),
+    ),
+  }
 }
 
 export class VisualizedGlobalDrcForceImproveSolver extends GlobalDrcForceImproveSolver {
