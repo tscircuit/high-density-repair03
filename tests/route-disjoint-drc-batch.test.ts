@@ -255,6 +255,20 @@ test("does not charge a rejected disjoint batch to the precise candidate budget"
   expect(solver.stats.finalDrcIssueCount).toBe(4)
 })
 
+test("does not batch when precise iterations can visit every initial error", () => {
+  const solver = new GlobalDrcForceImproveSolver({
+    ...createRejectedBatchScenario(),
+    maxIterations: 4,
+    enableLargeBoardBroadFallback: false,
+    enablePostSolveClearanceRelaxation: false,
+  })
+
+  solver.solve()
+
+  expect(solver.stats.globalDrcForceImproveRouteDisjointBatchAttempts).toBe(0)
+  expect(solver.stats.globalDrcForceImproveRouteDisjointBatchesAccepted).toBe(0)
+})
+
 test("rotates precise force scales after batch backoff", () => {
   expect(
     [1, 2, 3, 4].map((iteration) =>

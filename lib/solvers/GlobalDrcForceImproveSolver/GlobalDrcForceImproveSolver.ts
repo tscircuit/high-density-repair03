@@ -341,6 +341,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       centeredErrors.length,
       Math.max(1, Math.ceil(this.effort)),
     )
+    const preciseErrorTurnCapacity = this.MAX_ITERATIONS * maxErrorsThisStep
     const startErrorIndex = this.errorCursor % centeredErrors.length
 
     const targetedSweepErrors = this.enableTargetedErrorSweep
@@ -348,6 +349,8 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       : []
     const routeDisjointBatch =
       this.enableRouteDisjointBatching &&
+      (this.initialDrcIssueCount ?? bestIssueCount) >
+        preciseErrorTurnCapacity &&
       centeredErrors.length > maxCandidateAttemptsThisStep &&
       bestRoutes.length > BROAD_FALLBACK_SMALL_ROUTE_LIMIT &&
       this.routeDisjointBatchConsecutiveMisses <
