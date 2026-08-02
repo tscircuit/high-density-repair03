@@ -400,19 +400,15 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     const eligiblePadTraceClearanceErrorCount = padTraceErrors.filter(
       (error) =>
         getPadTraceErrorKey(error) !== undefined &&
-        getTraceRouteIndexForError(
-          error,
-          bestSnapshot.traceRouteIndexById,
-        ) !== undefined,
+        getTraceRouteIndexForError(error, bestSnapshot.traceRouteIndexById) !==
+          undefined,
     ).length
     const eligibleTracePairDetourErrorCount = padTraceErrors.filter(
       (error) =>
         error.type === "pcb_trace_error" &&
         getTraceErrorKey(error) !== undefined &&
-        getTraceRoutePairForError(
-          error,
-          bestSnapshot.traceRouteIndexById,
-        ) !== undefined,
+        getTraceRoutePairForError(error, bestSnapshot.traceRouteIndexById) !==
+          undefined,
     ).length
     for (const error of this.enableSafeTraceLayerMoves ||
     this.enableViaInPadLayerMoves ||
@@ -647,11 +643,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           shouldTryTracePairTopology &&
           this.iterations % 2 === 0 &&
           bestIssueCount <= 1)
-      if (
-        shouldTryTracePairDetour &&
-        traceErrorKey &&
-        traceRoutePair
-      ) {
+      if (shouldTryTracePairDetour && traceErrorKey && traceRoutePair) {
         let detourCursor =
           this.tracePairDetourCursorByErrorId.get(traceErrorKey) ?? 0
         let detourVariantsChecked = 0
