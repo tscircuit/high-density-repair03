@@ -48,6 +48,7 @@ import type {
 } from "./types"
 import type { SimpleRouteJson } from "../../types"
 import type { HighDensityRoute } from "../../types/high-density-types"
+import { visualizeGlobalDrcRouteChanges } from "./visualize-global-drc-route-changes"
 
 export type GlobalDrcForceImproveSolverVisualizer = (
   solver: GlobalDrcForceImproveSolver,
@@ -992,7 +993,13 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   }
 
   override visualize(): GraphicsObject {
-    return registeredVisualizer?.(this) ?? super.visualize()
+    return (
+      registeredVisualizer?.(this) ??
+      visualizeGlobalDrcRouteChanges({
+        inputHdRoutes: this.inputHdRoutes,
+        outputHdRoutes: this.outputHdRoutes,
+      })
+    )
   }
 
   override preview(): GraphicsObject {

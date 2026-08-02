@@ -1,12 +1,17 @@
 import { expect, test } from "bun:test"
 import { ConnectivityMap } from "circuit-json-to-connectivity-map"
+import { existsSync, readFileSync } from "node:fs"
+import { getSvgFromGraphicsObject } from "graphics-debug"
+import { AutoroutingDrcEngine } from "../lib/drc"
+import { GlobalDrcForceImproveSolver } from "../lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcForceImproveSolver"
 import {
   applyDrcErrorForces,
   cloneRoutes,
+  getDrcSnapshot,
 } from "../lib/solvers/GlobalDrcForceImproveSolver/solverHelpers"
 import type { SimpleRouteJson } from "../lib/types"
 
-test("separates an explicitly identified same-net via clearance pair", () => {
+test("canonicalizes an explicitly identified same-net via clearance pair", () => {
   const srj: SimpleRouteJson = {
     bounds: { minX: -2, minY: -2, maxX: 2, maxY: 2 },
     connections: [
@@ -68,6 +73,53 @@ test("separates an explicitly identified same-net via clearance pair", () => {
   )
 
   expect(changed).toBe(true)
-  expect(routes[0]?.route[1]?.x).toBeLessThan(0)
-  expect(routes[1]?.route[1]?.x).toBeGreaterThan(0.05)
+  expect(routes[0]?.route[1]?.x).toBe(0)
+  expect(routes[1]?.route[1]?.x).toBe(0)
+  expect(routes[0]?.route[2]?.x).toBe(0)
+  expect(routes[1]?.route[2]?.x).toBe(0)
+
+  const inputHdRoutes = routes.map((route, routeIndex) => ({
+    ...route,
+    route: route.route.map((point) => ({
+      ...point,
+      x: routeIndex === 0 ? point.x : point.x + 0.05,
+    })),
+    vias: route.vias.map((via) => ({
+      ...via,
+      x: routeIndex === 0 ? via.x : via.x + 0.05,
+    })),
+  }))
+  const drcEngine = new AutoroutingDrcEngine(srj, { connMap })
+  const solver = new GlobalDrcForceImproveSolver({
+    srj,
+    hdRoutes: inputHdRoutes,
+    connMap,
+    autoroutingDrcEngine: drcEngine,
+    maxIterations: 4,
+    enableLargeBoardBroadFallback: false,
+    enablePostSolveClearanceRelaxation: false,
+  })
+
+  expect(
+    getDrcSnapshot(srj, inputHdRoutes, undefined, connMap, drcEngine).count,
+  ).toBe(1)
+  solver.solve()
+  expect(
+    getDrcSnapshot(srj, solver.getOutput(), undefined, connMap, drcEngine)
+      .count,
+  ).toBe(0)
+
+  const svg = getSvgFromGraphicsObject(solver.visualize(), {
+    backgroundColor: "white",
+  })
+  const snapshotUrl = new URL(
+    "./__snapshots__/targeted-same-net-via-clearance.snap.svg",
+    import.meta.url,
+  )
+  if (!existsSync(snapshotUrl)) {
+    throw new Error(
+      `SVG_SNAPSHOT_BASE64 ${Buffer.from(svg).toString("base64")}`,
+    )
+  }
+  expect(svg).toBe(readFileSync(snapshotUrl, "utf8"))
 })
