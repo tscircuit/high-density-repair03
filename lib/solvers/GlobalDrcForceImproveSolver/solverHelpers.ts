@@ -1,11 +1,16 @@
 import {
   pointToSegmentDistance,
+  segmentToBoundsMinDistance,
   segmentToSegmentMinDistance,
 } from "@tscircuit/math-utils"
 import type { ConnectivityMap } from "circuit-json-to-connectivity-map"
 import type { AutoroutingDrcEngine } from "../../drc"
 import { RELAXED_DRC_OPTIONS } from "./drcPresets"
-import { PREFERRED_VIA_TO_VIA_CLEARANCE, getDrcErrors } from "./getDrcErrors"
+import {
+  MIN_VIA_TO_VIA_CLEARANCE,
+  PREFERRED_VIA_TO_VIA_CLEARANCE,
+  getDrcErrors,
+} from "./getDrcErrors"
 import { convertToCircuitJson } from "../utils/convertToCircuitJson"
 import {
   getConnMapAwareSrj,
@@ -2996,6 +3001,198 @@ const isViaInsideBounds = (
   point.y - viaRadius >= bounds.minY - POSITION_EPSILON &&
   point.y + viaRadius <= bounds.maxY + POSITION_EPSILON
 
+const isTerminalEscapeClearOfForeignObstacles = (
+  srj: SimpleRouteJson,
+  route: MutableRoute,
+  point: Point,
+  fromZ: number,
+  toZ: number,
+  viaRadius: number,
+  connMap?: ConnectivityMap,
+) => {
+  const minimumZ = Math.min(fromZ, toZ)
+  const maximumZ = Math.max(fromZ, toZ)
+  const requiredDistance =
+    viaRadius + getViaEdgeToPadEdgeClearance(srj)! + CLEARANCE_SLACK
+  const routeRootConnectionName = getRootConnectionName(route)
+
+  return srj.obstacles.every((obstacle) => {
+    if (obstacle.isCopperPour) return true
+    if (
+      !getObstacleZLayers(obstacle, srj.layerCount).some(
+        (obstacleZ) => obstacleZ >= minimumZ && obstacleZ <= maximumZ,
+      )
+    ) {
+      return true
+    }
+    if (
+      obstacleSharesNet(routeRootConnectionName, obstacle, connMap) ||
+      obstacleSharesNet(route.connectionName, obstacle, connMap)
+    ) {
+      return true
+    }
+
+    return (
+      getPointToObstacleDistance(point, obstacle) + POSITION_EPSILON >=
+      requiredDistance
+    )
+  })
+}
+
+const isTerminalEscapeClearOfForeignCopper = (
+  routes: MutableRoute[],
+  route: MutableRoute,
+  point: Point,
+  fromZ: number,
+  toZ: number,
+  viaRadius: number,
+  connMap?: ConnectivityMap,
+) => {
+  const minimumZ = Math.min(fromZ, toZ)
+  const maximumZ = Math.max(fromZ, toZ)
+  const routeRootConnectionName = getRootConnectionName(route)
+  const traceClearance =
+    (RELAXED_DRC_OPTIONS.traceClearance ?? 0.1) + CLEARANCE_SLACK
+
+  for (let routeIndex = 0; routeIndex < routes.length; routeIndex += 1) {
+    const foreignRoute = routes[routeIndex]
+    if (
+      !foreignRoute ||
+      sharesNet(
+        routeRootConnectionName,
+        getRootConnectionName(foreignRoute),
+        connMap,
+      )
+    ) {
+      continue
+    }
+
+    for (const segment of collectSegmentsForRoute(foreignRoute, routeIndex)) {
+      if (segment.z < minimumZ || segment.z > maximumZ) continue
+      if (
+        pointToSegmentDistance(point, segment.start, segment.end) +
+          POSITION_EPSILON <
+        viaRadius + segment.radius + traceClearance
+      ) {
+        return false
+      }
+    }
+  }
+
+  for (const foreignVia of collectViaNodes(routes)) {
+    if (
+      sharesNet(
+        routeRootConnectionName,
+        foreignVia.rootConnectionName,
+        connMap,
+      ) ||
+      !foreignVia.zLayers.some(
+        (viaZ) => viaZ >= minimumZ && viaZ <= maximumZ,
+      )
+    ) {
+      continue
+    }
+    if (
+      Math.hypot(point.x - foreignVia.x, point.y - foreignVia.y) +
+        POSITION_EPSILON <
+      viaRadius + foreignVia.radius + MIN_VIA_TO_VIA_CLEARANCE
+    ) {
+      return false
+    }
+  }
+
+  return true
+}
+
+const isTerminalEscapeSegmentClear = (
+  srj: SimpleRouteJson,
+  routes: MutableRoute[],
+  route: MutableRoute,
+  start: Point,
+  end: Point,
+  z: number,
+  connMap?: ConnectivityMap,
+) => {
+  const routeRadius = (route.traceThickness ?? 0.1) / 2
+  const requiredClearance =
+    (RELAXED_DRC_OPTIONS.traceClearance ?? 0.1) + CLEARANCE_SLACK
+  const routeRootConnectionName = getRootConnectionName(route)
+
+  for (const obstacle of srj.obstacles) {
+    if (
+      obstacle.isCopperPour ||
+      !getObstacleZLayers(obstacle, srj.layerCount).includes(z) ||
+      obstacleSharesNet(routeRootConnectionName, obstacle, connMap) ||
+      obstacleSharesNet(route.connectionName, obstacle, connMap)
+    ) {
+      continue
+    }
+
+    const obstacleDistance = segmentToBoundsMinDistance(start, end, {
+      minX: obstacle.center.x - obstacle.width / 2,
+      maxX: obstacle.center.x + obstacle.width / 2,
+      minY: obstacle.center.y - obstacle.height / 2,
+      maxY: obstacle.center.y + obstacle.height / 2,
+    })
+    if (
+      obstacleDistance + POSITION_EPSILON <
+      routeRadius + requiredClearance
+    ) {
+      return false
+    }
+  }
+
+  for (let routeIndex = 0; routeIndex < routes.length; routeIndex += 1) {
+    const foreignRoute = routes[routeIndex]
+    if (
+      !foreignRoute ||
+      sharesNet(
+        routeRootConnectionName,
+        getRootConnectionName(foreignRoute),
+        connMap,
+      )
+    ) {
+      continue
+    }
+
+    for (const segment of collectSegmentsForRoute(foreignRoute, routeIndex)) {
+      if (segment.z !== z) continue
+      if (
+        segmentToSegmentMinDistance(
+          start,
+          end,
+          segment.start,
+          segment.end,
+        ) + POSITION_EPSILON <
+        routeRadius + segment.radius + requiredClearance
+      ) {
+        return false
+      }
+    }
+  }
+
+  for (const foreignVia of collectViaNodes(routes)) {
+    if (
+      sharesNet(
+        routeRootConnectionName,
+        foreignVia.rootConnectionName,
+        connMap,
+      ) ||
+      !foreignVia.zLayers.includes(z)
+    ) {
+      continue
+    }
+    if (
+      pointToSegmentDistance(foreignVia, start, end) + POSITION_EPSILON <
+      routeRadius + foreignVia.radius + requiredClearance
+    ) {
+      return false
+    }
+  }
+
+  return true
+}
+
 const appendDistinctRoutePoint = (
   points: MutableRoute["route"],
   point: MutableRoute["route"][number],
@@ -3017,7 +3214,8 @@ export type SafeTraceLayerMoveSpanExpansion = number | "full"
 /**
  * Moves a span containing the reported conflict onto another layer. Layer
  * transitions inside the route stay at their existing coordinates;
- * transitions at connected terminals are moved fully outside their pads. The
+ * transitions at connected terminals use the connected pad's authoritative
+ * layer and are moved fully outside the pad when another layer is needed. The
  * caller scores every candidate against full-board DRC.
  */
 export const applySafeTraceLayerMoveForError = (
@@ -3094,8 +3292,12 @@ export const applySafeTraceLayerMoveForError = (
     const terminalZ = getObstacleZLayers(pad, srj.layerCount)[0]!
     if (terminalZ === targetZ) return { terminalZ }
 
+    const movedNeighbor =
+      endpointSide === "start"
+        ? originalPoints[spanStartIndex + 1]
+        : originalPoints[spanEndIndex - 1]
     const tangent = getTerminalTangent(originalPoints, endpointSide)
-    if (!tangent) return undefined
+    if (!movedNeighbor || !tangent) return undefined
     const rotation =
       endpointSide === "start" ? rotationPair[0] : rotationPair[1]
     const escape = getExternalViaPoint(
@@ -3107,7 +3309,43 @@ export const applySafeTraceLayerMoveForError = (
     if (
       !escape ||
       !isViaInsideBounds(escape, viaRadius, srj.bounds) ||
-      getPointToObstacleDistance(escape, pad) + POSITION_EPSILON < viaRadius
+      getPointToObstacleDistance(escape, pad) + POSITION_EPSILON < viaRadius ||
+      !isTerminalEscapeClearOfForeignObstacles(
+        srj,
+        route,
+        escape,
+        terminalZ,
+        targetZ,
+        viaRadius,
+        connMap,
+      ) ||
+      !isTerminalEscapeClearOfForeignCopper(
+        routes,
+        route,
+        escape,
+        terminalZ,
+        targetZ,
+        viaRadius,
+        connMap,
+      ) ||
+      !isTerminalEscapeSegmentClear(
+        srj,
+        routes,
+        route,
+        endpoint,
+        escape,
+        terminalZ,
+        connMap,
+      ) ||
+      !isTerminalEscapeSegmentClear(
+        srj,
+        routes,
+        route,
+        escape,
+        movedNeighbor,
+        targetZ,
+        connMap,
+      )
     ) {
       return undefined
     }
