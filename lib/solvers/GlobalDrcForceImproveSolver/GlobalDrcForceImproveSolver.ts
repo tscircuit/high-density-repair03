@@ -20,6 +20,7 @@ import {
 import {
   applyBroadRepulsionForces,
   applyDrcErrorForces,
+  applyPadTraceDetourForError,
   applySafeTraceLayerMoveForError,
   applyTerminalViaRelocationForError,
   applyTracePairDetourForError,
@@ -103,6 +104,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   private viaInPadCandidateAttempts = 0
   private viaInPadCandidatesAccepted = 0
   private padTopologyErrorCursor = 0
+  private padTraceDetourCursorByErrorId = new Map<string, number>()
   private safeTraceLayerCursorByErrorId = new Map<string, number>()
   private tracePairDetourCursorByErrorId = new Map<string, number>()
   private errorCursor = 0
@@ -406,6 +408,84 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         error,
         bestSnapshot.traceRouteIndexById,
       )
+      const padTraceErrorKey =
+        typeof error.pcb_pad_id === "string"
+          ? typeof error.pcb_pad_trace_clearance_error_id === "string"
+            ? error.pcb_pad_trace_clearance_error_id
+            : traceErrorKey
+          : undefined
+      if (
+        this.enableSafeTraceLayerMoves &&
+        traceRouteIndex !== undefined &&
+        padTraceErrorKey
+      ) {
+        let detourCursor =
+          this.padTraceDetourCursorByErrorId.get(padTraceErrorKey) ?? 0
+        let variantsChecked = 0
+        while (
+          safeTraceLayerCandidateAttemptsThisStep <
+            maxCandidateAttemptsThisStep &&
+          variantsChecked < 4
+        ) {
+          const variantIndex = detourCursor % 4
+          detourCursor = (detourCursor + 1) % 4
+          variantsChecked += 1
+          const candidateRoutes = cloneRoutesForIndexes(bestRoutes, [
+            traceRouteIndex,
+          ])
+          const changed = applyPadTraceDetourForError(
+            this.srj,
+            candidateRoutes,
+            error,
+            bestSnapshot.traceRouteIndexById,
+            variantIndex,
+          )
+          if (!changed) continue
+
+          const materializedCandidateRoutes = materializeRoutesForIndexes(
+            candidateRoutes,
+            [traceRouteIndex],
+          )
+          safeTraceLayerCandidateAttemptsThisStep += 1
+          this.candidateAttempts += 1
+          const candidateSnapshot = getDrcSnapshot(
+            this.srj,
+            materializedCandidateRoutes,
+            this.drcEvaluator,
+            this.connMap,
+            this.autoroutingDrcEngine,
+          )
+          const candidateViaIssueCount = getViaDrcIssueCount(candidateSnapshot)
+          const comparisonCount =
+            bestTopologyCandidate?.snapshot.count ?? bestIssueCount
+          const comparisonScore =
+            bestTopologyCandidate?.snapshot.issueScore ?? bestIssueScore
+          const comparisonViaIssueCount =
+            bestTopologyCandidate?.viaIssueCount ?? bestViaIssueCount
+
+          if (
+            candidateViaIssueCount <= bestViaIssueCount &&
+            isBetterDrcSnapshot(
+              candidateSnapshot,
+              candidateViaIssueCount,
+              comparisonCount,
+              comparisonScore,
+              comparisonViaIssueCount,
+            )
+          ) {
+            bestTopologyCandidate = {
+              routes: materializedCandidateRoutes,
+              snapshot: candidateSnapshot,
+              viaIssueCount: candidateViaIssueCount,
+              usesViaInPad: false,
+            }
+          }
+        }
+        this.padTraceDetourCursorByErrorId.set(
+          padTraceErrorKey,
+          detourCursor,
+        )
+      }
       if (this.enableSafeTraceLayerMoves && traceRouteIndex !== undefined) {
         const safeRouteIndexes = traceRoutePair ?? [traceRouteIndex]
         const localSpanVariantCount =
