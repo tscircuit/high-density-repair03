@@ -3013,7 +3013,74 @@ const appendDistinctRoutePoint = (
   points.push(point)
 }
 
-export type SafeTraceLayerMoveSpanExpansion = number | "full"
+export type SafeTraceLayerMoveSpanExpansion =
+  | { before: number; after: number }
+  | "full"
+
+export type SafeTraceLayerMoveSpanExpansionBounds = {
+  maxBefore: number
+  maxAfter: number
+}
+
+export const getSafeTraceLayerMoveSpanExpansionBounds = (params: {
+  route: HighDensityRoute
+  routeIndex: number
+  error: Record<string, unknown>
+}): SafeTraceLayerMoveSpanExpansionBounds | undefined => {
+  const center = getErrorCenter(params.error)
+  if (!center) return undefined
+
+  const route: MutableRoute = params.route
+  const segment = getNearestSegment(
+    collectSegmentsForRoute(route, params.routeIndex),
+    center,
+  )
+  if (!segment) return undefined
+
+  let maxBefore = 0
+  for (let index = segment.startIndex - 1; index >= 0; index -= 1) {
+    if (route.route[index]?.z !== segment.z) break
+    maxBefore += 1
+  }
+
+  let maxAfter = 0
+  for (
+    let index = segment.endIndex + 1;
+    index < route.route.length;
+    index += 1
+  ) {
+    if (route.route[index]?.z !== segment.z) break
+    maxAfter += 1
+  }
+
+  return { maxBefore, maxAfter }
+}
+
+export const getSafeTraceLayerMoveSpanExpansionCount = (
+  bounds: SafeTraceLayerMoveSpanExpansionBounds,
+): number => (bounds.maxBefore + 1) * (bounds.maxAfter + 1)
+
+export const getSafeTraceLayerMoveSpanExpansion = (
+  bounds: SafeTraceLayerMoveSpanExpansionBounds,
+  candidateIndex: number,
+): SafeTraceLayerMoveSpanExpansion | undefined => {
+  if (candidateIndex < 0) return undefined
+
+  let remainingIndex = candidateIndex
+  const maxTotal = bounds.maxBefore + bounds.maxAfter
+  for (let total = 0; total <= maxTotal; total += 1) {
+    const minBefore = Math.max(0, total - bounds.maxAfter)
+    const maxBefore = Math.min(bounds.maxBefore, total)
+    const candidateCount = maxBefore - minBefore + 1
+    if (remainingIndex < candidateCount) {
+      const before = minBefore + remainingIndex
+      return { before, after: total - before }
+    }
+    remainingIndex -= candidateCount
+  }
+
+  return undefined
+}
 
 /**
  * Moves a span containing the reported conflict onto another layer. Layer
@@ -3021,16 +3088,26 @@ export type SafeTraceLayerMoveSpanExpansion = number | "full"
  * transitions at connected terminals are moved fully outside their pads. The
  * caller scores every candidate against full-board DRC.
  */
-export const applySafeTraceLayerMoveForError = (
-  srj: SimpleRouteJson,
-  routes: MutableRoute[],
-  error: Record<string, unknown>,
-  routeIndex: number,
-  targetZ: number,
-  spanExpansion: SafeTraceLayerMoveSpanExpansion,
-  connMap?: ConnectivityMap,
-  directionVariant = 0,
-) => {
+export const applySafeTraceLayerMoveForError = (params: {
+  srj: SimpleRouteJson
+  routes: MutableRoute[]
+  error: Record<string, unknown>
+  routeIndex: number
+  targetZ: number
+  spanExpansion: SafeTraceLayerMoveSpanExpansion
+  connMap?: ConnectivityMap
+  directionVariant?: number
+}): boolean => {
+  const {
+    srj,
+    routes,
+    error,
+    routeIndex,
+    targetZ,
+    spanExpansion,
+    connMap,
+    directionVariant = 0,
+  } = params
   const errorType = getDrcErrorType(error)
   if (
     errorType !== "pcb_pad_trace_clearance_error" &&
@@ -3060,21 +3137,20 @@ export const applySafeTraceLayerMoveForError = (
 
   let spanStartIndex = segment.startIndex
   let spanEndIndex = segment.endIndex
-  const maxExpansions =
-    spanExpansion === "full" ? originalPoints.length : spanExpansion
-  for (let expansion = 0; expansion < maxExpansions; expansion += 1) {
-    let expanded = false
+  const maxBefore =
+    spanExpansion === "full" ? originalPoints.length : spanExpansion.before
+  for (let expansion = 0; expansion < maxBefore; expansion += 1) {
     const precedingPoint = originalPoints[spanStartIndex - 1]
-    if (precedingPoint?.z === segment.z) {
-      spanStartIndex -= 1
-      expanded = true
-    }
+    if (precedingPoint?.z !== segment.z) break
+    spanStartIndex -= 1
+  }
+
+  const maxAfter =
+    spanExpansion === "full" ? originalPoints.length : spanExpansion.after
+  for (let expansion = 0; expansion < maxAfter; expansion += 1) {
     const followingPoint = originalPoints[spanEndIndex + 1]
-    if (followingPoint?.z === segment.z) {
-      spanEndIndex += 1
-      expanded = true
-    }
-    if (!expanded) break
+    if (followingPoint?.z !== segment.z) break
+    spanEndIndex += 1
   }
 
   const movesStartTerminal = spanStartIndex === 0 && first.pcb_port_id
