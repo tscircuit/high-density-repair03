@@ -3476,12 +3476,16 @@ export const getDrcErrorRouteIndexes = (
   )
   if (primaryRouteIndex !== undefined) routeIndexes.add(primaryRouteIndex)
 
-  const explicitTraceIds = Array.isArray(error.pcb_trace_ids)
-    ? error.pcb_trace_ids.filter(
-        (traceId): traceId is string => typeof traceId === "string",
-      )
+  const publicTraceIds = Array.isArray(error.pcb_trace_ids)
+    ? error.pcb_trace_ids
     : []
-  for (const traceId of explicitTraceIds) {
+  const routeOwnerTraceIds = Array.isArray(error.route_owner_trace_ids)
+    ? error.route_owner_trace_ids
+    : []
+  const ownershipTraceIds = [...publicTraceIds, ...routeOwnerTraceIds].filter(
+    (traceId): traceId is string => typeof traceId === "string",
+  )
+  for (const traceId of ownershipTraceIds) {
     const routeIndex = traceRouteIndexById.get(traceId)
     if (routeIndex !== undefined) routeIndexes.add(routeIndex)
   }
@@ -3505,9 +3509,13 @@ const getDrcErrorSeverityForBatching = (error: Record<string, unknown>) => {
 
 const getDrcErrorBatchPriority = (error: Record<string, unknown>) => {
   if (isTraceObstacleDrcError(error)) return 4
+  const message =
+    typeof error.message === "string" ? error.message.toLowerCase() : ""
   if (
     Array.isArray(error.pcb_via_trace_ids) ||
-    typeof error.pcb_via_trace_id === "string"
+    typeof error.pcb_via_trace_id === "string" ||
+    typeof error.route_owner_via_trace_id === "string" ||
+    message.includes("pcb_via")
   ) {
     return 3
   }
@@ -3868,9 +3876,12 @@ export const applyDrcErrorForces = (
         ? (nearestObstacle?.center ?? center)
         : getRepulsionPointForError(srj, error, center)
       const explicitViaTraceId =
-        typeof error.pcb_via_trace_id === "string"
-          ? error.pcb_via_trace_id
-          : undefined
+        selectedRouteIndexSet &&
+        typeof error.route_owner_via_trace_id === "string"
+          ? error.route_owner_via_trace_id
+          : typeof error.pcb_via_trace_id === "string"
+            ? error.pcb_via_trace_id
+            : undefined
       const explicitViaRouteIndex =
         explicitViaTraceId === undefined
           ? undefined
@@ -3936,9 +3947,12 @@ export const applyDrcErrorForces = (
 
     const isObstacleError = isTraceObstacleDrcError(error)
     const explicitViaTraceId =
-      typeof error.pcb_via_trace_id === "string"
-        ? error.pcb_via_trace_id
-        : undefined
+      selectedRouteIndexSet &&
+      typeof error.route_owner_via_trace_id === "string"
+        ? error.route_owner_via_trace_id
+        : typeof error.pcb_via_trace_id === "string"
+          ? error.pcb_via_trace_id
+          : undefined
     const explicitViaRouteIndex =
       explicitViaTraceId === undefined
         ? undefined

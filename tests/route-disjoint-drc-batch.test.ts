@@ -4,6 +4,7 @@ import {
   applyDrcErrorForces,
   getDrcErrorRouteIndexes,
   getRouteDisjointDrcErrorBatch,
+  getTraceRoutePairForError,
 } from "../lib/solvers/GlobalDrcForceImproveSolver/solverHelpers"
 import { getBackoffForceScaleForIteration } from "../lib/solvers/GlobalDrcForceImproveSolver/solverConfig"
 import type { DrcEvaluator, HighDensityRoute, SimpleRouteJson } from "../lib"
@@ -56,6 +57,23 @@ test("resolves every explicit trace participant to its owning route", () => {
   )
 
   expect(routeIndexes).toEqual([4, 9])
+})
+
+test("keeps batch-only ownership out of precise pair semantics", () => {
+  const error = {
+    type: "pcb_trace_error",
+    pcb_trace_id: "trace_a",
+    pcb_trace_error_id: "overlap_trace_a_via_b",
+    route_owner_trace_ids: ["trace_a", "trace_b"],
+    center: { x: 0, y: 0 },
+  }
+  const traceRouteIndexById = new Map([
+    ["trace_a", 4],
+    ["trace_b", 9],
+  ])
+
+  expect(getDrcErrorRouteIndexes(error, traceRouteIndexById)).toEqual([4, 9])
+  expect(getTraceRoutePairForError(error, traceRouteIndexById)).toBeUndefined()
 })
 
 test("batch ownership scoping does not change precise candidate behavior", () => {

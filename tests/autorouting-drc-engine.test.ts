@@ -119,17 +119,23 @@ test("matches the relaxed reference checks for autorouting collision types", () 
       error.pcb_trace_error_id === "overlap_trace_a_trace_b" ||
       error.pcb_trace_error_id === "overlap_trace_b_trace_a",
   )
-  expect(tracePairError?.pcb_trace_ids).toEqual(["trace_a", "trace_b"])
+  expect(tracePairError?.route_owner_trace_ids).toEqual(["trace_a", "trace_b"])
 
   const traceViaError = engineResult.errors.find(
-    (error) => error.pcb_via_trace_id === "trace_c",
+    (error) =>
+      Array.isArray(error.route_owner_trace_ids) &&
+      error.route_owner_trace_ids.includes("trace_c") &&
+      error.message.includes("pcb_via"),
   )
-  expect(traceViaError?.pcb_trace_ids).toEqual(["trace_a", "trace_c"])
+  expect(traceViaError?.route_owner_trace_ids).toEqual(["trace_a", "trace_c"])
+  expect(traceViaError?.route_owner_via_trace_id).toBe("trace_c")
+  expect(traceViaError?.pcb_trace_ids).toBeUndefined()
+  expect(traceViaError?.pcb_via_trace_id).toBeUndefined()
 
-  const obstacleError = engineResult.errors.find(
-    (error) => error.pcb_obstacle_id === "pcb_smtpad_foreign",
+  const obstacleError = engineResult.errors.find((error) =>
+    error.message.includes("pcb_smtpad_foreign"),
   )
-  expect(obstacleError?.pcb_trace_ids).toEqual(["trace_a"])
+  expect(obstacleError?.route_owner_trace_ids).toEqual(["trace_a"])
 })
 
 test("classifies close via pairs by canonical SRJ net", () => {
@@ -190,7 +196,7 @@ test("classifies close via pairs by canonical SRJ net", () => {
   expect(
     result.errors.find(
       (error) => error.pcb_error_id === "different_net_vias_close_via_1_via_2",
-    )?.pcb_trace_ids,
+    )?.route_owner_trace_ids,
   ).toEqual(["trace_1", "trace_2"])
 })
 
