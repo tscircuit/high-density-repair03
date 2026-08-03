@@ -27,6 +27,8 @@ import {
   applyViaInPadLayerMoveForError,
   cloneRoutes,
   cloneRoutesForIndexes,
+  createDrcTraceCache,
+  type DrcTraceCache,
   getCenteredErrors,
   getDrcSnapshot,
   getTargetedClearanceSweepErrors,
@@ -41,8 +43,10 @@ import {
 import { applyTraceToPadClearanceRelaxation } from "./traceToPadClearanceRelaxation"
 import { applyViaToPadClearanceRelaxation } from "./viaToPadClearanceRelaxation"
 import { RELAXED_DRC_OPTIONS } from "./drcPresets"
+import { getConnMapAwareSrj } from "./netUtils"
 import type {
   DrcEvaluator,
+  DrcPhaseTimings,
   DrcSnapshot,
   GlobalDrcForceImproveSolverParams,
 } from "./types"
@@ -113,6 +117,14 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   private drcCountPlateauChecks = 0
   private largeBoardBroadFallbackMisses = 0
   private outputSnapshot: DrcSnapshot | undefined
+  private readonly drcTraceCache: DrcTraceCache
+  private readonly phaseTimings: DrcPhaseTimings = {
+    cloningMs: 0,
+    forceApplicationMs: 0,
+    materializationMs: 0,
+    traceConversionMs: 0,
+    drcEvaluationMs: 0,
+  }
 
   constructor(params: GlobalDrcForceImproveSolverParams) {
     super()
@@ -134,6 +146,12 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
               params.srj.minTraceToPadEdgeClearance ??
               RELAXED_DRC_OPTIONS.viaClearance,
           }))
+    this.drcTraceCache = createDrcTraceCache(
+      this.autoroutingDrcEngine && !this.drcEvaluator
+        ? this.srj
+        : getConnMapAwareSrj(this.srj, this.connMap),
+      this.inputHdRoutes,
+    )
     if (
       params.viaHoleDiameter !== undefined &&
       (!Number.isFinite(params.viaHoleDiameter) || params.viaHoleDiameter <= 0)
@@ -195,7 +213,58 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       globalDrcForceImproveDrcCountPlateauChecks: this.drcCountPlateauChecks,
       globalDrcForceImproveLargeBoardBroadFallbackMisses:
         this.largeBoardBroadFallbackMisses,
+      globalDrcForceImproveCloneMs: this.phaseTimings.cloningMs,
+      globalDrcForceImproveForceApplicationMs:
+        this.phaseTimings.forceApplicationMs,
+      globalDrcForceImproveMaterializationMs:
+        this.phaseTimings.materializationMs,
+      globalDrcForceImproveTraceConversionMs:
+        this.phaseTimings.traceConversionMs,
+      globalDrcForceImproveDrcEvaluationMs:
+        this.phaseTimings.drcEvaluationMs,
     }
+  }
+
+  private measurePhase<T>(
+    phase: keyof DrcPhaseTimings,
+    action: () => T,
+  ): T {
+    const startedAt = performance.now()
+    const value = action()
+    this.phaseTimings[phase] += performance.now() - startedAt
+    return value
+  }
+
+  private cloneCandidateRoutes(
+    routes: HighDensityRoute[],
+    routeIndexes?: readonly number[],
+  ) {
+    return this.measurePhase("cloningMs", () =>
+      routeIndexes ? cloneRoutesForIndexes(routes, routeIndexes) : cloneRoutes(routes),
+    )
+  }
+
+  private materializeCandidateRoutes(
+    routes: ReturnType<typeof cloneRoutes>,
+    routeIndexes?: readonly number[],
+  ) {
+    return this.measurePhase("materializationMs", () =>
+      routeIndexes
+        ? materializeRoutesForIndexes(routes, routeIndexes)
+        : materializeRoutes(routes),
+    )
+  }
+
+  private getSnapshot(routes: HighDensityRoute[]) {
+    return getDrcSnapshot(
+      this.srj,
+      routes,
+      this.drcEvaluator,
+      this.connMap,
+      this.autoroutingDrcEngine,
+      this.drcTraceCache,
+      this.phaseTimings,
+    )
   }
 
   private increaseMaxIterationsForDrcIssueCount(drcIssueCount: number) {
@@ -228,13 +297,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     const relaxedSnapshot =
       relaxedRoutes === routes
         ? snapshot
-        : getDrcSnapshot(
-            this.srj,
-            relaxedRoutes,
-            this.drcEvaluator,
-            this.connMap,
-            this.autoroutingDrcEngine,
-          )
+        : this.getSnapshot(relaxedRoutes)
 
     this.outputHdRoutes = relaxedRoutes
     this.outputSnapshot = relaxedSnapshot
@@ -307,13 +370,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     let bestRoutes = this.outputHdRoutes
     let bestSnapshot =
       this.outputSnapshot ??
-      getDrcSnapshot(
-        this.srj,
-        bestRoutes,
-        this.drcEvaluator,
-        this.connMap,
-        this.autoroutingDrcEngine,
-      )
+      this.getSnapshot(bestRoutes)
     if (this.initialDrcIssueCount === undefined) {
       this.initialDrcIssueCount = bestSnapshot.count
       this.bestDrcIssueCountSeen = bestSnapshot.count
@@ -448,34 +505,30 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
             ? 0
             : Math.floor(layerVariant / this.srj.layerCount)
           const changedRouteIndex = safeRouteIndexes[routeSide]!
-          const candidateRoutes = cloneRoutesForIndexes(bestRoutes, [
+          const candidateRoutes = this.cloneCandidateRoutes(bestRoutes, [
             changedRouteIndex,
           ])
-          const changed = applySafeTraceLayerMoveForError(
-            this.srj,
-            candidateRoutes,
-            error,
-            changedRouteIndex,
-            targetZ,
-            spanExpansion,
-            this.connMap,
-            directionVariant,
+          const changed = this.measurePhase("forceApplicationMs", () =>
+            applySafeTraceLayerMoveForError(
+              this.srj,
+              candidateRoutes,
+              error,
+              changedRouteIndex,
+              targetZ,
+              spanExpansion,
+              this.connMap,
+              directionVariant,
+            ),
           )
           if (!changed) continue
 
-          const materializedCandidateRoutes = materializeRoutesForIndexes(
+          const materializedCandidateRoutes = this.materializeCandidateRoutes(
             candidateRoutes,
             [changedRouteIndex],
           )
           safeTraceLayerCandidateAttemptsThisStep += 1
           this.candidateAttempts += 1
-          const candidateSnapshot = getDrcSnapshot(
-            this.srj,
-            materializedCandidateRoutes,
-            this.drcEvaluator,
-            this.connMap,
-            this.autoroutingDrcEngine,
-          )
+          const candidateSnapshot = this.getSnapshot(materializedCandidateRoutes)
           const candidateViaIssueCount = getViaDrcIssueCount(candidateSnapshot)
           const comparisonCount =
             bestTopologyCandidate?.snapshot.count ?? bestIssueCount
@@ -531,34 +584,30 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           detourCursor += 1
           detourVariantsChecked += 1
           const changedRouteIndex = traceRoutePair[variant.routeSide]
-          const candidateRoutes = cloneRoutesForIndexes(bestRoutes, [
+          const candidateRoutes = this.cloneCandidateRoutes(bestRoutes, [
             changedRouteIndex,
           ])
-          const changed = applyTracePairDetourForError(
-            candidateRoutes,
-            error,
-            bestSnapshot.traceRouteIndexById,
-            variant.routeSide,
-            variant.halfSpan,
-            variant.offset,
-            variant.directionSign,
+          const changed = this.measurePhase("forceApplicationMs", () =>
+            applyTracePairDetourForError(
+              candidateRoutes,
+              error,
+              bestSnapshot.traceRouteIndexById,
+              variant.routeSide,
+              variant.halfSpan,
+              variant.offset,
+              variant.directionSign,
+            ),
           )
           if (!changed) continue
 
-          const materializedCandidateRoutes = materializeRoutesForIndexes(
+          const materializedCandidateRoutes = this.materializeCandidateRoutes(
             candidateRoutes,
             [changedRouteIndex],
           )
           this.viaInPadCandidateAttempts += 1
           candidateAttemptsThisStep += 1
           this.candidateAttempts += 1
-          const candidateSnapshot = getDrcSnapshot(
-            this.srj,
-            materializedCandidateRoutes,
-            this.drcEvaluator,
-            this.connMap,
-            this.autoroutingDrcEngine,
-          )
+          const candidateSnapshot = this.getSnapshot(materializedCandidateRoutes)
           const candidateViaIssueCount = getViaDrcIssueCount(candidateSnapshot)
           const comparisonCount =
             bestTopologyCandidate?.snapshot.count ?? bestIssueCount
@@ -578,34 +627,30 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         : []) {
         if (candidateAttemptsThisStep >= maxCandidateAttemptsThisStep) break
         if (traceRouteIndex === undefined) break
-        const candidateRoutes = cloneRoutesForIndexes(bestRoutes, [
+        const candidateRoutes = this.cloneCandidateRoutes(bestRoutes, [
           traceRouteIndex,
         ])
-        const changed = applyTerminalViaRelocationForError(
-          this.srj,
-          candidateRoutes,
-          error,
-          bestSnapshot.traceRouteIndexById,
-          endpointSide,
-          this.connMap,
-          this.viaHoleDiameter,
+        const changed = this.measurePhase("forceApplicationMs", () =>
+          applyTerminalViaRelocationForError(
+            this.srj,
+            candidateRoutes,
+            error,
+            bestSnapshot.traceRouteIndexById,
+            endpointSide,
+            this.connMap,
+            this.viaHoleDiameter,
+          ),
         )
         if (!changed) continue
 
-        const materializedCandidateRoutes = materializeRoutesForIndexes(
+        const materializedCandidateRoutes = this.materializeCandidateRoutes(
           candidateRoutes,
           [traceRouteIndex],
         )
         this.viaInPadCandidateAttempts += 1
         candidateAttemptsThisStep += 1
         this.candidateAttempts += 1
-        const candidateSnapshot = getDrcSnapshot(
-          this.srj,
-          materializedCandidateRoutes,
-          this.drcEvaluator,
-          this.connMap,
-          this.autoroutingDrcEngine,
-        )
+        const candidateSnapshot = this.getSnapshot(materializedCandidateRoutes)
         const candidateViaIssueCount = getViaDrcIssueCount(candidateSnapshot)
         const comparisonCount =
           bestTopologyCandidate?.snapshot.count ?? bestIssueCount
@@ -637,34 +682,30 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       for (let targetZ = 0; targetZ < viaInPadLayerCount; targetZ += 1) {
         if (candidateAttemptsThisStep >= maxCandidateAttemptsThisStep) break
         if (traceRouteIndex === undefined) break
-        const candidateRoutes = cloneRoutesForIndexes(bestRoutes, [
+        const candidateRoutes = this.cloneCandidateRoutes(bestRoutes, [
           traceRouteIndex,
         ])
-        const changed = applyViaInPadLayerMoveForError(
-          this.srj,
-          candidateRoutes,
-          error,
-          bestSnapshot.traceRouteIndexById,
-          targetZ,
-          this.connMap,
-          this.viaHoleDiameter,
+        const changed = this.measurePhase("forceApplicationMs", () =>
+          applyViaInPadLayerMoveForError(
+            this.srj,
+            candidateRoutes,
+            error,
+            bestSnapshot.traceRouteIndexById,
+            targetZ,
+            this.connMap,
+            this.viaHoleDiameter,
+          ),
         )
         if (!changed) continue
 
-        const materializedCandidateRoutes = materializeRoutesForIndexes(
+        const materializedCandidateRoutes = this.materializeCandidateRoutes(
           candidateRoutes,
           [traceRouteIndex],
         )
         this.viaInPadCandidateAttempts += 1
         candidateAttemptsThisStep += 1
         this.candidateAttempts += 1
-        const candidateSnapshot = getDrcSnapshot(
-          this.srj,
-          materializedCandidateRoutes,
-          this.drcEvaluator,
-          this.connMap,
-          this.autoroutingDrcEngine,
-        )
+        const candidateSnapshot = this.getSnapshot(materializedCandidateRoutes)
         const candidateViaIssueCount = getViaDrcIssueCount(candidateSnapshot)
         const comparisonCount =
           bestTopologyCandidate?.snapshot.count ?? bestIssueCount
@@ -702,35 +743,33 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           for (let targetZ = 0; targetZ < this.srj.layerCount; targetZ += 1) {
             if (candidateAttemptsThisStep >= maxCandidateAttemptsThisStep) break
             const changedRouteIndex = traceRoutePair[routeSide]
-            const candidateRoutes = cloneRoutesForIndexes(bestRoutes, [
+            const candidateRoutes = this.cloneCandidateRoutes(bestRoutes, [
               changedRouteIndex,
             ])
-            const changed = applyTracePairLayerMoveForError(
-              this.srj,
-              candidateRoutes,
-              error,
-              bestSnapshot.traceRouteIndexById,
-              routeSide,
-              targetZ,
-              spanExpansion,
-              this.connMap,
-              this.viaHoleDiameter,
+            const changed = this.measurePhase("forceApplicationMs", () =>
+              applyTracePairLayerMoveForError(
+                this.srj,
+                candidateRoutes,
+                error,
+                bestSnapshot.traceRouteIndexById,
+                routeSide,
+                targetZ,
+                spanExpansion,
+                this.connMap,
+                this.viaHoleDiameter,
+              ),
             )
             if (!changed) continue
 
-            const materializedCandidateRoutes = materializeRoutesForIndexes(
+            const materializedCandidateRoutes = this.materializeCandidateRoutes(
               candidateRoutes,
               [changedRouteIndex],
             )
             this.viaInPadCandidateAttempts += 1
             candidateAttemptsThisStep += 1
             this.candidateAttempts += 1
-            const candidateSnapshot = getDrcSnapshot(
-              this.srj,
+            const candidateSnapshot = this.getSnapshot(
               materializedCandidateRoutes,
-              this.drcEvaluator,
-              this.connMap,
-              this.autoroutingDrcEngine,
             )
             const candidateViaIssueCount =
               getViaDrcIssueCount(candidateSnapshot)
@@ -776,31 +815,29 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     }
 
     if (!acceptedCandidate && targetedSweepErrors.length >= 2) {
-      const candidateRoutes = cloneRoutes(bestRoutes)
+      const candidateRoutes = this.cloneCandidateRoutes(bestRoutes)
       let changed = false
       for (const error of targetedSweepErrors) {
         changed =
-          applyDrcErrorForces(
-            this.srj,
-            candidateRoutes,
-            [error],
-            bestSnapshot.traceRouteIndexById,
-            1,
-            this.connMap,
+          this.measurePhase("forceApplicationMs", () =>
+            applyDrcErrorForces(
+              this.srj,
+              candidateRoutes,
+              [error],
+              bestSnapshot.traceRouteIndexById,
+              1,
+              this.connMap,
+            ),
           ) || changed
       }
 
       if (changed) {
-        const materializedCandidateRoutes = materializeRoutes(candidateRoutes)
+        const materializedCandidateRoutes = this.materializeCandidateRoutes(
+          candidateRoutes,
+        )
         candidateAttemptsThisStep += 1
         this.candidateAttempts += 1
-        const candidateSnapshot = getDrcSnapshot(
-          this.srj,
-          materializedCandidateRoutes,
-          this.drcEvaluator,
-          this.connMap,
-          this.autoroutingDrcEngine,
-        )
+        const candidateSnapshot = this.getSnapshot(materializedCandidateRoutes)
         const candidateViaIssueCount = getViaDrcIssueCount(candidateSnapshot)
 
         if (
@@ -843,27 +880,25 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       for (const scale of getForceScalesForEffort(this.effort)) {
         if (candidateAttemptsThisStep >= maxCandidateAttemptsThisStep) break
 
-        const candidateRoutes = cloneRoutes(bestRoutes)
-        const changed = applyDrcErrorForces(
-          this.srj,
-          candidateRoutes,
-          [error],
-          bestSnapshot.traceRouteIndexById,
-          scale,
-          this.connMap,
+        const candidateRoutes = this.cloneCandidateRoutes(bestRoutes)
+        const changed = this.measurePhase("forceApplicationMs", () =>
+          applyDrcErrorForces(
+            this.srj,
+            candidateRoutes,
+            [error],
+            bestSnapshot.traceRouteIndexById,
+            scale,
+            this.connMap,
+          ),
         )
         if (!changed) continue
 
-        const materializedCandidateRoutes = materializeRoutes(candidateRoutes)
+        const materializedCandidateRoutes = this.materializeCandidateRoutes(
+          candidateRoutes,
+        )
         candidateAttemptsThisStep += 1
         this.candidateAttempts += 1
-        const candidateSnapshot = getDrcSnapshot(
-          this.srj,
-          materializedCandidateRoutes,
-          this.drcEvaluator,
-          this.connMap,
-          this.autoroutingDrcEngine,
-        )
+        const candidateSnapshot = this.getSnapshot(materializedCandidateRoutes)
         const candidateViaIssueCount = getViaDrcIssueCount(candidateSnapshot)
 
         if (
@@ -922,13 +957,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           this.drcEvaluator === undefined,
         )
         if (broadCandidateRoutes === bestRoutes) continue
-        const broadCandidateSnapshot = getDrcSnapshot(
-          this.srj,
-          broadCandidateRoutes,
-          this.drcEvaluator,
-          this.connMap,
-          this.autoroutingDrcEngine,
-        )
+        const broadCandidateSnapshot = this.getSnapshot(broadCandidateRoutes)
         const broadCandidateViaIssueCount = getViaDrcIssueCount(
           broadCandidateSnapshot,
         )
@@ -977,13 +1006,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   override tryFinalAcceptance() {
     const snapshot =
       this.outputSnapshot ??
-      getDrcSnapshot(
-        this.srj,
-        this.outputHdRoutes,
-        this.drcEvaluator,
-        this.connMap,
-        this.autoroutingDrcEngine,
-      )
+      this.getSnapshot(this.outputHdRoutes)
     this.acceptSolvedRoutes(this.outputHdRoutes, snapshot)
   }
 

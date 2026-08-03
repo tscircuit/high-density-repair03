@@ -19,6 +19,14 @@ export type DrcSnapshot = {
   traceRouteIndexById: Map<string, number>
 }
 
+export type DrcPhaseTimings = {
+  cloningMs: number
+  forceApplicationMs: number
+  materializationMs: number
+  traceConversionMs: number
+  drcEvaluationMs: number
+}
+
 export type GlobalDrcForceImproveSolverParams = {
   srj: SimpleRouteJson
   hdRoutes: HighDensityRoute[]
