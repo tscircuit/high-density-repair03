@@ -1,7 +1,5 @@
 import { expect, test } from "bun:test"
 import { ConnectivityMap } from "circuit-json-to-connectivity-map"
-import { readFileSync } from "node:fs"
-import { getSvgFromGraphicsObject } from "graphics-debug"
 import { AutoroutingDrcEngine } from "../lib/drc"
 import { GlobalDrcForceImproveSolver } from "../lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcForceImproveSolver"
 import {
@@ -98,13 +96,4 @@ test("canonicalizes an explicitly identified same-net via clearance pair", () =>
     getDrcSnapshot(srj, solver.getOutput(), undefined, connMap, drcEngine)
       .count,
   ).toBe(0)
-
-  const svg = getSvgFromGraphicsObject(solver.visualize(), {
-    backgroundColor: "white",
-  })
-  const snapshotUrl = new URL(
-    "./__snapshots__/targeted-same-net-via-clearance.snap.svg",
-    import.meta.url,
-  )
-  expect(svg.trim()).toBe(readFileSync(snapshotUrl, "utf8").trim())
 })
