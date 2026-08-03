@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { getIndependentDrcErrorBatch } from "../lib/solvers/GlobalDrcForceImproveSolver/solverHelpers"
+import { getIndependentDrcErrorBatch } from "../lib/solvers/GlobalDrcForceImproveSolver/independentDrcErrorBatch"
 
 test("selects a deterministic batch with disjoint routes and influence regions", () => {
   const traceRouteIndexById = new Map([

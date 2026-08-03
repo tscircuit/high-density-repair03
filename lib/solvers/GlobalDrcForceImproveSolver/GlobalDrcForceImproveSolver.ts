@@ -29,7 +29,6 @@ import {
   cloneRoutesForIndexes,
   getCenteredErrors,
   getDrcSnapshot,
-  getIndependentDrcErrorBatch,
   getTargetedClearanceSweepErrors,
   getTraceRouteIndexForError,
   getTraceRoutePairForError,
@@ -39,6 +38,7 @@ import {
   materializeRoutesForIndexes,
   SAFE_TRACE_LAYER_DIRECTION_VARIANT_COUNT,
 } from "./solverHelpers"
+import { getIndependentDrcErrorBatch } from "./independentDrcErrorBatch"
 import { applyTraceToPadClearanceRelaxation } from "./traceToPadClearanceRelaxation"
 import { applyViaToPadClearanceRelaxation } from "./viaToPadClearanceRelaxation"
 import { RELAXED_DRC_OPTIONS } from "./drcPresets"
@@ -839,65 +839,6 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       }
     }
 
-    if (
-      !acceptedCandidate &&
-      independentErrorBatch.length >= 2 &&
-      candidateAttemptsThisStep < maxCandidateAttemptsThisStep
-    ) {
-      const forceScales = getForceScalesForEffort(this.effort)
-      const scale = forceScales[(this.iterations - 1) % forceScales.length]!
-      const candidateRoutes = cloneRoutes(bestRoutes)
-      const changed = applyDrcErrorForces(
-        this.srj,
-        candidateRoutes,
-        independentErrorBatch,
-        bestSnapshot.traceRouteIndexById,
-        scale,
-        this.connMap,
-      )
-
-      if (changed) {
-        const materializedCandidateRoutes = materializeRoutes(candidateRoutes)
-        candidateAttemptsThisStep += 1
-        this.candidateAttempts += 1
-        this.independentBatchAttempts += 1
-        const candidateSnapshot = getDrcSnapshot(
-          this.srj,
-          materializedCandidateRoutes,
-          this.drcEvaluator,
-          this.connMap,
-          this.autoroutingDrcEngine,
-        )
-        const candidateViaIssueCount = getViaDrcIssueCount(candidateSnapshot)
-
-        if (
-          isBetterDrcSnapshot(
-            candidateSnapshot,
-            candidateViaIssueCount,
-            bestIssueCount,
-            bestIssueScore,
-            bestViaIssueCount,
-          )
-        ) {
-          bestRoutes = materializedCandidateRoutes
-          bestSnapshot = candidateSnapshot
-          bestIssueCount = candidateSnapshot.count
-          bestIssueScore = candidateSnapshot.issueScore
-          bestViaIssueCount = candidateViaIssueCount
-          this.independentBatchAccepted = true
-          this.targetedForceAccepted = true
-          acceptedCandidate = true
-          this.errorCursor =
-            (startErrorIndex + independentErrorBatch.length) %
-            centeredErrors.length
-          if (candidateSnapshot.count === 0) {
-            this.acceptSolvedRoutes(bestRoutes, bestSnapshot)
-            return
-          }
-        }
-      }
-    }
-
     for (
       let errorOffset = 0;
       errorOffset < maxErrorsThisStep &&
@@ -962,6 +903,56 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       }
 
       if (acceptedCandidate) break
+    }
+
+    if (
+      !acceptedCandidate &&
+      (this.initialDrcIssueCount ?? 0) >= LARGE_DRC_COUNT_THRESHOLD &&
+      independentErrorBatch.length >= 2
+    ) {
+      const forceScales = getForceScalesForEffort(this.effort)
+      const scale = forceScales[(this.iterations - 1) % forceScales.length]!
+      const candidateRoutes = cloneRoutes(bestRoutes)
+      const changed = applyDrcErrorForces(
+        this.srj,
+        candidateRoutes,
+        independentErrorBatch,
+        bestSnapshot.traceRouteIndexById,
+        scale,
+        this.connMap,
+      )
+
+      if (changed) {
+        const materializedCandidateRoutes = materializeRoutes(candidateRoutes)
+        candidateAttemptsThisStep += 1
+        this.candidateAttempts += 1
+        this.independentBatchAttempts += 1
+        const candidateSnapshot = getDrcSnapshot(
+          this.srj,
+          materializedCandidateRoutes,
+          this.drcEvaluator,
+          this.connMap,
+          this.autoroutingDrcEngine,
+        )
+
+        if (candidateSnapshot.count < bestIssueCount) {
+          bestRoutes = materializedCandidateRoutes
+          bestSnapshot = candidateSnapshot
+          bestIssueCount = candidateSnapshot.count
+          bestIssueScore = candidateSnapshot.issueScore
+          bestViaIssueCount = getViaDrcIssueCount(candidateSnapshot)
+          this.independentBatchAccepted = true
+          this.targetedForceAccepted = true
+          acceptedCandidate = true
+          this.errorCursor =
+            (startErrorIndex + independentErrorBatch.length) %
+            centeredErrors.length
+          if (candidateSnapshot.count === 0) {
+            this.acceptSolvedRoutes(bestRoutes, bestSnapshot)
+            return
+          }
+        }
+      }
     }
 
     const canAffordBroadFallback =
