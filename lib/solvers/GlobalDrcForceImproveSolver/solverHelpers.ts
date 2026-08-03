@@ -34,7 +34,7 @@ import {
   expandBounds2d,
   getSpatialCandidateIndexes,
 } from "./spatialIndex"
-import type { DrcEvaluator, DrcSnapshot } from "./types"
+import type { DrcEvaluator, DrcPhaseTimings, DrcSnapshot } from "./types"
 import type {
   Bounds2D,
   MutableRoute,
@@ -93,14 +93,27 @@ const isTraceObstacleDrcError = (error: Record<string, unknown>) => {
   )
 }
 
-const createSimplifiedTraces = (
+type RouteTraceMetadata = {
+  traceId: string
+  connectionName: string
+  traceThickness: number
+  viaDiameter: number
+  connectionPoints: SimpleRouteJson["connections"][number]["pointsToConnect"]
+}
+
+export type DrcTraceCache = {
+  traceMetadataByRouteIndex: Array<RouteTraceMetadata | undefined>
+  traceRouteIndexesInOrder: number[]
+  traceRouteIndexById: Map<string, number>
+  simplifiedTraceByRoute: WeakMap<HighDensityRoute, SimplifiedPcbTraces[number]>
+}
+
+export const createDrcTraceCache = (
   srj: SimpleRouteJson,
   routes: HighDensityRoute[],
-): {
-  traces: SimplifiedPcbTraces
-  traceRouteIndexById: Map<string, number>
-} => {
-  const traces: SimplifiedPcbTraces = []
+): DrcTraceCache => {
+  const traceMetadataByRouteIndex: Array<RouteTraceMetadata | undefined> = []
+  const traceRouteIndexesInOrder: number[] = []
   const traceRouteIndexById = new Map<string, number>()
   const routesByConnectionName = new Map<
     string,
@@ -125,32 +138,66 @@ const createSimplifiedTraces = (
       if (!hdRoute) continue
       const traceId = `${connection.name}_${i}`
 
-      traces.push({
-        type: "pcb_trace",
-        pcb_trace_id: traceId,
-        connection_name:
+      traceMetadataByRouteIndex[hdRoute.routeIndex] = {
+        traceId,
+        connectionName:
           connection.netConnectionName ??
           connection.rootConnectionName ??
           connection.name,
-        route: convertHdRouteToSimplifiedRoute(
-          hdRoute.route.route,
-          srj.layerCount,
-          {
-            traceThickness:
-              hdRoute.route.traceThickness ??
-              connection.nominalTraceWidth ??
-              srj.nominalTraceWidth ??
-              srj.minTraceWidth,
-            viaDiameter: hdRoute.route.viaDiameter ?? srj.minViaDiameter,
-            connectionPoints: connection.pointsToConnect,
-          },
-        ),
-      })
+        traceThickness:
+          hdRoute.route.traceThickness ??
+          connection.nominalTraceWidth ??
+          srj.nominalTraceWidth ??
+          srj.minTraceWidth,
+        viaDiameter: hdRoute.route.viaDiameter ?? srj.minViaDiameter,
+        connectionPoints: connection.pointsToConnect,
+      }
+      traceRouteIndexesInOrder.push(hdRoute.routeIndex)
       traceRouteIndexById.set(traceId, hdRoute.routeIndex)
     }
   }
 
-  return { traces, traceRouteIndexById }
+  return {
+    traceMetadataByRouteIndex,
+    traceRouteIndexesInOrder,
+    traceRouteIndexById,
+    simplifiedTraceByRoute: new WeakMap(),
+  }
+}
+
+const createSimplifiedTraces = (
+  srj: SimpleRouteJson,
+  routes: HighDensityRoute[],
+  cache = createDrcTraceCache(srj, routes),
+): {
+  traces: SimplifiedPcbTraces
+  traceRouteIndexById: Map<string, number>
+} => {
+  const traces: SimplifiedPcbTraces = []
+
+  for (const routeIndex of cache.traceRouteIndexesInOrder) {
+    const route = routes[routeIndex]
+    const metadata = cache.traceMetadataByRouteIndex[routeIndex]
+    if (!route || !metadata) continue
+
+    let trace = cache.simplifiedTraceByRoute.get(route)
+    if (!trace) {
+      trace = {
+        type: "pcb_trace",
+        pcb_trace_id: metadata.traceId,
+        connection_name: metadata.connectionName,
+        route: convertHdRouteToSimplifiedRoute(route.route, srj.layerCount, {
+          traceThickness: metadata.traceThickness,
+          viaDiameter: metadata.viaDiameter,
+          connectionPoints: metadata.connectionPoints,
+        }),
+      }
+      cache.simplifiedTraceByRoute.set(route, trace)
+    }
+    traces.push(trace)
+  }
+
+  return { traces, traceRouteIndexById: cache.traceRouteIndexById }
 }
 
 const getDrcErrorSeverity = (error: Record<string, unknown>) => {
@@ -185,12 +232,23 @@ export const getDrcSnapshot = (
   drcEvaluator?: DrcEvaluator,
   connMap?: ConnectivityMap,
   autoroutingDrcEngine?: AutoroutingDrcEngine,
+  traceCache?: DrcTraceCache,
+  phaseTimings?: DrcPhaseTimings,
 ): DrcSnapshot => {
   const drcSrj =
     autoroutingDrcEngine && !drcEvaluator
       ? srj
       : getConnMapAwareSrj(srj, connMap)
-  const { traces, traceRouteIndexById } = createSimplifiedTraces(drcSrj, routes)
+  const traceConversionStartedAt = performance.now()
+  const { traces, traceRouteIndexById } = createSimplifiedTraces(
+    drcSrj,
+    routes,
+    traceCache,
+  )
+  if (phaseTimings) {
+    phaseTimings.traceConversionMs += performance.now() - traceConversionStartedAt
+  }
+  const drcEvaluationStartedAt = performance.now()
   const drcResult = drcEvaluator?.({
     srj: drcSrj,
     routes,
@@ -203,7 +261,7 @@ export const getDrcSnapshot = (
       ? drcResult
       : (drcResult.errorsWithCenters ?? drcResult.errors)
 
-    return {
+    const snapshot = {
       errors: errorsWithCenters as Array<Record<string, unknown>>,
       count: errors.length,
       issueScore: getDrcIssueScore(
@@ -211,6 +269,10 @@ export const getDrcSnapshot = (
       ),
       traceRouteIndexById,
     }
+    if (phaseTimings) {
+      phaseTimings.drcEvaluationMs += performance.now() - drcEvaluationStartedAt
+    }
+    return snapshot
   }
 
   const drc =
@@ -232,7 +294,7 @@ export const getDrcSnapshot = (
       },
     )
 
-  return {
+  const snapshot = {
     errors:
       drc.errorsWithCenters.length > 0
         ? (drc.errorsWithCenters as unknown as Array<Record<string, unknown>>)
@@ -245,6 +307,10 @@ export const getDrcSnapshot = (
     ),
     traceRouteIndexById,
   }
+  if (phaseTimings) {
+    phaseTimings.drcEvaluationMs += performance.now() - drcEvaluationStartedAt
+  }
+  return snapshot
 }
 
 export const collectViaNodes = (
