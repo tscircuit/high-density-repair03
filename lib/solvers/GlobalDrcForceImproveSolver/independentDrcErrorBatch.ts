@@ -1,5 +1,7 @@
 import {
+  BROAD_FALLBACK_SMALL_ROUTE_LIMIT,
   CLEARANCE_SLACK,
+  LARGE_DRC_COUNT_THRESHOLD,
   TRACE_PAD_REPAIR_MAX_MOVE,
 } from "./solverConfig"
 import {
@@ -8,6 +10,21 @@ import {
 } from "./solverHelpers"
 
 type Point = { x: number; y: number }
+
+type IndependentDrcErrorBatchPolicyInput = {
+  routeCount: number
+  initialDrcIssueCount: number
+  batchSize: number
+}
+
+export const shouldTryIndependentDrcErrorBatch = ({
+  routeCount,
+  initialDrcIssueCount,
+  batchSize,
+}: IndependentDrcErrorBatchPolicyInput): boolean =>
+  routeCount > BROAD_FALLBACK_SMALL_ROUTE_LIMIT &&
+  initialDrcIssueCount >= LARGE_DRC_COUNT_THRESHOLD &&
+  batchSize >= 2
 
 const getErrorCenter = (
   error: Record<string, unknown>,

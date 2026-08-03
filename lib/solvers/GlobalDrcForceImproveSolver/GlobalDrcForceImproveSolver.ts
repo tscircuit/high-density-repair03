@@ -38,7 +38,10 @@ import {
   materializeRoutesForIndexes,
   SAFE_TRACE_LAYER_DIRECTION_VARIANT_COUNT,
 } from "./solverHelpers"
-import { getIndependentDrcErrorBatch } from "./independentDrcErrorBatch"
+import {
+  getIndependentDrcErrorBatch,
+  shouldTryIndependentDrcErrorBatch,
+} from "./independentDrcErrorBatch"
 import { applyTraceToPadClearanceRelaxation } from "./traceToPadClearanceRelaxation"
 import { applyViaToPadClearanceRelaxation } from "./viaToPadClearanceRelaxation"
 import { RELAXED_DRC_OPTIONS } from "./drcPresets"
@@ -905,10 +908,15 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       if (acceptedCandidate) break
     }
 
+    const canAffordBroadFallback =
+      bestRoutes.length <= BROAD_FALLBACK_SMALL_ROUTE_LIMIT
     if (
       !acceptedCandidate &&
-      (this.initialDrcIssueCount ?? 0) >= LARGE_DRC_COUNT_THRESHOLD &&
-      independentErrorBatch.length >= 2
+      shouldTryIndependentDrcErrorBatch({
+        routeCount: bestRoutes.length,
+        initialDrcIssueCount: this.initialDrcIssueCount ?? 0,
+        batchSize: independentErrorBatch.length,
+      })
     ) {
       const forceScales = getForceScalesForEffort(this.effort)
       const scale = forceScales[(this.iterations - 1) % forceScales.length]!
@@ -961,8 +969,6 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       }
     }
 
-    const canAffordBroadFallback =
-      bestRoutes.length <= BROAD_FALLBACK_SMALL_ROUTE_LIMIT
     const largeBoardBroadFallbackCadence = getLargeBoardBroadFallbackCadence(
       centeredErrors.length,
     )
