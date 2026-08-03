@@ -38,6 +38,10 @@ import {
   materializeRoutesForIndexes,
   SAFE_TRACE_LAYER_DIRECTION_VARIANT_COUNT,
 } from "./solverHelpers"
+import {
+  getIndependentDrcErrorBatch,
+  shouldTryIndependentDrcErrorBatch,
+} from "./independentDrcErrorBatch"
 import { applyTraceToPadClearanceRelaxation } from "./traceToPadClearanceRelaxation"
 import { applyViaToPadClearanceRelaxation } from "./viaToPadClearanceRelaxation"
 import { RELAXED_DRC_OPTIONS } from "./drcPresets"
@@ -98,6 +102,8 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   outputHdRoutes: HighDensityRoute[]
   private initialDrcIssueCount: number | undefined
   private broadForceAccepted = false
+  private independentBatchAccepted = false
+  private independentBatchAttempts = 0
   private targetedForceAccepted = false
   private candidateAttempts = 0
   private viaInPadCandidateAttempts = 0
@@ -181,6 +187,10 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       finalDrcIssueCount: snapshot.count,
       globalDrcForceImproveMaxIterations: this.MAX_ITERATIONS,
       globalDrcForceImproveBroadForceAccepted: this.broadForceAccepted,
+      globalDrcForceImproveIndependentBatchAccepted:
+        this.independentBatchAccepted,
+      globalDrcForceImproveIndependentBatchAttempts:
+        this.independentBatchAttempts,
       globalDrcForceImproveTargetedForceAccepted: this.targetedForceAccepted,
       globalDrcForceImproveCandidateAttempts: this.candidateAttempts,
       globalDrcForceImproveViaInPadCandidateAttempts:
@@ -346,6 +356,11 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       Math.max(1, Math.ceil(this.effort)),
     )
     const startErrorIndex = this.errorCursor % centeredErrors.length
+    const independentErrorBatch = getIndependentDrcErrorBatch(
+      centeredErrors,
+      bestSnapshot.traceRouteIndexById,
+      startErrorIndex,
+    )
 
     const targetedSweepErrors = this.enableTargetedErrorSweep
       ? getTargetedClearanceSweepErrors(centeredErrors, this.effort)
@@ -895,6 +910,65 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
 
     const canAffordBroadFallback =
       bestRoutes.length <= BROAD_FALLBACK_SMALL_ROUTE_LIMIT
+    if (
+      !acceptedCandidate &&
+      shouldTryIndependentDrcErrorBatch({
+        routeCount: bestRoutes.length,
+        initialDrcIssueCount: this.initialDrcIssueCount ?? 0,
+        batchSize: independentErrorBatch.length,
+      })
+    ) {
+      const forceScales = getForceScalesForEffort(this.effort)
+      const scale = forceScales[(this.iterations - 1) % forceScales.length]!
+      const candidateRoutes = cloneRoutes(bestRoutes)
+      const changed = applyDrcErrorForces(
+        this.srj,
+        candidateRoutes,
+        independentErrorBatch,
+        bestSnapshot.traceRouteIndexById,
+        scale,
+        this.connMap,
+      )
+
+      if (changed) {
+        const materializedCandidateRoutes = materializeRoutes(candidateRoutes)
+        candidateAttemptsThisStep += 1
+        this.candidateAttempts += 1
+        this.independentBatchAttempts += 1
+        const candidateSnapshot = getDrcSnapshot(
+          this.srj,
+          materializedCandidateRoutes,
+          this.drcEvaluator,
+          this.connMap,
+          this.autoroutingDrcEngine,
+        )
+
+        const candidateCenteredErrorCount = getCenteredErrors(
+          candidateSnapshot.errors,
+        ).length
+        if (
+          candidateSnapshot.count < bestIssueCount &&
+          (candidateSnapshot.count === 0 || candidateCenteredErrorCount > 0)
+        ) {
+          bestRoutes = materializedCandidateRoutes
+          bestSnapshot = candidateSnapshot
+          bestIssueCount = candidateSnapshot.count
+          bestIssueScore = candidateSnapshot.issueScore
+          bestViaIssueCount = getViaDrcIssueCount(candidateSnapshot)
+          this.independentBatchAccepted = true
+          this.targetedForceAccepted = true
+          acceptedCandidate = true
+          this.errorCursor =
+            (startErrorIndex + independentErrorBatch.length) %
+            centeredErrors.length
+          if (candidateSnapshot.count === 0) {
+            this.acceptSolvedRoutes(bestRoutes, bestSnapshot)
+            return
+          }
+        }
+      }
+    }
+
     const largeBoardBroadFallbackCadence = getLargeBoardBroadFallbackCadence(
       centeredErrors.length,
     )
