@@ -29,6 +29,7 @@ import {
   cloneRoutesForIndexes,
   getCenteredErrors,
   getDrcSnapshot,
+  getIndependentDrcErrorBatch,
   getTargetedClearanceSweepErrors,
   getTraceRouteIndexForError,
   getTraceRoutePairForError,
@@ -98,6 +99,8 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   outputHdRoutes: HighDensityRoute[]
   private initialDrcIssueCount: number | undefined
   private broadForceAccepted = false
+  private independentBatchAccepted = false
+  private independentBatchAttempts = 0
   private targetedForceAccepted = false
   private candidateAttempts = 0
   private viaInPadCandidateAttempts = 0
@@ -181,6 +184,10 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       finalDrcIssueCount: snapshot.count,
       globalDrcForceImproveMaxIterations: this.MAX_ITERATIONS,
       globalDrcForceImproveBroadForceAccepted: this.broadForceAccepted,
+      globalDrcForceImproveIndependentBatchAccepted:
+        this.independentBatchAccepted,
+      globalDrcForceImproveIndependentBatchAttempts:
+        this.independentBatchAttempts,
       globalDrcForceImproveTargetedForceAccepted: this.targetedForceAccepted,
       globalDrcForceImproveCandidateAttempts: this.candidateAttempts,
       globalDrcForceImproveViaInPadCandidateAttempts:
@@ -346,6 +353,11 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       Math.max(1, Math.ceil(this.effort)),
     )
     const startErrorIndex = this.errorCursor % centeredErrors.length
+    const independentErrorBatch = getIndependentDrcErrorBatch(
+      centeredErrors,
+      bestSnapshot.traceRouteIndexById,
+      startErrorIndex,
+    )
 
     const targetedSweepErrors = this.enableTargetedErrorSweep
       ? getTargetedClearanceSweepErrors(centeredErrors, this.effort)
@@ -819,6 +831,65 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           bestViaIssueCount = candidateViaIssueCount
           this.targetedForceAccepted = true
           acceptedCandidate = true
+          if (candidateSnapshot.count === 0) {
+            this.acceptSolvedRoutes(bestRoutes, bestSnapshot)
+            return
+          }
+        }
+      }
+    }
+
+    if (
+      !acceptedCandidate &&
+      independentErrorBatch.length >= 2 &&
+      candidateAttemptsThisStep < maxCandidateAttemptsThisStep
+    ) {
+      const forceScales = getForceScalesForEffort(this.effort)
+      const scale = forceScales[(this.iterations - 1) % forceScales.length]!
+      const candidateRoutes = cloneRoutes(bestRoutes)
+      const changed = applyDrcErrorForces(
+        this.srj,
+        candidateRoutes,
+        independentErrorBatch,
+        bestSnapshot.traceRouteIndexById,
+        scale,
+        this.connMap,
+      )
+
+      if (changed) {
+        const materializedCandidateRoutes = materializeRoutes(candidateRoutes)
+        candidateAttemptsThisStep += 1
+        this.candidateAttempts += 1
+        this.independentBatchAttempts += 1
+        const candidateSnapshot = getDrcSnapshot(
+          this.srj,
+          materializedCandidateRoutes,
+          this.drcEvaluator,
+          this.connMap,
+          this.autoroutingDrcEngine,
+        )
+        const candidateViaIssueCount = getViaDrcIssueCount(candidateSnapshot)
+
+        if (
+          isBetterDrcSnapshot(
+            candidateSnapshot,
+            candidateViaIssueCount,
+            bestIssueCount,
+            bestIssueScore,
+            bestViaIssueCount,
+          )
+        ) {
+          bestRoutes = materializedCandidateRoutes
+          bestSnapshot = candidateSnapshot
+          bestIssueCount = candidateSnapshot.count
+          bestIssueScore = candidateSnapshot.issueScore
+          bestViaIssueCount = candidateViaIssueCount
+          this.independentBatchAccepted = true
+          this.targetedForceAccepted = true
+          acceptedCandidate = true
+          this.errorCursor =
+            (startErrorIndex + independentErrorBatch.length) %
+            centeredErrors.length
           if (candidateSnapshot.count === 0) {
             this.acceptSolvedRoutes(bestRoutes, bestSnapshot)
             return
