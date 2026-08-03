@@ -16,10 +16,7 @@ test("selects a deterministic batch with disjoint routes and influence regions",
     { pcb_trace_id: "trace_3", center: { x: 4, y: 0 } },
   ]
 
-  const selected = getIndependentDrcErrorBatch(
-    errors,
-    traceRouteIndexById,
-  )
+  const selected = getIndependentDrcErrorBatch(errors, traceRouteIndexById)
 
   expect(selected).toEqual([errors[0]!, errors[3]!, errors[4]!])
 })

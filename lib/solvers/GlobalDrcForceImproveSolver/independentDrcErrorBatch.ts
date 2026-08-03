@@ -26,9 +26,7 @@ export const shouldTryIndependentDrcErrorBatch = ({
   initialDrcIssueCount >= LARGE_DRC_COUNT_THRESHOLD &&
   batchSize >= 2
 
-const getErrorCenter = (
-  error: Record<string, unknown>,
-): Point | undefined => {
+const getErrorCenter = (error: Record<string, unknown>): Point | undefined => {
   const center = error.center ?? error.pcb_center
   if (!center || typeof center !== "object") return undefined
   const maybeCenter = center as Record<string, unknown>
@@ -45,8 +43,7 @@ export const getIndependentDrcErrorBatch = (
   if (errors.length < 2) return errors
 
   const maxBatchSize = Math.max(2, Math.ceil(Math.sqrt(errors.length)))
-  const minCenterSeparation =
-    TRACE_PAD_REPAIR_MAX_MOVE * 2 + CLEARANCE_SLACK
+  const minCenterSeparation = TRACE_PAD_REPAIR_MAX_MOVE * 2 + CLEARANCE_SLACK
   const selected: Array<Record<string, unknown>> = []
   const selectedCenters: Point[] = []
   const usedRouteIndexes = new Set<number>()
@@ -72,10 +69,8 @@ export const getIndependentDrcErrorBatch = (
       viaIds.some((viaId) => usedViaIds.has(viaId))
     const overlapsInfluenceRegion = selectedCenters.some(
       (selectedCenter) =>
-        Math.hypot(
-          selectedCenter.x - center.x,
-          selectedCenter.y - center.y,
-        ) < minCenterSeparation,
+        Math.hypot(selectedCenter.x - center.x, selectedCenter.y - center.y) <
+        minCenterSeparation,
     )
     if (sharesMovedFeature || overlapsInfluenceRegion) continue
 
