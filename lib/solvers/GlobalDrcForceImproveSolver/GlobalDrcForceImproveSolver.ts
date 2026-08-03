@@ -935,7 +935,13 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           this.autoroutingDrcEngine,
         )
 
-        if (candidateSnapshot.count < bestIssueCount) {
+        const candidateCenteredErrorCount = getCenteredErrors(
+          candidateSnapshot.errors,
+        ).length
+        if (
+          candidateSnapshot.count < bestIssueCount &&
+          (candidateSnapshot.count === 0 || candidateCenteredErrorCount > 0)
+        ) {
           bestRoutes = materializedCandidateRoutes
           bestSnapshot = candidateSnapshot
           bestIssueCount = candidateSnapshot.count
