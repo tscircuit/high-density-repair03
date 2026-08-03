@@ -23,6 +23,7 @@ export type ViaNode = {
   y: number
   radius: number
   movable: boolean
+  canCanonicalize: boolean
 }
 
 export type Segment = {

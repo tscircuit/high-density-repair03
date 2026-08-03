@@ -9,7 +9,7 @@ import {
 } from "../lib/solvers/GlobalDrcForceImproveSolver/solverHelpers"
 import type { SimpleRouteJson } from "../lib/types"
 
-test("canonicalizes an explicitly identified same-net via clearance pair", () => {
+test("canonicalizes an untagged same-net transition endpoint", () => {
   const srj: SimpleRouteJson = {
     bounds: { minX: -2, minY: -2, maxX: 2, maxY: 2 },
     connections: [
@@ -25,10 +25,9 @@ test("canonicalizes an explicitly identified same-net via clearance pair", () =>
     {
       connectionName: "source_net_5_mst0",
       route: [
-        { x: -1, y: 0, z: 0 },
         { x: 0, y: 0, z: 0 },
         { x: 0, y: 0, z: 1 },
-        { x: 1, y: 0, z: 1 },
+        { x: -1, y: 0, z: 1 },
       ],
       vias: [{ x: 0, y: 0 }],
       traceThickness: 0.1,
@@ -37,10 +36,9 @@ test("canonicalizes an explicitly identified same-net via clearance pair", () =>
     {
       connectionName: "source_net_5_mst1",
       route: [
-        { x: -1, y: 0.05, z: 0 },
-        { x: 0.05, y: 0, z: 0 },
+        { x: 0.05, y: 0, z: 0, pcb_port_id: "pcb_port_fixed" },
         { x: 0.05, y: 0, z: 1 },
-        { x: 1, y: 0.05, z: 1 },
+        { x: 1, y: 0, z: 1 },
       ],
       vias: [{ x: 0.05, y: 0 }],
       traceThickness: 0.1,
@@ -72,10 +70,11 @@ test("canonicalizes an explicitly identified same-net via clearance pair", () =>
   )
 
   expect(changed).toBe(true)
-  expect(routes[0]?.route[1]?.x).toBe(0)
-  expect(routes[1]?.route[1]?.x).toBe(0)
-  expect(routes[0]?.route[2]?.x).toBe(0)
-  expect(routes[1]?.route[2]?.x).toBe(0)
+  expect(routes[0]?.route[0]?.x).toBe(0.05)
+  expect(routes[0]?.route[1]?.x).toBe(0.05)
+  expect(routes[1]?.route[0]?.x).toBe(0.05)
+  expect(routes[1]?.route[1]?.x).toBe(0.05)
+  expect(routes[1]?.route[0]?.pcb_port_id).toBe("pcb_port_fixed")
 
   const drcEngine = new AutoroutingDrcEngine(srj, { connMap })
   const solver = new GlobalDrcForceImproveSolver({

@@ -286,6 +286,14 @@ export const collectViaNodes = (
         seenIndexes.add(pointIndex)
       }
 
+      const endpointPointIndexes = uniquePointIndexes.filter(
+        (pointIndex) =>
+          pointIndex === 0 || pointIndex === route.route.length - 1,
+      )
+      const hasTaggedTerminal = endpointPointIndexes.some((pointIndex) =>
+        Boolean(route.route[pointIndex]?.pcb_port_id),
+      )
+
       vias.push({
         routeIndex,
         rootConnectionName: getRootConnectionName(route),
@@ -294,9 +302,9 @@ export const collectViaNodes = (
         x: current.x,
         y: current.y,
         radius: (route.viaDiameter ?? defaultViaDiameter) / 2,
-        movable:
-          !uniquePointIndexes.includes(0) &&
-          !uniquePointIndexes.includes(route.route.length - 1),
+        movable: endpointPointIndexes.length === 0,
+        canCanonicalize:
+          endpointPointIndexes.length === 0 || !hasTaggedTerminal,
       })
     }
   }
@@ -1807,8 +1815,11 @@ const moveVia = (
   dx: number,
   dy: number,
   srj: SimpleRouteJson,
+  allowTopologyEndpoint = false,
 ) => {
-  if (!via.movable) return false
+  if (!via.movable && !(allowTopologyEndpoint && via.canCanonicalize)) {
+    return false
+  }
   const route = routes[via.routeIndex]
   if (!route) return false
   const translation = clipPointTranslationAwayFromBoardEdge(
@@ -2319,14 +2330,25 @@ const canonicalizeSameNetViaPair = (
     return false
   }
 
-  const [viaToKeep, viaToMove] = !left.movable
+  const [viaToKeep, viaToMove] = !left.canCanonicalize
     ? [left, right]
-    : !right.movable
+    : !right.canCanonicalize
       ? [right, left]
       : left.routeIndex <= right.routeIndex
         ? [left, right]
         : [right, left]
-  if (!viaToMove.movable) return false
+  if (!viaToMove.canCanonicalize) return false
+
+  const moveDistance = Math.hypot(
+    viaToKeep.x - viaToMove.x,
+    viaToKeep.y - viaToMove.y,
+  )
+  if (
+    !viaToMove.movable &&
+    moveDistance > viaToMove.radius + COORDINATE_EPSILON
+  ) {
+    return false
+  }
 
   const previousPosition = { x: viaToMove.x, y: viaToMove.y }
   const moved = moveVia(
@@ -2335,6 +2357,7 @@ const canonicalizeSameNetViaPair = (
     viaToKeep.x - viaToMove.x,
     viaToKeep.y - viaToMove.y,
     srj,
+    true,
   )
   if (moved && areSameXY(viaToMove, viaToKeep)) return true
 
