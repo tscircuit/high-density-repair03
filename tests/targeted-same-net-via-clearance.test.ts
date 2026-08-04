@@ -59,8 +59,8 @@ test("repairs a trace pair before canonicalizing a topology endpoint", () => {
     {
       connectionName: "source_net_2_mst0",
       route: [
-        { x: 0, y: -1.5, z: 0, pcb_port_id: "pcb_port_bottom" },
-        { x: 0, y: -0.5, z: 0, pcb_port_id: "pcb_port_top" },
+        { x: 0, y: -1.2, z: 0, pcb_port_id: "pcb_port_bottom" },
+        { x: 0, y: -0.8, z: 0, pcb_port_id: "pcb_port_top" },
       ],
       vias: [],
       traceThickness: 0.1,
