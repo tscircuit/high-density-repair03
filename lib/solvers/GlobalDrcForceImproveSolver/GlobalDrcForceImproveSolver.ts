@@ -515,11 +515,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           )
         }
       }
-      if (
-        shouldTryTracePairTopology &&
-        traceErrorKey &&
-        traceRoutePair
-      ) {
+      if (shouldTryTracePairTopology && traceErrorKey && traceRoutePair) {
         let detourCursor =
           this.tracePairDetourCursorByErrorId.get(traceErrorKey) ?? 0
         let detourVariantsChecked = 0
