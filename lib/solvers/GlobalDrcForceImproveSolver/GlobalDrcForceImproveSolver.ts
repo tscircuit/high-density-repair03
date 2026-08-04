@@ -72,11 +72,12 @@ const TRACE_PAIR_DETOUR_GEOMETRY_VARIANTS = [0.2, 0.4, 0.8, 1.2].flatMap(
     ),
 )
 
-const TRACE_PAIR_DETOUR_VARIANTS = ([0, 1] as const).flatMap((routeSide) =>
-  TRACE_PAIR_DETOUR_GEOMETRY_VARIANTS.map((variant) => ({
-    routeSide,
-    ...variant,
-  })),
+const TRACE_PAIR_DETOUR_VARIANTS = TRACE_PAIR_DETOUR_GEOMETRY_VARIANTS.flatMap(
+  (variant) =>
+    ([0, 1] as const).map((routeSide) => ({
+      routeSide,
+      ...variant,
+    })),
 )
 
 const SAFE_TRACE_LAYER_LOCAL_EXPANSIONS = [0, 1, 2] as const
@@ -339,6 +340,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       getMaxTargetedCandidateAttemptsForEffort(this.effort)
     let candidateAttemptsThisStep = 0
     let safeTraceLayerCandidateAttemptsThisStep = 0
+    let tracePairDetourAttemptedThisStep = false
     let acceptedCandidate = false
     let attemptedPeriodicLargeBoardBroadFallback = false
     const sameNetViaError = this.enableTargetedErrorSweep
@@ -496,20 +498,10 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           const candidateViaIssueCount = getViaDrcIssueCount(candidateSnapshot)
           const comparisonCount =
             bestTopologyCandidate?.snapshot.count ?? bestIssueCount
-          const comparisonScore =
-            bestTopologyCandidate?.snapshot.issueScore ?? bestIssueScore
-          const comparisonViaIssueCount =
-            bestTopologyCandidate?.viaIssueCount ?? bestViaIssueCount
 
           if (
             candidateViaIssueCount <= bestViaIssueCount &&
-            isBetterDrcSnapshot(
-              candidateSnapshot,
-              candidateViaIssueCount,
-              comparisonCount,
-              comparisonScore,
-              comparisonViaIssueCount,
-            )
+            candidateSnapshot.count < comparisonCount
           ) {
             bestTopologyCandidate = {
               routes: materializedCandidateRoutes,
@@ -527,9 +519,8 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         }
       }
       if (
-        this.enableViaInPadLayerMoves &&
+        this.enableSafeTraceLayerMoves &&
         shouldTryTracePairTopology &&
-        this.iterations % 2 === 0 &&
         bestIssueCount <= 1 &&
         traceErrorKey &&
         traceRoutePair
@@ -566,7 +557,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
             candidateRoutes,
             [changedRouteIndex],
           )
-          this.viaInPadCandidateAttempts += 1
+          tracePairDetourAttemptedThisStep = true
           candidateAttemptsThisStep += 1
           this.candidateAttempts += 1
           const candidateSnapshot = getDrcSnapshot(
@@ -584,7 +575,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
               routes: materializedCandidateRoutes,
               snapshot: candidateSnapshot,
               viaIssueCount: candidateViaIssueCount,
-              usesViaInPad: true,
+              usesViaInPad: false,
             }
           }
         }
@@ -989,7 +980,9 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     this.outputHdRoutes = bestRoutes
     this.outputSnapshot = bestSnapshot
     this.stalledIterations = acceptedCandidate ? 0 : this.stalledIterations + 1
-    this.updateDrcCountPlateauState(bestSnapshot)
+    if (!tracePairDetourAttemptedThisStep) {
+      this.updateDrcCountPlateauState(bestSnapshot)
+    }
     this.updateStats(bestSnapshot)
     if (this.solved || bestIssueCount === 0) {
       this.acceptSolvedRoutes(bestRoutes, bestSnapshot)
