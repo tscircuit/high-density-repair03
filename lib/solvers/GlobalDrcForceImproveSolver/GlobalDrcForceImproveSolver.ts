@@ -72,11 +72,12 @@ const TRACE_PAIR_DETOUR_GEOMETRY_VARIANTS = [0.2, 0.4, 0.8, 1.2].flatMap(
     ),
 )
 
-const TRACE_PAIR_DETOUR_VARIANTS = ([0, 1] as const).flatMap((routeSide) =>
-  TRACE_PAIR_DETOUR_GEOMETRY_VARIANTS.map((variant) => ({
-    routeSide,
-    ...variant,
-  })),
+const TRACE_PAIR_DETOUR_VARIANTS = TRACE_PAIR_DETOUR_GEOMETRY_VARIANTS.flatMap(
+  (variant) =>
+    ([0, 1] as const).map((routeSide) => ({
+      routeSide,
+      ...variant,
+    })),
 )
 
 const SAFE_TRACE_LAYER_LOCAL_EXPANSIONS = [0, 1, 2] as const
@@ -339,6 +340,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       getMaxTargetedCandidateAttemptsForEffort(this.effort)
     let candidateAttemptsThisStep = 0
     let safeTraceLayerCandidateAttemptsThisStep = 0
+    let tracePairDetourCandidateAttemptsThisStep = 0
     let acceptedCandidate = false
     let attemptedPeriodicLargeBoardBroadFallback = false
     const maxErrorsThisStep = Math.min(
@@ -365,7 +367,8 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         ]!,
     )
     for (const error of this.enableSafeTraceLayerMoves ||
-    this.enableViaInPadLayerMoves
+    this.enableViaInPadLayerMoves ||
+    shouldTryTracePairTopology
       ? orderedPadTopologyErrors
       : []) {
       const safeTraceLayerBudgetExhausted =
@@ -374,9 +377,15 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       const viaInPadBudgetExhausted =
         !this.enableViaInPadLayerMoves ||
         candidateAttemptsThisStep >= maxCandidateAttemptsThisStep
+      const tracePairBudgetExhausted =
+        !shouldTryTracePairTopology ||
+        tracePairDetourCandidateAttemptsThisStep >=
+          maxCandidateAttemptsThisStep
       if (
         acceptedCandidate ||
-        (safeTraceLayerBudgetExhausted && viaInPadBudgetExhausted)
+        (safeTraceLayerBudgetExhausted &&
+          viaInPadBudgetExhausted &&
+          tracePairBudgetExhausted)
       ) {
         break
       }
@@ -509,19 +518,13 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           )
         }
       }
-      if (
-        this.enableViaInPadLayerMoves &&
-        shouldTryTracePairTopology &&
-        this.iterations % 2 === 0 &&
-        bestIssueCount <= 1 &&
-        traceErrorKey &&
-        traceRoutePair
-      ) {
+      if (shouldTryTracePairTopology && traceErrorKey && traceRoutePair) {
         let detourCursor =
           this.tracePairDetourCursorByErrorId.get(traceErrorKey) ?? 0
         let detourVariantsChecked = 0
         while (
-          candidateAttemptsThisStep < maxCandidateAttemptsThisStep &&
+          tracePairDetourCandidateAttemptsThisStep <
+            maxCandidateAttemptsThisStep &&
           detourVariantsChecked < TRACE_PAIR_DETOUR_VARIANTS.length
         ) {
           const variant =
@@ -549,8 +552,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
             candidateRoutes,
             [changedRouteIndex],
           )
-          this.viaInPadCandidateAttempts += 1
-          candidateAttemptsThisStep += 1
+          tracePairDetourCandidateAttemptsThisStep += 1
           this.candidateAttempts += 1
           const candidateSnapshot = getDrcSnapshot(
             this.srj,
@@ -567,7 +569,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
               routes: materializedCandidateRoutes,
               snapshot: candidateSnapshot,
               viaIssueCount: candidateViaIssueCount,
-              usesViaInPad: true,
+              usesViaInPad: false,
             }
           }
         }
