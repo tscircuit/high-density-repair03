@@ -170,6 +170,16 @@ test("classifies close via pairs by canonical SRJ net", () => {
 
   expect(viaErrorIds).toContain("same_net_vias_close_via_0_via_1")
   expect(viaErrorIds).toContain("different_net_vias_close_via_1_via_2")
+  expect(
+    result.errors.find(
+      (error) => error.pcb_error_id === "same_net_vias_close_via_0_via_1",
+    )?.pcb_via_pair_net_relation,
+  ).toBe("same_net")
+  expect(
+    result.errors.find(
+      (error) => error.pcb_error_id === "different_net_vias_close_via_1_via_2",
+    )?.pcb_via_pair_net_relation,
+  ).toBe("different_net")
 })
 
 test("uses an injected connectivity map for equivalent net identifiers", () => {
