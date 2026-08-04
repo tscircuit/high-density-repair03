@@ -341,23 +341,40 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     let safeTraceLayerCandidateAttemptsThisStep = 0
     let acceptedCandidate = false
     let attemptedPeriodicLargeBoardBroadFallback = false
+    const sameNetViaError = this.enableTargetedErrorSweep
+      ? centeredErrors.find(
+          (error) =>
+            error.type === "pcb_via_clearance_error" &&
+            error.pcb_via_pair_net_relation === "same_net",
+        )
+      : undefined
+    const prioritizedErrors = sameNetViaError
+      ? [
+          sameNetViaError,
+          ...centeredErrors.filter((error) => error !== sameNetViaError),
+        ]
+      : centeredErrors
     const maxErrorsThisStep = Math.min(
-      centeredErrors.length,
+      prioritizedErrors.length,
       Math.max(1, Math.ceil(this.effort)),
     )
-    const startErrorIndex = this.errorCursor % centeredErrors.length
+    const startErrorIndex = sameNetViaError
+      ? 0
+      : this.errorCursor % prioritizedErrors.length
 
     const targetedSweepErrors = this.enableTargetedErrorSweep
       ? getTargetedClearanceSweepErrors(centeredErrors, this.effort)
       : []
     const shouldTryTracePairTopology =
       (this.initialDrcIssueCount ?? bestIssueCount) <= 3
-    const padTraceErrors = centeredErrors.filter(
-      (error) =>
-        error.type === "pcb_pad_trace_clearance_error" ||
-        ((this.enableSafeTraceLayerMoves || shouldTryTracePairTopology) &&
-          error.type === "pcb_trace_error"),
-    )
+    const padTraceErrors = sameNetViaError
+      ? []
+      : centeredErrors.filter(
+          (error) =>
+            error.type === "pcb_pad_trace_clearance_error" ||
+            ((this.enableSafeTraceLayerMoves || shouldTryTracePairTopology) &&
+              error.type === "pcb_trace_error"),
+        )
     const orderedPadTopologyErrors = padTraceErrors.map(
       (_, offset) =>
         padTraceErrors[
@@ -787,6 +804,8 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
             bestSnapshot.traceRouteIndexById,
             1,
             this.connMap,
+            true,
+            this.enableTargetedErrorSweep,
           ) || changed
       }
 
@@ -834,11 +853,12 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       !acceptedCandidate;
       errorOffset += 1
     ) {
-      const errorIndex = (startErrorIndex + errorOffset) % centeredErrors.length
-      const error = centeredErrors[errorIndex]
+      const errorIndex =
+        (startErrorIndex + errorOffset) % prioritizedErrors.length
+      const error = prioritizedErrors[errorIndex]
       if (!error) continue
 
-      this.errorCursor = (errorIndex + 1) % centeredErrors.length
+      this.errorCursor = (errorIndex + 1) % prioritizedErrors.length
 
       for (const scale of getForceScalesForEffort(this.effort)) {
         if (candidateAttemptsThisStep >= maxCandidateAttemptsThisStep) break
@@ -851,6 +871,8 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           bestSnapshot.traceRouteIndexById,
           scale,
           this.connMap,
+          true,
+          this.enableTargetedErrorSweep,
         )
         if (!changed) continue
 

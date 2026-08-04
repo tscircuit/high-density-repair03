@@ -72,6 +72,7 @@ export type AutoroutingDrcError = {
   message: string
   center?: Point
   pcb_center?: Point
+  pcb_via_pair_net_relation?: "same_net" | "different_net"
   [key: string]: unknown
 }
 
@@ -777,6 +778,7 @@ export class AutoroutingDrcEngine {
             sameNet ? "" : " from different nets"
           } are too close together (gap: ${gap.toFixed(3)}mm)`,
           pcb_via_ids: [viaA.viaId, viaB.viaId],
+          pcb_via_pair_net_relation: sameNet ? "same_net" : "different_net",
           minimum_clearance: this.viaClearance,
           actual_clearance: gap,
           pcb_center: center,

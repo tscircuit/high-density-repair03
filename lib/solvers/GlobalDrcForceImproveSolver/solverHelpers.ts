@@ -286,6 +286,14 @@ export const collectViaNodes = (
         seenIndexes.add(pointIndex)
       }
 
+      const endpointPointIndexes = uniquePointIndexes.filter(
+        (pointIndex) =>
+          pointIndex === 0 || pointIndex === route.route.length - 1,
+      )
+      const hasTaggedTerminal = endpointPointIndexes.some((pointIndex) =>
+        Boolean(route.route[pointIndex]?.pcb_port_id),
+      )
+
       vias.push({
         routeIndex,
         rootConnectionName: getRootConnectionName(route),
@@ -294,9 +302,9 @@ export const collectViaNodes = (
         x: current.x,
         y: current.y,
         radius: (route.viaDiameter ?? defaultViaDiameter) / 2,
-        movable:
-          !uniquePointIndexes.includes(0) &&
-          !uniquePointIndexes.includes(route.route.length - 1),
+        movable: endpointPointIndexes.length === 0,
+        canCanonicalize:
+          endpointPointIndexes.length === 0 || !hasTaggedTerminal,
       })
     }
   }
@@ -1801,14 +1809,13 @@ const insertDetourPointAwayFromPoint = (
   return true
 }
 
-const moveVia = (
+const translateVia = (
   routes: MutableRoute[],
   via: ViaNode,
   dx: number,
   dy: number,
   srj: SimpleRouteJson,
 ) => {
-  if (!via.movable) return false
   const route = routes[via.routeIndex]
   if (!route) return false
   const translation = clipPointTranslationAwayFromBoardEdge(
@@ -1855,6 +1862,14 @@ const moveVia = (
   }
   return true
 }
+
+const moveVia = (
+  routes: MutableRoute[],
+  via: ViaNode,
+  dx: number,
+  dy: number,
+  srj: SimpleRouteJson,
+) => via.movable && translateVia(routes, via, dx, dy, srj)
 
 const moveSegmentAwayFromPoint = (
   routes: MutableRoute[],
@@ -2306,6 +2321,65 @@ const pushViaViaPair = (
     srj,
   )
   return movedLeft || movedRight
+}
+
+const tryCanonicalizeVia = (
+  routes: MutableRoute[],
+  viaToKeep: ViaNode,
+  viaToMove: ViaNode,
+  srj: SimpleRouteJson,
+) => {
+  if (!viaToMove.canCanonicalize) return false
+  const dx = viaToKeep.x - viaToMove.x
+  const dy = viaToKeep.y - viaToMove.y
+  if (
+    !viaToMove.movable &&
+    Math.hypot(dx, dy) > viaToMove.radius + COORDINATE_EPSILON
+  ) {
+    return false
+  }
+
+  const route = routes[viaToMove.routeIndex]
+  if (!route) return false
+  const previousPosition = { x: viaToMove.x, y: viaToMove.y }
+  const previousRoutePoints = viaToMove.pointIndexes.map((pointIndex) => {
+    const point = route.route[pointIndex]
+    return point ? { pointIndex, x: point.x, y: point.y } : undefined
+  })
+  const moved = translateVia(routes, viaToMove, dx, dy, srj)
+  if (moved && areSameXY(viaToMove, viaToKeep)) return true
+
+  viaToMove.x = previousPosition.x
+  viaToMove.y = previousPosition.y
+  for (const previousPoint of previousRoutePoints) {
+    if (!previousPoint) continue
+    const point = route.route[previousPoint.pointIndex]
+    if (!point) continue
+    point.x = previousPoint.x
+    point.y = previousPoint.y
+  }
+  return false
+}
+
+const canonicalizeSameNetViaPair = (
+  routes: MutableRoute[],
+  left: ViaNode,
+  right: ViaNode,
+  srj: SimpleRouteJson,
+  connMap?: ConnectivityMap,
+) => {
+  if (!sharesNet(left.rootConnectionName, right.rootConnectionName, connMap)) {
+    return false
+  }
+
+  const [viaToKeep, viaToMove] = !left.canCanonicalize
+    ? [left, right]
+    : !right.canCanonicalize
+      ? [right, left]
+      : left.routeIndex <= right.routeIndex
+        ? [left, right]
+        : [right, left]
+  return tryCanonicalizeVia(routes, viaToKeep, viaToMove, srj)
 }
 
 const pushViaSegmentPair = (
@@ -2811,10 +2885,8 @@ export const getTargetedClearanceSweepErrors = (
 }
 
 const isViaDrcError = (error: Record<string, unknown>) =>
-  Array.isArray(error.pcb_via_ids) ||
-  (typeof error.pcb_error_id === "string" &&
-    (error.pcb_error_id.startsWith("same_net_vias_close_") ||
-      error.pcb_error_id.startsWith("different_net_vias_close_")))
+  getDrcErrorType(error) === "pcb_via_clearance_error" ||
+  Array.isArray(error.pcb_via_ids)
 
 export const getViaDrcIssueCount = (snapshot: DrcSnapshot) =>
   snapshot.errors.filter(isViaDrcError).length
@@ -3615,6 +3687,7 @@ export const applyDrcErrorForces = (
   scale: number,
   connMap?: ConnectivityMap,
   enableCanonicalPairRepairs = true,
+  enableSameNetViaCanonicalization = false,
 ) => {
   let changed = false
   const vias = collectViaNodes(routes)
@@ -3630,22 +3703,31 @@ export const applyDrcErrorForces = (
       repulsionPoint = getRepulsionPointForError(srj, error, center)
       const nearestViaPair = getNearestViaPair(vias, center)
       if (nearestViaPair) {
+        const shouldCanonicalizeSameNetViaPair =
+          enableSameNetViaCanonicalization &&
+          getDrcErrorType(error) === "pcb_via_clearance_error" &&
+          error.pcb_via_pair_net_relation === "same_net"
         const isCanonicalViaPairError =
           enableCanonicalPairRepairs &&
-          (getDrcErrorType(error) === "pcb_via_clearance_error" ||
-            (typeof error.pcb_error_id === "string" &&
-              (error.pcb_error_id.startsWith("same_net_vias_close_") ||
-                error.pcb_error_id.startsWith("different_net_vias_close_"))))
+          getDrcErrorType(error) === "pcb_via_clearance_error"
         changed =
-          pushViaViaPair(
-            routes,
-            nearestViaPair[0],
-            nearestViaPair[1],
-            srj,
-            connMap,
-            VIA_PAIR_REPAIR_MAX_MOVE * Math.abs(scale),
-            isCanonicalViaPairError,
-          ) || changed
+          (shouldCanonicalizeSameNetViaPair
+            ? canonicalizeSameNetViaPair(
+                routes,
+                nearestViaPair[0],
+                nearestViaPair[1],
+                srj,
+                connMap,
+              )
+            : pushViaViaPair(
+                routes,
+                nearestViaPair[0],
+                nearestViaPair[1],
+                srj,
+                connMap,
+                VIA_PAIR_REPAIR_MAX_MOVE * Math.abs(scale),
+                isCanonicalViaPairError,
+              )) || changed
       } else {
         const nearestVia = getNearestVia(vias, center)
         if (nearestVia) {
