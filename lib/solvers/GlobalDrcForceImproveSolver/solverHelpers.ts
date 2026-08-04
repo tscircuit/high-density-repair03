@@ -2880,7 +2880,13 @@ export const getTargetedClearanceSweepErrors = (
 ) => {
   const maxErrors = Math.max(2, Math.round(12 * Math.max(1, effort)))
   return errors
-    .filter((error) => getDrcErrorType(error) === "pcb_trace_error")
+    .filter((error) => {
+      const errorType = getDrcErrorType(error)
+      return (
+        errorType === "pcb_trace_error" ||
+        errorType === "pcb_via_trace_clearance_error"
+      )
+    })
     .slice(0, maxErrors)
 }
 
