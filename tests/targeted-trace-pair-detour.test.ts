@@ -53,9 +53,9 @@ test("repairs an exact trace pair without enabling via-in-pad moves", () => {
     enableViaInPadLayerMoves: false,
   })
 
-  expect(getDrcSnapshot(srj, routes, undefined, undefined, drcEngine).count).toBe(
-    1,
-  )
+  expect(
+    getDrcSnapshot(srj, routes, undefined, undefined, drcEngine).count,
+  ).toBe(1)
   solver.solve()
   expect(
     getDrcSnapshot(srj, solver.getOutput(), undefined, undefined, drcEngine)

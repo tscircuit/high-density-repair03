@@ -517,7 +517,6 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       }
       if (
         shouldTryTracePairTopology &&
-        this.iterations % 2 === 0 &&
         traceErrorKey &&
         traceRoutePair
       ) {
