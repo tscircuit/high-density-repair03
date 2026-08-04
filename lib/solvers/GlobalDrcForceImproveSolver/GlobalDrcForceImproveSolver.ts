@@ -365,7 +365,8 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         ]!,
     )
     for (const error of this.enableSafeTraceLayerMoves ||
-    this.enableViaInPadLayerMoves
+    this.enableViaInPadLayerMoves ||
+    shouldTryTracePairTopology
       ? orderedPadTopologyErrors
       : []) {
       const safeTraceLayerBudgetExhausted =
@@ -374,9 +375,14 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       const viaInPadBudgetExhausted =
         !this.enableViaInPadLayerMoves ||
         candidateAttemptsThisStep >= maxCandidateAttemptsThisStep
+      const tracePairBudgetExhausted =
+        !shouldTryTracePairTopology ||
+        candidateAttemptsThisStep >= maxCandidateAttemptsThisStep
       if (
         acceptedCandidate ||
-        (safeTraceLayerBudgetExhausted && viaInPadBudgetExhausted)
+        (safeTraceLayerBudgetExhausted &&
+          viaInPadBudgetExhausted &&
+          tracePairBudgetExhausted)
       ) {
         break
       }
@@ -510,10 +516,8 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         }
       }
       if (
-        this.enableViaInPadLayerMoves &&
         shouldTryTracePairTopology &&
         this.iterations % 2 === 0 &&
-        bestIssueCount <= 1 &&
         traceErrorKey &&
         traceRoutePair
       ) {
@@ -549,7 +553,6 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
             candidateRoutes,
             [changedRouteIndex],
           )
-          this.viaInPadCandidateAttempts += 1
           candidateAttemptsThisStep += 1
           this.candidateAttempts += 1
           const candidateSnapshot = getDrcSnapshot(
@@ -567,7 +570,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
               routes: materializedCandidateRoutes,
               snapshot: candidateSnapshot,
               viaIssueCount: candidateViaIssueCount,
-              usesViaInPad: true,
+              usesViaInPad: false,
             }
           }
         }
