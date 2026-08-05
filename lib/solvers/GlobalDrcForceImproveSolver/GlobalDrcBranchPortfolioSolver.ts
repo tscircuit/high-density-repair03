@@ -174,7 +174,6 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       maxIterations:
         this.params.viaInPadMaxIterations ?? this.params.maxIterations,
       enableLargeBoardBroadFallback: false,
-      enableTargetedErrorSweep: false,
       enablePostSolveClearanceRelaxation: false,
       enableSafeTraceLayerMoves: true,
       enableViaInPadLayerMoves: false,
