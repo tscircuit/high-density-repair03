@@ -141,7 +141,7 @@ const drcEvaluator: DrcEvaluator = ({
   }
 }
 
-test("shows a safe trace-layer repair leaving a same-net via violation", () => {
+test("repairs same-net via residue from a safe trace-layer move", () => {
   const solver = new GlobalDrcBranchPortfolioSolver({
     srj,
     hdRoutes,
@@ -163,9 +163,5 @@ test("shows a safe trace-layer repair leaving a same-net via violation", () => {
   expect(solver.stats.drcBranchPortfolioSafeTraceLayerPhaseAccepted).toBe(true)
   expect(
     outputSnapshot.errors.map((error) => error.type),
-  ).toMatchInlineSnapshot(`
-    [
-      "pcb_via_clearance_error",
-    ]
-  `)
+  ).toMatchInlineSnapshot(`[]`)
 })
