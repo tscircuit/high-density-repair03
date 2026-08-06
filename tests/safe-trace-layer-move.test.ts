@@ -1,4 +1,11 @@
 import { expect, test } from "bun:test"
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { dirname } from "node:path"
+import {
+  getSvgFromGraphicsObject,
+  stackGraphicsHorizontally,
+} from "graphics-debug"
+import { VisualizedGlobalDrcForceImproveSolver } from "../fixture-support/VisualizedGlobalDrcForceImproveSolver"
 import { GlobalDrcBranchPortfolioSolver } from "../lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcBranchPortfolioSolver"
 import { GlobalDrcForceImproveSolver } from "../lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcForceImproveSolver"
 import { getDrcSnapshot } from "../lib/solvers/GlobalDrcForceImproveSolver/solverHelpers"
@@ -179,6 +186,53 @@ test("moves terminal-reaching trace transitions outside connected pads", () => {
   expect(
     partialSolver.stats.drcBranchPortfolioSafeTraceLayerPhaseAccepted,
   ).toBe(false)
+
+  const candidateRoutes = solver.getOutput()
+  const inputDrcCount = getDrcSnapshot(srj, hdRoutes, partialDrcEvaluator).count
+  const candidateDrcCount = getDrcSnapshot(
+    srj,
+    candidateRoutes,
+    partialDrcEvaluator,
+  ).count
+  const outputDrcCount = getDrcSnapshot(
+    srj,
+    partialSolver.getOutput(),
+    partialDrcEvaluator,
+  ).count
+  expect(candidateDrcCount).toBeLessThan(inputDrcCount)
+
+  const visualizeRoutes = (routes: HighDensityRoute[]) =>
+    new VisualizedGlobalDrcForceImproveSolver({
+      ...solverParams,
+      hdRoutes: routes,
+      drcEvaluator: partialDrcEvaluator,
+    }).visualize()
+  const snapshotSvg = getSvgFromGraphicsObject(
+    stackGraphicsHorizontally(
+      [
+        visualizeRoutes(hdRoutes),
+        visualizeRoutes(candidateRoutes),
+        visualizeRoutes(partialSolver.getOutput()),
+      ],
+      {
+        titles: [
+          `Input · ${inputDrcCount} DRC`,
+          `Safe-layer candidate · ${candidateDrcCount} DRC`,
+          `Portfolio output · ${outputDrcCount} DRC`,
+        ],
+      },
+    ),
+    { backgroundColor: "white", svgWidth: 1800, svgHeight: 520 },
+  ).replace(/[ \t]+$/gm, "")
+  const snapshotPath = new URL(
+    "./__snapshots__/partial-safe-trace-layer-acceptance.snap.svg",
+    import.meta.url,
+  ).pathname
+  if (process.env.BUN_UPDATE_SNAPSHOTS) {
+    mkdirSync(dirname(snapshotPath), { recursive: true })
+    writeFileSync(snapshotPath, snapshotSvg)
+  }
+  expect(snapshotSvg).toBe(readFileSync(snapshotPath, "utf8"))
 
   const unrelatedViaError = {
     type: "pcb_via_trace_clearance_error",
