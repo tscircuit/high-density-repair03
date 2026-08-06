@@ -7,11 +7,7 @@ import {
 } from "graphics-debug"
 import { VisualizedGlobalDrcForceImproveSolver } from "../fixture-support/VisualizedGlobalDrcForceImproveSolver"
 import { getDrcSnapshot } from "../lib/solvers/GlobalDrcForceImproveSolver/drc-snapshot"
-import type {
-  DrcEvaluator,
-  HighDensityRoute,
-  SimpleRouteJson,
-} from "../lib"
+import type { DrcEvaluator, HighDensityRoute, SimpleRouteJson } from "../lib"
 
 const srj: SimpleRouteJson = {
   bounds: { minX: 7, minY: -39.85, maxX: 10.5, maxY: -34 },
