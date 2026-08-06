@@ -84,7 +84,7 @@ const getDrcErrorType = (error: Record<string, unknown>) =>
       ? error.error_type
       : undefined
 
-const isTraceObstacleDrcError = (error: Record<string, unknown>) => {
+export const isTraceObstacleDrcError = (error: Record<string, unknown>) => {
   const message =
     typeof error.message === "string" ? error.message.toLowerCase() : ""
   return (
