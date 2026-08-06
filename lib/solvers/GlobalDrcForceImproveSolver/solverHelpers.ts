@@ -1863,13 +1863,72 @@ const translateVia = (
   return true
 }
 
+const getSameRootViaSite = (routes: MutableRoute[], via: ViaNode) => {
+  const currentVias = collectViaNodes(routes)
+  const currentVia = currentVias.find(
+    (candidate) =>
+      candidate.routeIndex === via.routeIndex &&
+      candidate.pointIndexes.some((pointIndex) =>
+        via.pointIndexes.includes(pointIndex),
+      ),
+  )
+  if (!currentVia) return []
+
+  return currentVias.filter(
+    (candidate) =>
+      candidate.rootConnectionName === currentVia.rootConnectionName &&
+      Math.hypot(candidate.x - currentVia.x, candidate.y - currentVia.y) <=
+        COORDINATE_EPSILON,
+  )
+}
+
+const translateSameRootViaSite = (
+  routes: MutableRoute[],
+  via: ViaNode,
+  dx: number,
+  dy: number,
+  srj: SimpleRouteJson,
+) => {
+  const siteVias = getSameRootViaSite(routes, via)
+  if (
+    siteVias.length === 0 ||
+    siteVias.some(
+      (candidate) =>
+        !candidate.movable || routes[candidate.routeIndex] === undefined,
+    )
+  )
+    return false
+
+  const representativeVia = siteVias.reduce((largest, candidate) =>
+    candidate.radius > largest.radius ? candidate : largest,
+  )
+  if (!translateVia(routes, representativeVia, dx, dy, srj)) return false
+
+  for (const candidate of siteVias) {
+    if (candidate === representativeVia) continue
+    candidate.x = representativeVia.x
+    candidate.y = representativeVia.y
+    const route = routes[candidate.routeIndex]!
+    for (const pointIndex of candidate.pointIndexes) {
+      const point = route.route[pointIndex]
+      if (!point) continue
+      point.x = representativeVia.x
+      point.y = representativeVia.y
+    }
+  }
+  return true
+}
+
 const moveVia = (
   routes: MutableRoute[],
   via: ViaNode,
   dx: number,
   dy: number,
   srj: SimpleRouteJson,
-) => via.movable && translateVia(routes, via, dx, dy, srj)
+) =>
+  via.movable &&
+  getSameRootViaSite(routes, via).length <= 1 &&
+  translateVia(routes, via, dx, dy, srj)
 
 const moveSegmentAwayFromPoint = (
   routes: MutableRoute[],
@@ -2390,6 +2449,7 @@ const pushViaSegmentPair = (
   connMap?: ConnectivityMap,
   maxMove = BROAD_MAX_MOVE,
   moveDivisor = 2,
+  translateSharedViaSite = false,
 ) => {
   if (sharesNet(via.rootConnectionName, segment.rootConnectionName, connMap))
     return false
@@ -2423,13 +2483,15 @@ const pushViaSegmentPair = (
         ? (segmentX / segmentLength) * fallbackSign
         : 0
   const move = Math.min(maxMove, penetration / moveDivisor)
-  const movedVia = moveVia(
-    routes,
-    via,
-    directionX * move,
-    directionY * move,
-    srj,
-  )
+  const movedVia = translateSharedViaSite
+    ? translateSameRootViaSite(
+        routes,
+        via,
+        directionX * move,
+        directionY * move,
+        srj,
+      )
+    : moveVia(routes, via, directionX * move, directionY * move, srj)
   const movedSegment = moveSegmentByDistribution(
     routes,
     segment,
@@ -3688,6 +3750,7 @@ export const applyDrcErrorForces = (
   connMap?: ConnectivityMap,
   enableCanonicalPairRepairs = true,
   enableSameNetViaCanonicalization = false,
+  allowSharedViaSiteMove = true,
 ) => {
   let changed = false
   const vias = collectViaNodes(routes)
@@ -3804,6 +3867,7 @@ export const applyDrcErrorForces = (
             connMap,
             TRACE_PAD_REPAIR_MAX_MOVE * Math.abs(scale),
             1,
+            allowSharedViaSiteMove,
           ) || changed
       }
 

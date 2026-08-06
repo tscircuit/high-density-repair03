@@ -797,6 +797,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
             this.connMap,
             true,
             this.enableTargetedErrorSweep,
+            false,
           ) || changed
       }
 
@@ -850,6 +851,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       if (!error) continue
 
       this.errorCursor = (errorIndex + 1) % prioritizedErrors.length
+      const canMoveSharedViaSiteWithoutTradingDrcErrors = bestIssueCount === 1
 
       for (const scale of getForceScalesForEffort(this.effort)) {
         if (candidateAttemptsThisStep >= maxCandidateAttemptsThisStep) break
@@ -864,6 +866,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           this.connMap,
           true,
           this.enableTargetedErrorSweep,
+          canMoveSharedViaSiteWithoutTradingDrcErrors,
         )
         if (!changed) continue
 
