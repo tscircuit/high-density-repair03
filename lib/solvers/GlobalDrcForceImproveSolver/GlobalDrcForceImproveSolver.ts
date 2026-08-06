@@ -33,6 +33,7 @@ import {
   getTraceRouteIndexForError,
   getTraceRoutePairForError,
   getViaDrcIssueCount,
+  isTraceObstacleDrcError,
   isBetterDrcSnapshot,
   materializeRoutes,
   materializeRoutesForIndexes,
@@ -436,6 +437,13 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           this.srj.layerCount *
           SAFE_TRACE_LAYER_DIRECTION_VARIANT_COUNT
         const variantCount = localSpanVariantCount + fullSpanVariantCount
+        const prioritizeFullSpan = isTraceObstacleDrcError(error)
+        const fullSpanVariantOffset = prioritizeFullSpan
+          ? 0
+          : localSpanVariantCount
+        const localSpanVariantOffset = prioritizeFullSpan
+          ? fullSpanVariantCount
+          : 0
         let safeTraceLayerCursor = traceErrorKey
           ? (this.safeTraceLayerCursorByErrorId.get(traceErrorKey) ?? 0)
           : 0
@@ -448,24 +456,26 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           const variantIndex = safeTraceLayerCursor
           safeTraceLayerCursor = (safeTraceLayerCursor + 1) % variantCount
           variantsChecked += 1
-          const isLocalSpan = variantIndex < localSpanVariantCount
-          const modeVariantIndex = isLocalSpan
-            ? variantIndex
-            : variantIndex - localSpanVariantCount
+          const isFullSpan =
+            variantIndex >= fullSpanVariantOffset &&
+            variantIndex < fullSpanVariantOffset + fullSpanVariantCount
+          const modeVariantIndex =
+            variantIndex -
+            (isFullSpan ? fullSpanVariantOffset : localSpanVariantOffset)
           const routeSide = modeVariantIndex % safeRouteIndexes.length
           const layerVariant = Math.floor(
             modeVariantIndex / safeRouteIndexes.length,
           )
           const targetZ = layerVariant % this.srj.layerCount
-          const spanExpansion = isLocalSpan
-            ? SAFE_TRACE_LAYER_LOCAL_EXPANSIONS[
+          const spanExpansion = isFullSpan
+            ? ("full" as const)
+            : SAFE_TRACE_LAYER_LOCAL_EXPANSIONS[
                 Math.floor(layerVariant / this.srj.layerCount) %
                   SAFE_TRACE_LAYER_LOCAL_EXPANSIONS.length
               ]!
-            : ("full" as const)
-          const directionVariant = isLocalSpan
-            ? 0
-            : Math.floor(layerVariant / this.srj.layerCount)
+          const directionVariant = isFullSpan
+            ? Math.floor(layerVariant / this.srj.layerCount)
+            : 0
           const changedRouteIndex = safeRouteIndexes[routeSide]!
           const candidateRoutes = cloneRoutesForIndexes(bestRoutes, [
             changedRouteIndex,
