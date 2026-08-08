@@ -2886,6 +2886,7 @@ const deriveVias = (route: MutableRoute): MutableRoute["vias"] => {
     const current = route.route[index]
     const next = route.route[index + 1]
     if (!current || !next) continue
+    if (current.toNextSegmentType === "through_obstacle") continue
     if (current.z === next.z || !areSameXY(current, next)) continue
 
     const via = {
