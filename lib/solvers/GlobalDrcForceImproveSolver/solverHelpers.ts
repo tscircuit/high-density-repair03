@@ -2889,8 +2889,8 @@ const deriveVias = (route: MutableRoute): MutableRoute["vias"] => {
     if (current.z === next.z || !areSameXY(current, next)) continue
 
     const via = {
-      x: Number(current.x.toFixed(3)),
-      y: Number(current.y.toFixed(3)),
+      x: current.x,
+      y: current.y,
     }
     const previousVia = vias.at(-1)
     if (previousVia && areSameXY(previousVia, via)) continue

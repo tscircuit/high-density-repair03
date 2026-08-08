@@ -31,8 +31,8 @@ test("copies and materializes only affected candidate routes", () => {
 
   const candidateRoutes = cloneRoutesForIndexes(routes, [1])
   candidateRoutes[1]!.route = [
-    { x: 0, y: 1, z: 0 },
-    { x: 0, y: 1, z: 1 },
+    { x: 0.123456789, y: 1.987654321, z: 0 },
+    { x: 0.123456789, y: 1.987654321, z: 1 },
     { x: 1, y: 1, z: 1 },
   ]
   const materializedRoutes = materializeRoutesForIndexes(candidateRoutes, [1])
@@ -41,5 +41,7 @@ test("copies and materializes only affected candidate routes", () => {
   expect(candidateRoutes[1]).not.toBe(routes[1])
   expect(routes[1]!.route).toHaveLength(2)
   expect(materializedRoutes[0]).toBe(routes[0])
-  expect(materializedRoutes[1]!.vias).toEqual([{ x: 0, y: 1 }])
+  expect(materializedRoutes[1]!.vias).toEqual([
+    { x: 0.123456789, y: 1.987654321 },
+  ])
 })
