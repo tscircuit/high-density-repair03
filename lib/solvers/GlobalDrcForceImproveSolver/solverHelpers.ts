@@ -2972,6 +2972,149 @@ export const getTraceRouteIndexForError = (
     : parseTraceRouteIndex(error)
 }
 
+const TERMINAL_PAD_RETRACTION_FRACTIONS = [0.25, 0.5, 0.75, 0.95] as const
+
+export const TERMINAL_PAD_RETRACTION_VARIANT_COUNT =
+  TERMINAL_PAD_RETRACTION_FRACTIONS.length
+
+const getPadIdForTraceObstacleError = (error: Record<string, unknown>) => {
+  if (typeof error.pcb_pad_id === "string") return error.pcb_pad_id
+  const message = typeof error.message === "string" ? error.message : ""
+  return message.match(/pcb_(?:smtpad|plated_hole)_\d+/)?.[0]
+}
+
+const rotatePoint = (point: Point, angleDegrees: number): Point => {
+  const angleRadians = (angleDegrees * Math.PI) / 180
+  const cos = Math.cos(angleRadians)
+  const sin = Math.sin(angleRadians)
+  return {
+    x: point.x * cos - point.y * sin,
+    y: point.x * sin + point.y * cos,
+  }
+}
+
+/**
+ * Moves a connected trace endpoint within its own pad, away from a foreign
+ * pad that crowds the terminal. The endpoint keeps its pcb_port_id and stays
+ * inside connected copper, so the candidate preserves electrical contact.
+ */
+export const applyTerminalPadRetractionForError = (
+  srj: SimpleRouteJson,
+  routes: MutableRoute[],
+  error: Record<string, unknown>,
+  traceRouteIndexById: Map<string, number>,
+  variantIndex: number,
+) => {
+  if (!Number.isInteger(variantIndex) || variantIndex < 0) return false
+  const errorType = getDrcErrorType(error)
+  if (
+    errorType !== "pcb_pad_trace_clearance_error" &&
+    errorType !== "pcb_trace_error"
+  ) {
+    return false
+  }
+
+  const foreignPadId = getPadIdForTraceObstacleError(error)
+  const routeIndex = getTraceRouteIndexForError(error, traceRouteIndexById)
+  if (!foreignPadId || routeIndex === undefined) return false
+  const route = routes[routeIndex]
+  if (!route) return false
+
+  const foreignPad = srj.obstacles.find(
+    (obstacle) =>
+      obstacle.obstacleId === foreignPadId ||
+      obstacle.connectedTo[0] === foreignPadId,
+  )
+  if (!foreignPad) return false
+
+  const terminal = route.route
+    .map((point, pointIndex) => ({ point, pointIndex }))
+    .filter(({ point }) => typeof point.pcb_port_id === "string")
+    .sort(
+      (left, right) =>
+        Math.hypot(
+          left.point.x - foreignPad.center.x,
+          left.point.y - foreignPad.center.y,
+        ) -
+        Math.hypot(
+          right.point.x - foreignPad.center.x,
+          right.point.y - foreignPad.center.y,
+        ),
+    )[0]
+  const pcbPortId = terminal?.point.pcb_port_id
+  if (!terminal || !pcbPortId) return false
+  const terminalClearanceEnvelope =
+    (route.traceThickness ?? srj.minTraceWidth) / 2 +
+    getTraceToPadEdgeClearance(srj) +
+    CLEARANCE_SLACK
+  if (
+    getPointToObstacleDistance(terminal.point, foreignPad) >
+    terminalClearanceEnvelope
+  ) {
+    return false
+  }
+
+  const terminalPad = srj.obstacles
+    .filter(
+      (obstacle) =>
+        obstacle !== foreignPad &&
+        obstacle.obstacleId !== foreignPadId &&
+        obstacle.connectedTo[0] !== foreignPadId &&
+        obstacle.connectedTo.includes(pcbPortId) &&
+        getObstacleZLayers(obstacle, srj.layerCount).includes(terminal.point.z),
+    )
+    .sort(
+      (left, right) =>
+        Math.hypot(
+          left.center.x - terminal.point.x,
+          left.center.y - terminal.point.y,
+        ) -
+        Math.hypot(
+          right.center.x - terminal.point.x,
+          right.center.y - terminal.point.y,
+        ),
+    )[0]
+  if (!terminalPad) return false
+
+  const awayWorld = {
+    x: terminalPad.center.x - foreignPad.center.x,
+    y: terminalPad.center.y - foreignPad.center.y,
+  }
+  const awayLocal = rotatePoint(
+    awayWorld,
+    -(terminalPad.ccwRotationDegrees ?? 0),
+  )
+  const awayMagnitude = Math.hypot(awayLocal.x, awayLocal.y)
+  if (awayMagnitude <= POSITION_EPSILON) return false
+  const fraction =
+    TERMINAL_PAD_RETRACTION_FRACTIONS[
+      variantIndex % TERMINAL_PAD_RETRACTION_FRACTIONS.length
+    ]!
+  const localOffset = {
+    x: (awayLocal.x / awayMagnitude) * (terminalPad.width / 2) * fraction,
+    y: (awayLocal.y / awayMagnitude) * (terminalPad.height / 2) * fraction,
+  }
+  const worldOffset = rotatePoint(
+    localOffset,
+    terminalPad.ccwRotationDegrees ?? 0,
+  )
+  const candidatePoint = {
+    x: terminalPad.center.x + worldOffset.x,
+    y: terminalPad.center.y + worldOffset.y,
+  }
+  if (
+    Math.hypot(
+      candidatePoint.x - terminal.point.x,
+      candidatePoint.y - terminal.point.y,
+    ) <= POSITION_EPSILON
+  ) {
+    return false
+  }
+
+  Object.assign(route.route[terminal.pointIndex]!, candidatePoint)
+  return true
+}
+
 const isRouteEndpointEligibleForViaInPad = (
   srj: SimpleRouteJson,
   route: MutableRoute,
