@@ -138,19 +138,6 @@ const LOW_COUNT_TRACE_TOPOLOGY_VARIANTS = [
 
 const SAFE_TRACE_LAYER_LOCAL_EXPANSIONS = [0, 1, 2] as const
 
-const getTraceTopologyIssueScore = (snapshot: DrcSnapshot) =>
-  snapshot.errors.reduce((score, error) => {
-    const minimumClearance = Number(error.minimum_clearance)
-    const worstActualClearance = Number(error.worst_actual_clearance)
-    if (
-      Number.isFinite(minimumClearance) &&
-      Number.isFinite(worstActualClearance)
-    ) {
-      return score + Math.max(0, minimumClearance - worstActualClearance)
-    }
-    return score + 1
-  }, 0)
-
 export class GlobalDrcForceImproveSolver extends BaseSolver {
   readonly srj: SimpleRouteJson
   readonly inputHdRoutes: HighDensityRoute[]
@@ -690,20 +677,14 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           const candidateViaIssueCount = getViaDrcIssueCount(candidateSnapshot)
           const comparisonCount =
             bestTopologyCandidate?.snapshot.count ?? bestIssueCount
-          const comparisonScore = this.initialLowCountErrorsAreTracePairs
-            ? getTraceTopologyIssueScore(
-                bestTopologyCandidate?.snapshot ?? bestSnapshot,
-              )
-            : (bestTopologyCandidate?.snapshot.issueScore ?? bestIssueScore)
+          const comparisonScore =
+            bestTopologyCandidate?.snapshot.issueScore ?? bestIssueScore
           const comparisonViaIssueCount =
             bestTopologyCandidate?.viaIssueCount ?? bestViaIssueCount
           const isBetterTopologyCandidate = this
             .initialLowCountErrorsAreTracePairs
             ? isBetterDrcSnapshot(
-                {
-                  ...candidateSnapshot,
-                  issueScore: getTraceTopologyIssueScore(candidateSnapshot),
-                },
+                candidateSnapshot,
                 candidateViaIssueCount,
                 comparisonCount,
                 comparisonScore,

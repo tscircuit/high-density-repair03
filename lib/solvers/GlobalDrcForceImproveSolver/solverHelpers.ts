@@ -153,7 +153,21 @@ const createSimplifiedTraces = (
   return { traces, traceRouteIndexById }
 }
 
-const getDrcErrorSeverity = (error: Record<string, unknown>) => {
+const getDrcErrorSeverity = (
+  error: Record<string, unknown>,
+  options: { preferWorstClearance?: boolean } = {},
+) => {
+  if (options.preferWorstClearance) {
+    const minimumClearance = Number(error.minimum_clearance)
+    const worstActualClearance = Number(error.worst_actual_clearance)
+    if (
+      Number.isFinite(minimumClearance) &&
+      Number.isFinite(worstActualClearance)
+    ) {
+      return Math.max(0, minimumClearance - worstActualClearance)
+    }
+  }
+
   const message = typeof error.message === "string" ? error.message : ""
   const gapMatch = message.match(/gap: (-?\d+(?:\.\d+)?)mm/)
   const requiredMatch = message.match(/required: (-?\d+(?:\.\d+)?)mm/)
@@ -176,8 +190,14 @@ const getDrcErrorSeverity = (error: Record<string, unknown>) => {
   return 1
 }
 
-const getDrcIssueScore = (errors: Array<Record<string, unknown>>) =>
-  errors.reduce((score, error) => score + getDrcErrorSeverity(error), 0)
+const getDrcIssueScore = (
+  errors: Array<Record<string, unknown>>,
+  options: { preferWorstClearance?: boolean } = {},
+) =>
+  errors.reduce(
+    (score, error) => score + getDrcErrorSeverity(error, options),
+    0,
+  )
 
 export const getDrcSnapshot = (
   srj: SimpleRouteJson,
@@ -209,6 +229,7 @@ export const getDrcSnapshot = (
       count: errors.length,
       issueScore: getDrcIssueScore(
         errorsWithCenters as Array<Record<string, unknown>>,
+        { preferWorstClearance: preferWorstTraceContact },
       ),
       traceRouteIndexById,
     }
@@ -243,6 +264,7 @@ export const getDrcSnapshot = (
       (drc.errorsWithCenters.length > 0
         ? drc.errorsWithCenters
         : drc.errors) as unknown as Array<Record<string, unknown>>,
+      { preferWorstClearance: preferWorstTraceContact },
     ),
     traceRouteIndexById,
   }
@@ -3591,6 +3613,53 @@ export const getTraceRoutePairForError = (
     : undefined
 }
 
+const getTraceSegmentForError = (
+  routes: MutableRoute[],
+  error: Record<string, unknown>,
+  routeIndex: number,
+) => {
+  if (getDrcErrorType(error) !== "pcb_trace_error") return undefined
+  const center = getErrorCenter(error)
+  const route = routes[routeIndex]
+  if (!center || !route) return undefined
+  const segment = getNearestSegment(
+    collectSegmentsForRoute(route, routeIndex),
+    center,
+  )
+  if (!segment) return undefined
+  return { center, route, segment }
+}
+
+const getSameLayerTraceSpanForError = (
+  routes: MutableRoute[],
+  error: Record<string, unknown>,
+  routeIndex: number,
+  spanExpansion: number,
+) => {
+  const selection = getTraceSegmentForError(routes, error, routeIndex)
+  if (!selection) return undefined
+
+  const { route, segment } = selection
+  const spanStartIndex = Math.max(0, segment.startIndex - spanExpansion)
+  const spanEndIndex = Math.min(
+    route.route.length - 1,
+    segment.endIndex + spanExpansion,
+  )
+  const spanPoints = route.route.slice(spanStartIndex, spanEndIndex + 1)
+  const start = spanPoints[0]
+  const end = spanPoints.at(-1)
+  if (
+    !start ||
+    !end ||
+    spanPoints.some((point) => point.z !== start.z) ||
+    start.z !== end.z
+  ) {
+    return undefined
+  }
+
+  return { route, spanStartIndex, spanEndIndex, start, end }
+}
+
 /** Moves only the conflicting segment of one exact trace pair to another layer. */
 export const applyTracePairLayerMoveForError = (
   srj: SimpleRouteJson,
@@ -3603,20 +3672,14 @@ export const applyTracePairLayerMoveForError = (
   connMap?: ConnectivityMap,
   viaHoleDiameter?: number,
 ) => {
-  if (getDrcErrorType(error) !== "pcb_trace_error") return false
   if (targetZ < 0 || targetZ >= srj.layerCount) return false
-  const center = getErrorCenter(error)
   const routePair = getTraceRoutePairForError(error, traceRouteIndexById)
-  if (!center || !routePair) return false
+  if (!routePair) return false
 
   const routeIndex = routePair[routeSide]
-  const route = routes[routeIndex]
-  if (!route) return false
-  const segment = getNearestSegment(
-    collectSegmentsForRoute(route, routeIndex),
-    center,
-  )
-  if (!segment || segment.z === targetZ) return false
+  const selection = getTraceSegmentForError(routes, error, routeIndex)
+  if (!selection || selection.segment.z === targetZ) return false
+  const { route, segment } = selection
 
   let spanStartIndex = segment.startIndex
   let spanEndIndex = segment.endIndex
@@ -3674,17 +3737,10 @@ export const applyTraceDetourForError = (
   offset: number,
   directionSign: -1 | 1,
 ) => {
-  if (getDrcErrorType(error) !== "pcb_trace_error") return false
-  const center = getErrorCenter(error)
-  if (!center || halfSpan <= 0 || offset <= 0) return false
-
-  const route = routes[routeIndex]
-  if (!route) return false
-  const segment = getNearestSegment(
-    collectSegmentsForRoute(route, routeIndex),
-    center,
-  )
-  if (!segment) return false
+  if (halfSpan <= 0 || offset <= 0) return false
+  const selection = getTraceSegmentForError(routes, error, routeIndex)
+  if (!selection) return false
+  const { center, route, segment } = selection
 
   const segmentX = segment.end.x - segment.start.x
   const segmentY = segment.end.y - segment.start.y
@@ -3737,35 +3793,17 @@ export const applyTraceSpanDetourForError = (
   offset: number,
   directionSign: -1 | 1,
 ) => {
-  if (getDrcErrorType(error) !== "pcb_trace_error") return false
   if (!Number.isInteger(spanExpansion) || spanExpansion < 1 || offset <= 0) {
     return false
   }
-  const center = getErrorCenter(error)
-  const route = routes[routeIndex]
-  if (!center || !route) return false
-  const segment = getNearestSegment(
-    collectSegmentsForRoute(route, routeIndex),
-    center,
+  const span = getSameLayerTraceSpanForError(
+    routes,
+    error,
+    routeIndex,
+    spanExpansion,
   )
-  if (!segment) return false
-
-  const spanStartIndex = Math.max(0, segment.startIndex - spanExpansion)
-  const spanEndIndex = Math.min(
-    route.route.length - 1,
-    segment.endIndex + spanExpansion,
-  )
-  const spanPoints = route.route.slice(spanStartIndex, spanEndIndex + 1)
-  const start = spanPoints[0]
-  const end = spanPoints.at(-1)
-  if (
-    !start ||
-    !end ||
-    spanPoints.some((point) => point.z !== start.z) ||
-    start.z !== end.z
-  ) {
-    return false
-  }
+  if (!span) return false
+  const { route, spanStartIndex, spanEndIndex, start, end } = span
 
   const spanX = end.x - start.x
   const spanY = end.y - start.y
@@ -3811,30 +3849,16 @@ export const applyTraceWaypointDetourForError = (
   spanExpansion: number,
   waypoint: Point,
 ) => {
-  if (getDrcErrorType(error) !== "pcb_trace_error") return false
   if (!Number.isInteger(spanExpansion) || spanExpansion < 0) return false
-  const center = getErrorCenter(error)
-  const route = routes[routeIndex]
-  if (!center || !route) return false
-  const segment = getNearestSegment(
-    collectSegmentsForRoute(route, routeIndex),
-    center,
+  const span = getSameLayerTraceSpanForError(
+    routes,
+    error,
+    routeIndex,
+    spanExpansion,
   )
-  if (!segment) return false
-
-  const spanStartIndex = Math.max(0, segment.startIndex - spanExpansion)
-  const spanEndIndex = Math.min(
-    route.route.length - 1,
-    segment.endIndex + spanExpansion,
-  )
-  const spanPoints = route.route.slice(spanStartIndex, spanEndIndex + 1)
-  const start = spanPoints[0]
-  const end = spanPoints.at(-1)
+  if (!span) return false
+  const { route, spanStartIndex, spanEndIndex, start, end } = span
   if (
-    !start ||
-    !end ||
-    spanPoints.some((point) => point.z !== start.z) ||
-    start.z !== end.z ||
     Math.hypot(waypoint.x - start.x, waypoint.y - start.y) <=
       POSITION_EPSILON ||
     Math.hypot(waypoint.x - end.x, waypoint.y - end.y) <= POSITION_EPSILON ||
