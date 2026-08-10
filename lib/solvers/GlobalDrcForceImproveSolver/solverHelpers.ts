@@ -185,6 +185,7 @@ export const getDrcSnapshot = (
   drcEvaluator?: DrcEvaluator,
   connMap?: ConnectivityMap,
   autoroutingDrcEngine?: AutoroutingDrcEngine,
+  preferWorstTraceContact = false,
 ): DrcSnapshot => {
   const drcSrj =
     autoroutingDrcEngine && !drcEvaluator
@@ -214,7 +215,7 @@ export const getDrcSnapshot = (
   }
 
   const drc =
-    autoroutingDrcEngine?.evaluate(traces) ??
+    autoroutingDrcEngine?.evaluate(traces, { preferWorstTraceContact }) ??
     getDrcErrors(
       convertToCircuitJson(
         drcSrj,
@@ -3665,21 +3666,18 @@ export const applyTracePairLayerMoveForError = (
 }
 
 /** Adds a same-layer dogleg around the exact conflict location for one trace. */
-export const applyTracePairDetourForError = (
+export const applyTraceDetourForError = (
   routes: MutableRoute[],
   error: Record<string, unknown>,
-  traceRouteIndexById: Map<string, number>,
-  routeSide: 0 | 1,
+  routeIndex: number,
   halfSpan: number,
   offset: number,
   directionSign: -1 | 1,
 ) => {
   if (getDrcErrorType(error) !== "pcb_trace_error") return false
   const center = getErrorCenter(error)
-  const routePair = getTraceRoutePairForError(error, traceRouteIndexById)
-  if (!center || !routePair || halfSpan <= 0 || offset <= 0) return false
+  if (!center || halfSpan <= 0 || offset <= 0) return false
 
-  const routeIndex = routePair[routeSide]
   const route = routes[routeIndex]
   if (!route) return false
   const segment = getNearestSegment(
@@ -3727,6 +3725,153 @@ export const applyTracePairDetourForError = (
     { ...originalEnd },
   )
   return true
+}
+
+/** Replaces a same-layer span around a conflict with a displaced dogleg. */
+export const applyTraceSpanDetourForError = (
+  srj: SimpleRouteJson,
+  routes: MutableRoute[],
+  error: Record<string, unknown>,
+  routeIndex: number,
+  spanExpansion: number,
+  offset: number,
+  directionSign: -1 | 1,
+) => {
+  if (getDrcErrorType(error) !== "pcb_trace_error") return false
+  if (!Number.isInteger(spanExpansion) || spanExpansion < 1 || offset <= 0) {
+    return false
+  }
+  const center = getErrorCenter(error)
+  const route = routes[routeIndex]
+  if (!center || !route) return false
+  const segment = getNearestSegment(
+    collectSegmentsForRoute(route, routeIndex),
+    center,
+  )
+  if (!segment) return false
+
+  const spanStartIndex = Math.max(0, segment.startIndex - spanExpansion)
+  const spanEndIndex = Math.min(
+    route.route.length - 1,
+    segment.endIndex + spanExpansion,
+  )
+  const spanPoints = route.route.slice(spanStartIndex, spanEndIndex + 1)
+  const start = spanPoints[0]
+  const end = spanPoints.at(-1)
+  if (
+    !start ||
+    !end ||
+    spanPoints.some((point) => point.z !== start.z) ||
+    start.z !== end.z
+  ) {
+    return false
+  }
+
+  const spanX = end.x - start.x
+  const spanY = end.y - start.y
+  const spanLength = Math.hypot(spanX, spanY)
+  if (spanLength <= POSITION_EPSILON) return false
+  const normalX = (-spanY / spanLength) * directionSign * offset
+  const normalY = (spanX / spanLength) * directionSign * offset
+  const shiftedStart = {
+    ...start,
+    x: start.x + normalX,
+    y: start.y + normalY,
+    pcb_port_id: undefined,
+  }
+  const shiftedEnd = {
+    ...end,
+    x: end.x + normalX,
+    y: end.y + normalY,
+    pcb_port_id: undefined,
+  }
+  if (
+    !pointIsInsideBounds(shiftedStart, srj.bounds) ||
+    !pointIsInsideBounds(shiftedEnd, srj.bounds)
+  ) {
+    return false
+  }
+  route.route.splice(
+    spanStartIndex,
+    spanEndIndex - spanStartIndex + 1,
+    { ...start },
+    shiftedStart,
+    shiftedEnd,
+    { ...end },
+  )
+  return true
+}
+
+/** Replaces a same-layer span around a conflict with a waypoint path. */
+export const applyTraceWaypointDetourForError = (
+  srj: SimpleRouteJson,
+  routes: MutableRoute[],
+  error: Record<string, unknown>,
+  routeIndex: number,
+  spanExpansion: number,
+  waypoint: Point,
+) => {
+  if (getDrcErrorType(error) !== "pcb_trace_error") return false
+  if (!Number.isInteger(spanExpansion) || spanExpansion < 0) return false
+  const center = getErrorCenter(error)
+  const route = routes[routeIndex]
+  if (!center || !route) return false
+  const segment = getNearestSegment(
+    collectSegmentsForRoute(route, routeIndex),
+    center,
+  )
+  if (!segment) return false
+
+  const spanStartIndex = Math.max(0, segment.startIndex - spanExpansion)
+  const spanEndIndex = Math.min(
+    route.route.length - 1,
+    segment.endIndex + spanExpansion,
+  )
+  const spanPoints = route.route.slice(spanStartIndex, spanEndIndex + 1)
+  const start = spanPoints[0]
+  const end = spanPoints.at(-1)
+  if (
+    !start ||
+    !end ||
+    spanPoints.some((point) => point.z !== start.z) ||
+    start.z !== end.z ||
+    Math.hypot(waypoint.x - start.x, waypoint.y - start.y) <=
+      POSITION_EPSILON ||
+    Math.hypot(waypoint.x - end.x, waypoint.y - end.y) <= POSITION_EPSILON ||
+    !pointIsInsideBounds(waypoint, srj.bounds)
+  ) {
+    return false
+  }
+
+  route.route.splice(
+    spanStartIndex,
+    spanEndIndex - spanStartIndex + 1,
+    { ...start },
+    { x: waypoint.x, y: waypoint.y, z: start.z },
+    { ...end },
+  )
+  return true
+}
+
+export const applyTracePairDetourForError = (
+  routes: MutableRoute[],
+  error: Record<string, unknown>,
+  traceRouteIndexById: Map<string, number>,
+  routeSide: 0 | 1,
+  halfSpan: number,
+  offset: number,
+  directionSign: -1 | 1,
+) => {
+  const routePair = getTraceRoutePairForError(error, traceRouteIndexById)
+  if (!routePair) return false
+  return applyTraceDetourForError(
+    routes,
+    error,
+    routePair[routeSide],
+    halfSpan,
+    offset,
+    directionSign,
+  )
 }
 
 export const isBetterDrcSnapshot = (

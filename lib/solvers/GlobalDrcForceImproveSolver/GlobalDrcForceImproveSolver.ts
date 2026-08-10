@@ -22,7 +22,9 @@ import {
   applyDrcErrorForces,
   applySafeTraceLayerMoveForError,
   applyTerminalViaRelocationForError,
-  applyTracePairDetourForError,
+  applyTraceDetourForError,
+  applyTraceSpanDetourForError,
+  applyTraceWaypointDetourForError,
   applyTracePairLayerMoveForError,
   applyViaInPadLayerMoveForError,
   cloneRoutes,
@@ -76,12 +78,78 @@ const TRACE_PAIR_DETOUR_GEOMETRY_VARIANTS = [0.2, 0.4, 0.8, 1.2].flatMap(
 const TRACE_PAIR_DETOUR_VARIANTS = TRACE_PAIR_DETOUR_GEOMETRY_VARIANTS.flatMap(
   (variant) =>
     ([0, 1] as const).map((routeSide) => ({
+      kind: "segment" as const,
       routeSide,
       ...variant,
     })),
 )
 
+const LOW_COUNT_TRACE_TOPOLOGY_VARIANTS = [
+  ...([-1, 1] as const).flatMap((directionSign) =>
+    ([0, 1] as const).map((routeSide) => ({
+      kind: "segment" as const,
+      routeSide,
+      halfSpan: 0.4,
+      offset: 1.2,
+      directionSign,
+    })),
+  ),
+  ...([-1, 1] as const).flatMap((directionSign) =>
+    ([0, 1] as const).map((routeSide) => ({
+      kind: "span" as const,
+      routeSide,
+      spanExpansion: 3,
+      offset: 1.8,
+      directionSign,
+    })),
+  ),
+  ...[
+    { dx: -2.4, dy: -0.4 },
+    { dx: -2.4, dy: 0.4 },
+    { dx: 2.4, dy: -0.4 },
+    { dx: 2.4, dy: 0.4 },
+    { dx: -0.4, dy: -2.4 },
+    { dx: -0.4, dy: 2.4 },
+    { dx: 0.4, dy: -2.4 },
+    { dx: 0.4, dy: 2.4 },
+  ].flatMap((offset) =>
+    ([0, 1] as const).map((routeSide) => ({
+      kind: "waypoint" as const,
+      routeSide,
+      spanExpansion: 2,
+      ...offset,
+    })),
+  ),
+  ...[
+    { dx: -0.17, dy: 0 },
+    { dx: 0.17, dy: 0 },
+    { dx: 0, dy: -0.17 },
+    { dx: 0, dy: 0.17 },
+  ].flatMap((offset) =>
+    ([0, 1] as const).map((routeSide) => ({
+      kind: "waypoint" as const,
+      routeSide,
+      spanExpansion: 0,
+      ...offset,
+    })),
+  ),
+  ...TRACE_PAIR_DETOUR_VARIANTS,
+]
+
 const SAFE_TRACE_LAYER_LOCAL_EXPANSIONS = [0, 1, 2] as const
+
+const getTraceTopologyIssueScore = (snapshot: DrcSnapshot) =>
+  snapshot.errors.reduce((score, error) => {
+    const minimumClearance = Number(error.minimum_clearance)
+    const worstActualClearance = Number(error.worst_actual_clearance)
+    if (
+      Number.isFinite(minimumClearance) &&
+      Number.isFinite(worstActualClearance)
+    ) {
+      return score + Math.max(0, minimumClearance - worstActualClearance)
+    }
+    return score + 1
+  }, 0)
 
 export class GlobalDrcForceImproveSolver extends BaseSolver {
   readonly srj: SimpleRouteJson
@@ -99,6 +167,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   readonly enableViaInPadLayerMoves: boolean
   outputHdRoutes: HighDensityRoute[]
   private initialDrcIssueCount: number | undefined
+  private initialLowCountErrorsAreTracePairs = false
   private broadForceAccepted = false
   private targetedForceAccepted = false
   private candidateAttempts = 0
@@ -213,6 +282,17 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     )
   }
 
+  private getSnapshot(routes: HighDensityRoute[]) {
+    return getDrcSnapshot(
+      this.srj,
+      routes,
+      this.drcEvaluator,
+      this.connMap,
+      this.autoroutingDrcEngine,
+      this.initialLowCountErrorsAreTracePairs,
+    )
+  }
+
   private acceptSolvedRoutes(
     routes: HighDensityRoute[],
     snapshot: DrcSnapshot,
@@ -228,15 +308,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         )
       : routes
     const relaxedSnapshot =
-      relaxedRoutes === routes
-        ? snapshot
-        : getDrcSnapshot(
-            this.srj,
-            relaxedRoutes,
-            this.drcEvaluator,
-            this.connMap,
-            this.autoroutingDrcEngine,
-          )
+      relaxedRoutes === routes ? snapshot : this.getSnapshot(relaxedRoutes)
 
     this.outputHdRoutes = relaxedRoutes
     this.outputSnapshot = relaxedSnapshot
@@ -307,17 +379,22 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
 
   override _step() {
     let bestRoutes = this.outputHdRoutes
-    let bestSnapshot =
-      this.outputSnapshot ??
-      getDrcSnapshot(
-        this.srj,
-        bestRoutes,
-        this.drcEvaluator,
-        this.connMap,
-        this.autoroutingDrcEngine,
-      )
+    let bestSnapshot = this.outputSnapshot ?? this.getSnapshot(bestRoutes)
     if (this.initialDrcIssueCount === undefined) {
       this.initialDrcIssueCount = bestSnapshot.count
+      this.initialLowCountErrorsAreTracePairs =
+        bestSnapshot.count > 1 &&
+        bestSnapshot.count <= 3 &&
+        bestSnapshot.errors.every(
+          (error) =>
+            getTraceRoutePairForError(
+              error,
+              bestSnapshot.traceRouteIndexById,
+            ) !== undefined,
+        )
+      if (this.initialLowCountErrorsAreTracePairs) {
+        bestSnapshot = this.getSnapshot(bestRoutes)
+      }
       this.bestDrcIssueCountSeen = bestSnapshot.count
       this.bestDrcIssueScoreSeen = bestSnapshot.issueScore
       this.increaseMaxIterationsForDrcIssueCount(bestSnapshot.count)
@@ -369,7 +446,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       ? getTargetedClearanceSweepErrors(centeredErrors, this.effort)
       : []
     const shouldTryTracePairTopology =
-      (this.initialDrcIssueCount ?? bestIssueCount) <= 3
+      bestIssueCount <= 1 || this.initialLowCountErrorsAreTracePairs
     const padTraceErrors = sameNetViaError
       ? []
       : centeredErrors.filter(
@@ -498,12 +575,8 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           )
           safeTraceLayerCandidateAttemptsThisStep += 1
           this.candidateAttempts += 1
-          const candidateSnapshot = getDrcSnapshot(
-            this.srj,
+          const candidateSnapshot = this.getSnapshot(
             materializedCandidateRoutes,
-            this.drcEvaluator,
-            this.connMap,
-            this.autoroutingDrcEngine,
           )
           const candidateViaIssueCount = getViaDrcIssueCount(candidateSnapshot)
           const comparisonCount =
@@ -531,36 +604,77 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       if (
         this.enableSafeTraceLayerMoves &&
         shouldTryTracePairTopology &&
-        bestIssueCount <= 1 &&
         traceErrorKey &&
-        traceRoutePair
+        ((this.initialLowCountErrorsAreTracePairs &&
+          (traceRoutePair || traceRouteIndex !== undefined)) ||
+          (!this.initialLowCountErrorsAreTracePairs && traceRoutePair))
       ) {
+        const traceTopologyVariants = this.initialLowCountErrorsAreTracePairs
+          ? LOW_COUNT_TRACE_TOPOLOGY_VARIANTS
+          : TRACE_PAIR_DETOUR_VARIANTS
+        const detourRouteIndexes = traceRoutePair ?? [traceRouteIndex!]
         let detourCursor =
           this.tracePairDetourCursorByErrorId.get(traceErrorKey) ?? 0
         let detourVariantsChecked = 0
         while (
           candidateAttemptsThisStep < maxCandidateAttemptsThisStep &&
-          detourVariantsChecked < TRACE_PAIR_DETOUR_VARIANTS.length
+          detourVariantsChecked < traceTopologyVariants.length
         ) {
           const variant =
-            TRACE_PAIR_DETOUR_VARIANTS[
-              detourCursor % TRACE_PAIR_DETOUR_VARIANTS.length
-            ]!
+            traceTopologyVariants[detourCursor % traceTopologyVariants.length]!
           detourCursor += 1
           detourVariantsChecked += 1
-          const changedRouteIndex = traceRoutePair[variant.routeSide]
+          const changedRouteIndex = detourRouteIndexes[variant.routeSide]
+          if (changedRouteIndex === undefined) continue
+          const topologyError =
+            this.initialLowCountErrorsAreTracePairs &&
+            error.worst_contact_center
+              ? {
+                  ...error,
+                  center: error.worst_contact_center,
+                  message: error.worst_contact_message ?? error.message,
+                  actual_clearance:
+                    error.worst_actual_clearance ?? error.actual_clearance,
+                }
+              : error
           const candidateRoutes = cloneRoutesForIndexes(bestRoutes, [
             changedRouteIndex,
           ])
-          const changed = applyTracePairDetourForError(
-            candidateRoutes,
-            error,
-            bestSnapshot.traceRouteIndexById,
-            variant.routeSide,
-            variant.halfSpan,
-            variant.offset,
-            variant.directionSign,
-          )
+          const changed =
+            variant.kind === "segment"
+              ? applyTraceDetourForError(
+                  candidateRoutes,
+                  topologyError,
+                  changedRouteIndex,
+                  variant.halfSpan,
+                  variant.offset,
+                  variant.directionSign,
+                )
+              : variant.kind === "span"
+                ? applyTraceSpanDetourForError(
+                    this.srj,
+                    candidateRoutes,
+                    topologyError,
+                    changedRouteIndex,
+                    variant.spanExpansion,
+                    variant.offset,
+                    variant.directionSign,
+                  )
+                : applyTraceWaypointDetourForError(
+                    this.srj,
+                    candidateRoutes,
+                    topologyError,
+                    changedRouteIndex,
+                    variant.spanExpansion,
+                    {
+                      x:
+                        (topologyError.center as { x: number; y: number }).x +
+                        variant.dx,
+                      y:
+                        (topologyError.center as { x: number; y: number }).y +
+                        variant.dy,
+                    },
+                  )
           if (!changed) continue
 
           const materializedCandidateRoutes = materializeRoutesForIndexes(
@@ -570,17 +684,34 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           tracePairDetourAttemptedThisStep = true
           candidateAttemptsThisStep += 1
           this.candidateAttempts += 1
-          const candidateSnapshot = getDrcSnapshot(
-            this.srj,
+          const candidateSnapshot = this.getSnapshot(
             materializedCandidateRoutes,
-            this.drcEvaluator,
-            this.connMap,
-            this.autoroutingDrcEngine,
           )
           const candidateViaIssueCount = getViaDrcIssueCount(candidateSnapshot)
           const comparisonCount =
             bestTopologyCandidate?.snapshot.count ?? bestIssueCount
-          if (candidateSnapshot.count < comparisonCount) {
+          const comparisonScore = this.initialLowCountErrorsAreTracePairs
+            ? getTraceTopologyIssueScore(
+                bestTopologyCandidate?.snapshot ?? bestSnapshot,
+              )
+            : (bestTopologyCandidate?.snapshot.issueScore ?? bestIssueScore)
+          const comparisonViaIssueCount =
+            bestTopologyCandidate?.viaIssueCount ?? bestViaIssueCount
+          const isBetterTopologyCandidate = this
+            .initialLowCountErrorsAreTracePairs
+            ? isBetterDrcSnapshot(
+                {
+                  ...candidateSnapshot,
+                  issueScore: getTraceTopologyIssueScore(candidateSnapshot),
+                },
+                candidateViaIssueCount,
+                comparisonCount,
+                comparisonScore,
+                comparisonViaIssueCount,
+              )
+            : candidateViaIssueCount <= comparisonViaIssueCount &&
+              candidateSnapshot.count < comparisonCount
+          if (isBetterTopologyCandidate) {
             bestTopologyCandidate = {
               routes: materializedCandidateRoutes,
               snapshot: candidateSnapshot,
@@ -617,13 +748,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         this.viaInPadCandidateAttempts += 1
         candidateAttemptsThisStep += 1
         this.candidateAttempts += 1
-        const candidateSnapshot = getDrcSnapshot(
-          this.srj,
-          materializedCandidateRoutes,
-          this.drcEvaluator,
-          this.connMap,
-          this.autoroutingDrcEngine,
-        )
+        const candidateSnapshot = this.getSnapshot(materializedCandidateRoutes)
         const candidateViaIssueCount = getViaDrcIssueCount(candidateSnapshot)
         const comparisonCount =
           bestTopologyCandidate?.snapshot.count ?? bestIssueCount
@@ -676,13 +801,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         this.viaInPadCandidateAttempts += 1
         candidateAttemptsThisStep += 1
         this.candidateAttempts += 1
-        const candidateSnapshot = getDrcSnapshot(
-          this.srj,
-          materializedCandidateRoutes,
-          this.drcEvaluator,
-          this.connMap,
-          this.autoroutingDrcEngine,
-        )
+        const candidateSnapshot = this.getSnapshot(materializedCandidateRoutes)
         const candidateViaIssueCount = getViaDrcIssueCount(candidateSnapshot)
         const comparisonCount =
           bestTopologyCandidate?.snapshot.count ?? bestIssueCount
@@ -743,12 +862,8 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
             this.viaInPadCandidateAttempts += 1
             candidateAttemptsThisStep += 1
             this.candidateAttempts += 1
-            const candidateSnapshot = getDrcSnapshot(
-              this.srj,
+            const candidateSnapshot = this.getSnapshot(
               materializedCandidateRoutes,
-              this.drcEvaluator,
-              this.connMap,
-              this.autoroutingDrcEngine,
             )
             const candidateViaIssueCount =
               getViaDrcIssueCount(candidateSnapshot)
@@ -815,13 +930,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         const materializedCandidateRoutes = materializeRoutes(candidateRoutes)
         candidateAttemptsThisStep += 1
         this.candidateAttempts += 1
-        const candidateSnapshot = getDrcSnapshot(
-          this.srj,
-          materializedCandidateRoutes,
-          this.drcEvaluator,
-          this.connMap,
-          this.autoroutingDrcEngine,
-        )
+        const candidateSnapshot = this.getSnapshot(materializedCandidateRoutes)
         const candidateViaIssueCount = getViaDrcIssueCount(candidateSnapshot)
 
         if (
@@ -883,13 +992,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         const materializedCandidateRoutes = materializeRoutes(candidateRoutes)
         candidateAttemptsThisStep += 1
         this.candidateAttempts += 1
-        const candidateSnapshot = getDrcSnapshot(
-          this.srj,
-          materializedCandidateRoutes,
-          this.drcEvaluator,
-          this.connMap,
-          this.autoroutingDrcEngine,
-        )
+        const candidateSnapshot = this.getSnapshot(materializedCandidateRoutes)
         const candidateViaIssueCount = getViaDrcIssueCount(candidateSnapshot)
 
         if (
@@ -948,13 +1051,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           this.drcEvaluator === undefined,
         )
         if (broadCandidateRoutes === bestRoutes) continue
-        const broadCandidateSnapshot = getDrcSnapshot(
-          this.srj,
-          broadCandidateRoutes,
-          this.drcEvaluator,
-          this.connMap,
-          this.autoroutingDrcEngine,
-        )
+        const broadCandidateSnapshot = this.getSnapshot(broadCandidateRoutes)
         const broadCandidateViaIssueCount = getViaDrcIssueCount(
           broadCandidateSnapshot,
         )
@@ -1004,14 +1101,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
 
   override tryFinalAcceptance() {
     const snapshot =
-      this.outputSnapshot ??
-      getDrcSnapshot(
-        this.srj,
-        this.outputHdRoutes,
-        this.drcEvaluator,
-        this.connMap,
-        this.autoroutingDrcEngine,
-      )
+      this.outputSnapshot ?? this.getSnapshot(this.outputHdRoutes)
     this.acceptSolvedRoutes(this.outputHdRoutes, snapshot)
   }
 

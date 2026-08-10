@@ -135,6 +135,34 @@ test("applies the reference DRC tolerance at the clearance boundary", () => {
   expect(evaluateAtSeparation(0.196).errors).toHaveLength(0)
 })
 
+test("reports clearance metadata when a trace pair contacts more than once", () => {
+  const srj = createSrj(["net_a", "net_b"])
+  const result = new AutoroutingDrcEngine(srj).evaluate([
+    {
+      type: "pcb_trace",
+      pcb_trace_id: "trace_a",
+      connection_name: "net_a",
+      route: [
+        { route_type: "wire", x: -1, y: 0, width: 0.1, layer: "top" },
+        { route_type: "wire", x: 1, y: 0, width: 0.1, layer: "top" },
+        { route_type: "wire", x: 1, y: 0.15, width: 0.1, layer: "top" },
+        { route_type: "wire", x: -1, y: 0.15, width: 0.1, layer: "top" },
+      ],
+    },
+    createWireTrace({
+      traceId: "trace_b",
+      connectionName: "net_b",
+      start: { x: -0.5, y: 0.18 },
+      end: { x: 0.5, y: 0.18 },
+    }),
+  ])
+
+  expect(result.errors).toHaveLength(1)
+  expect(result.errors[0]!.minimum_clearance).toBe(0.1)
+  expect(result.errors[0]!.actual_clearance).toBeCloseTo(0.08, 6)
+  expect(result.errors[0]!.worst_actual_clearance).toBeCloseTo(-0.07, 6)
+})
+
 test("does not report two vias at the exact same location", () => {
   const srj = createSrj(["net_a", "net_b"])
   const traces: SimplifiedPcbTraces = ["net_a", "net_b"].map(
