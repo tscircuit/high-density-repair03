@@ -614,7 +614,6 @@ export class AutoroutingDrcEngine {
   private checkTracePair(
     segmentA: TraceSegment,
     segmentB: TraceSegment,
-    reportedErrorIds: Set<string>,
   ): AutoroutingDrcError | undefined {
     if (this.areConnected(segmentA.netId, segmentB.netId)) return undefined
     this.lastRunStats.exactCheckCount += 1
@@ -631,11 +630,6 @@ export class AutoroutingDrcEngine {
     if (gap > this.traceClearance - DRC_EPSILON) return undefined
 
     const forwardId = `overlap_${segmentA.traceId}_${segmentB.traceId}`
-    const reverseId = `overlap_${segmentB.traceId}_${segmentA.traceId}`
-    if (reportedErrorIds.has(forwardId) || reportedErrorIds.has(reverseId)) {
-      return undefined
-    }
-    reportedErrorIds.add(forwardId)
 
     return {
       type: "pcb_trace_error",
@@ -648,6 +642,8 @@ export class AutoroutingDrcEngine {
       pcb_trace_id: segmentA.traceId,
       source_trace_id: "",
       pcb_trace_error_id: forwardId,
+      minimum_clearance: this.traceClearance,
+      actual_clearance: gap,
       pcb_component_ids: [],
       pcb_port_ids: [
         ...new Set([...segmentA.pcbPortIds, ...segmentB.pcbPortIds]),
@@ -659,7 +655,6 @@ export class AutoroutingDrcEngine {
   private checkTraceVia(
     segment: TraceSegment,
     via: Via,
-    reportedErrorIds: Set<string>,
   ): AutoroutingDrcError | undefined {
     if (this.areConnected(segment.netId, via.netId)) return undefined
     this.lastRunStats.exactCheckCount += 1
@@ -674,8 +669,6 @@ export class AutoroutingDrcEngine {
     if (gap > this.traceClearance - DRC_EPSILON) return undefined
 
     const errorId = `overlap_${segment.traceId}_${via.viaId}`
-    if (reportedErrorIds.has(errorId)) return undefined
-    reportedErrorIds.add(errorId)
 
     return {
       type: "pcb_trace_error",
@@ -688,6 +681,8 @@ export class AutoroutingDrcEngine {
       pcb_trace_id: segment.traceId,
       source_trace_id: "",
       pcb_trace_error_id: errorId,
+      minimum_clearance: this.traceClearance,
+      actual_clearance: gap,
       pcb_component_ids: [],
       pcb_port_ids: segment.pcbPortIds,
       center: getClosestPointBetweenSegmentAndPoint(segment, via),
@@ -697,7 +692,6 @@ export class AutoroutingDrcEngine {
   private checkTraceObstacle(
     segment: TraceSegment,
     obstacle: StaticObstacle,
-    reportedErrorIds: Set<string>,
   ): AutoroutingDrcError | undefined {
     if (this.obstacleSharesNet(segment, obstacle)) return undefined
     this.lastRunStats.exactCheckCount += 1
@@ -715,8 +709,6 @@ export class AutoroutingDrcEngine {
     if (gap + DRC_EPSILON >= this.traceClearance) return undefined
 
     const errorId = `overlap_${segment.traceId}_${obstacle.obstacleId}`
-    if (reportedErrorIds.has(errorId)) return undefined
-    reportedErrorIds.add(errorId)
 
     return {
       type: "pcb_trace_error",
@@ -729,6 +721,8 @@ export class AutoroutingDrcEngine {
       pcb_trace_id: segment.traceId,
       source_trace_id: "",
       pcb_trace_error_id: errorId,
+      minimum_clearance: this.traceClearance,
+      actual_clearance: gap,
       pcb_component_ids: [],
       pcb_port_ids: [
         ...new Set([
@@ -790,11 +784,13 @@ export class AutoroutingDrcEngine {
     return errors
   }
 
-  evaluate(traces: SimplifiedPcbTraces): AutoroutingDrcResult {
+  evaluate(
+    traces: SimplifiedPcbTraces,
+    options: { preferWorstTraceContact?: boolean } = {},
+  ): AutoroutingDrcResult {
     const { segments, vias } = this.collectDynamicGeometry(traces)
     const dynamicIndexesByLayer = this.buildDynamicIndexes(segments, vias)
-    const errors: AutoroutingDrcError[] = []
-    const reportedTraceErrorIds = new Set<string>()
+    const detectedTraceErrors: AutoroutingDrcError[] = []
 
     this.lastRunStats = {
       traceCount: traces.length,
@@ -823,22 +819,62 @@ export class AutoroutingDrcEngine {
 
         const error =
           candidate.kind === "trace_segment"
-            ? this.checkTracePair(segment, candidate, reportedTraceErrorIds)
-            : this.checkTraceVia(segment, candidate, reportedTraceErrorIds)
-        if (error) errors.push(error)
+            ? this.checkTracePair(segment, candidate)
+            : this.checkTraceVia(segment, candidate)
+        if (error) detectedTraceErrors.push(error)
       }
 
       for (const obstacle of obstacleCandidates) {
         this.lastRunStats.broadPhaseCandidateCount += 1
-        const error = this.checkTraceObstacle(
-          segment,
-          obstacle,
-          reportedTraceErrorIds,
-        )
-        if (error) errors.push(error)
+        const error = this.checkTraceObstacle(segment, obstacle)
+        if (error) detectedTraceErrors.push(error)
       }
     }
 
+    const firstTraceErrorById = new Map<string, AutoroutingDrcError>()
+    for (const error of detectedTraceErrors) {
+      const errorId = String(error.pcb_trace_error_id)
+      const existing = firstTraceErrorById.get(errorId)
+      const actualClearance = Number(error.actual_clearance)
+      if (!existing) {
+        firstTraceErrorById.set(errorId, {
+          ...error,
+          worst_contact_center: error.center,
+          worst_contact_message: error.message,
+          worst_actual_clearance: actualClearance,
+        })
+        continue
+      }
+      const worstActualClearance = Number(existing.worst_actual_clearance)
+      if (
+        actualClearance < worstActualClearance ||
+        !Number.isFinite(worstActualClearance)
+      ) {
+        existing.worst_contact_center = error.center
+        existing.worst_contact_message = error.message
+        existing.worst_actual_clearance = actualClearance
+      }
+    }
+    const errors: AutoroutingDrcError[] = [...firstTraceErrorById.values()].map(
+      (error) =>
+        options.preferWorstTraceContact
+          ? {
+              ...error,
+              center:
+                typeof error.worst_contact_center === "object"
+                  ? (error.worst_contact_center as Point)
+                  : error.center,
+              message:
+                typeof error.worst_contact_message === "string"
+                  ? error.worst_contact_message
+                  : error.message,
+              actual_clearance:
+                typeof error.worst_actual_clearance === "number"
+                  ? error.worst_actual_clearance
+                  : error.actual_clearance,
+            }
+          : error,
+    )
     errors.push(...this.checkViaPairs(vias))
     const errorsWithCenters = errors.filter((error) => error.center)
     const locationAwareErrors = errorsWithCenters as Array<
