@@ -596,7 +596,8 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           (traceRoutePair || traceRouteIndex !== undefined)) ||
           (!this.initialLowCountErrorsHaveMovableTraces && traceRoutePair))
       ) {
-        const traceTopologyVariants = this.initialLowCountErrorsHaveMovableTraces
+        const traceTopologyVariants = this
+          .initialLowCountErrorsHaveMovableTraces
           ? LOW_COUNT_TRACE_TOPOLOGY_VARIANTS
           : TRACE_PAIR_DETOUR_VARIANTS
         const detourRouteIndexes = traceRoutePair ?? [traceRouteIndex!]
