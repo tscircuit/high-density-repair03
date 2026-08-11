@@ -21,6 +21,7 @@ import {
   applyBroadRepulsionForces,
   applyDrcErrorForces,
   applySafeTraceLayerMoveForError,
+  applyTerminalPadRelocationForError,
   applyTerminalViaRelocationForError,
   applyTraceDetourForError,
   applyTraceSpanDetourForError,
@@ -490,6 +491,50 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         error,
         bestSnapshot.traceRouteIndexById,
       )
+      if (
+        this.enableSafeTraceLayerMoves &&
+        traceRouteIndex !== undefined &&
+        safeTraceLayerCandidateAttemptsThisStep < maxCandidateAttemptsThisStep
+      ) {
+        const candidateRoutes = cloneRoutesForIndexes(bestRoutes, [
+          traceRouteIndex,
+        ])
+        const changed = applyTerminalPadRelocationForError(
+          this.srj,
+          candidateRoutes,
+          error,
+          traceRouteIndex,
+          this.connMap,
+        )
+        if (changed) {
+          const materializedCandidateRoutes = materializeRoutesForIndexes(
+            candidateRoutes,
+            [traceRouteIndex],
+          )
+          safeTraceLayerCandidateAttemptsThisStep += 1
+          this.candidateAttempts += 1
+          const candidateSnapshot = this.getSnapshot(
+            materializedCandidateRoutes,
+          )
+          const candidateViaIssueCount = getViaDrcIssueCount(candidateSnapshot)
+          if (
+            isBetterDrcSnapshot(
+              candidateSnapshot,
+              candidateViaIssueCount,
+              bestIssueCount,
+              bestIssueScore,
+              bestViaIssueCount,
+            )
+          ) {
+            bestTopologyCandidate = {
+              routes: materializedCandidateRoutes,
+              snapshot: candidateSnapshot,
+              viaIssueCount: candidateViaIssueCount,
+              usesViaInPad: false,
+            }
+          }
+        }
+      }
       if (this.enableSafeTraceLayerMoves && traceRouteIndex !== undefined) {
         const safeRouteIndexes = traceRoutePair ?? [traceRouteIndex]
         const localSpanVariantCount =

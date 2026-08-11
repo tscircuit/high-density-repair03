@@ -3367,6 +3367,76 @@ export const applySafeTraceLayerMoveForError = (
 }
 
 /**
+ * Relocates a fixed trace endpoint within its connected copper pad when the
+ * pad center is unavoidably too close to another obstacle. The logical port
+ * identity is preserved, and the caller must full-board score the candidate.
+ */
+export const applyTerminalPadRelocationForError = (
+  srj: SimpleRouteJson,
+  routes: MutableRoute[],
+  error: Record<string, unknown>,
+  routeIndex: number,
+  connMap?: ConnectivityMap,
+) => {
+  if (!isTraceObstacleDrcError(error)) return false
+  const route = routes[routeIndex]
+  const center = getErrorCenter(error)
+  if (!route || !center || route.route.length < 2) return false
+
+  const blocker = getNearestObstacleNearPoint(
+    srj,
+    center,
+    0.6,
+    (obstacle) =>
+      !obstacleSharesNet(getRootConnectionName(route), obstacle, connMap),
+  )
+  if (!blocker) return false
+
+  const endpointIndexes = [0, route.route.length - 1].sort((left, right) => {
+    const leftPoint = route.route[left]!
+    const rightPoint = route.route[right]!
+    return (
+      Math.hypot(leftPoint.x - center.x, leftPoint.y - center.y) -
+      Math.hypot(rightPoint.x - center.x, rightPoint.y - center.y)
+    )
+  })
+  const traceRadius = route.traceThickness / 2
+  const requiredDistance =
+    traceRadius + getTraceToPadEdgeClearance(srj) + CLEARANCE_SLACK
+
+  for (const endpointIndex of endpointIndexes) {
+    const endpoint = route.route[endpointIndex]!
+    if (!endpoint.pcb_port_id) continue
+    const ownPad = getRouteEndpointPad(srj, route, endpoint, connMap)
+    if (!ownPad) continue
+    if (!getObstacleZLayers(blocker, srj.layerCount).includes(endpoint.z)) {
+      continue
+    }
+    const repulsion = getRectRepulsion(endpoint, blocker, requiredDistance)
+    if (!repulsion) continue
+
+    const nextX = clampValue(
+      endpoint.x + repulsion.direction.x * repulsion.penetration,
+      ownPad.center.x - ownPad.width / 2 + traceRadius,
+      ownPad.center.x + ownPad.width / 2 - traceRadius,
+    )
+    const nextY = clampValue(
+      endpoint.y + repulsion.direction.y * repulsion.penetration,
+      ownPad.center.y - ownPad.height / 2 + traceRadius,
+      ownPad.center.y + ownPad.height / 2 - traceRadius,
+    )
+    if (Math.hypot(nextX - endpoint.x, nextY - endpoint.y) <= POSITION_EPSILON) {
+      continue
+    }
+    endpoint.x = nextX
+    endpoint.y = nextY
+    return true
+  }
+
+  return false
+}
+
+/**
  * Moves a single-layer terminal-to-terminal route onto another layer and
  * places the required transitions at its connected pad centers. The caller
  * must score the candidate with the full DRC evaluator before accepting it.
