@@ -154,7 +154,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   readonly enableViaInPadLayerMoves: boolean
   outputHdRoutes: HighDensityRoute[]
   private initialDrcIssueCount: number | undefined
-  private initialLowCountErrorsAreTracePairs = false
+  private initialLowCountErrorsHaveMovableTraces = false
   private broadForceAccepted = false
   private targetedForceAccepted = false
   private candidateAttempts = 0
@@ -276,7 +276,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       this.drcEvaluator,
       this.connMap,
       this.autoroutingDrcEngine,
-      this.initialLowCountErrorsAreTracePairs,
+      this.initialLowCountErrorsHaveMovableTraces,
     )
   }
 
@@ -369,17 +369,17 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     let bestSnapshot = this.outputSnapshot ?? this.getSnapshot(bestRoutes)
     if (this.initialDrcIssueCount === undefined) {
       this.initialDrcIssueCount = bestSnapshot.count
-      this.initialLowCountErrorsAreTracePairs =
-        bestSnapshot.count > 1 &&
+      this.initialLowCountErrorsHaveMovableTraces =
+        bestSnapshot.count > 0 &&
         bestSnapshot.count <= 3 &&
         bestSnapshot.errors.every(
           (error) =>
-            getTraceRoutePairForError(
+            getTraceRouteIndexForError(
               error,
               bestSnapshot.traceRouteIndexById,
             ) !== undefined,
         )
-      if (this.initialLowCountErrorsAreTracePairs) {
+      if (this.initialLowCountErrorsHaveMovableTraces) {
         bestSnapshot = this.getSnapshot(bestRoutes)
       }
       this.bestDrcIssueCountSeen = bestSnapshot.count
@@ -433,7 +433,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       ? getTargetedClearanceSweepErrors(centeredErrors, this.effort)
       : []
     const shouldTryTracePairTopology =
-      bestIssueCount <= 1 || this.initialLowCountErrorsAreTracePairs
+      bestIssueCount <= 1 || this.initialLowCountErrorsHaveMovableTraces
     const padTraceErrors = sameNetViaError
       ? []
       : centeredErrors.filter(
@@ -592,11 +592,12 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         this.enableSafeTraceLayerMoves &&
         shouldTryTracePairTopology &&
         traceErrorKey &&
-        ((this.initialLowCountErrorsAreTracePairs &&
+        ((this.initialLowCountErrorsHaveMovableTraces &&
           (traceRoutePair || traceRouteIndex !== undefined)) ||
-          (!this.initialLowCountErrorsAreTracePairs && traceRoutePair))
+          (!this.initialLowCountErrorsHaveMovableTraces && traceRoutePair))
       ) {
-        const traceTopologyVariants = this.initialLowCountErrorsAreTracePairs
+        const traceTopologyVariants = this
+          .initialLowCountErrorsHaveMovableTraces
           ? LOW_COUNT_TRACE_TOPOLOGY_VARIANTS
           : TRACE_PAIR_DETOUR_VARIANTS
         const detourRouteIndexes = traceRoutePair ?? [traceRouteIndex!]
@@ -614,7 +615,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           const changedRouteIndex = detourRouteIndexes[variant.routeSide]
           if (changedRouteIndex === undefined) continue
           const topologyError =
-            this.initialLowCountErrorsAreTracePairs &&
+            this.initialLowCountErrorsHaveMovableTraces &&
             error.worst_contact_center
               ? {
                   ...error,
@@ -682,7 +683,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           const comparisonViaIssueCount =
             bestTopologyCandidate?.viaIssueCount ?? bestViaIssueCount
           const isBetterTopologyCandidate = this
-            .initialLowCountErrorsAreTracePairs
+            .initialLowCountErrorsHaveMovableTraces
             ? isBetterDrcSnapshot(
                 candidateSnapshot,
                 candidateViaIssueCount,
