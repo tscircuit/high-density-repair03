@@ -2778,7 +2778,7 @@ const applyBroadRepulsionPass = (
   routes: MutableRoute[],
   connMap?: ConnectivityMap,
   allowSameNetViaPairs = false,
-) => {
+): boolean => {
   let changed = false
   const vias = collectViaNodes(routes)
   const segments = collectSegments(routes)
@@ -2874,6 +2874,54 @@ const applyBroadRepulsionPass = (
   )
 }
 
+const applyBroadViaSegmentCleanupPass = (
+  srj: SimpleRouteJson,
+  routes: MutableRoute[],
+  connMap?: ConnectivityMap,
+): boolean => {
+  let changed = false
+  const vias = collectViaNodes(routes)
+  const segments = collectSegments(routes)
+  const spatialInteractionDistance = getBroadSpatialInteractionDistance(
+    srj,
+    vias,
+    segments,
+  )
+  const spatialCellSize = Math.max(
+    BROAD_SPATIAL_CELL_SIZE_MIN,
+    spatialInteractionDistance * 2,
+  )
+  const segmentSpatialIndex = createSpatialIndex(
+    segments,
+    getSegmentBounds,
+    spatialCellSize,
+  )
+
+  for (const via of vias) {
+    const nearbySegmentIndexes = getSpatialCandidateIndexes(
+      segmentSpatialIndex,
+      expandBounds2d(getViaBounds(via), spatialInteractionDistance),
+      spatialCellSize,
+    )
+    for (const segmentIndex of nearbySegmentIndexes) {
+      const segment = segments[segmentIndex]
+      if (!segment) continue
+      changed =
+        pushViaSegmentPair(
+          routes,
+          via,
+          segment,
+          srj,
+          connMap,
+          BROAD_MAX_MOVE,
+          1.75,
+        ) || changed
+    }
+  }
+
+  return changed
+}
+
 export const applyBroadRepulsionForces = (
   srj: SimpleRouteJson,
   routes: HighDensityRoute[],
@@ -2881,6 +2929,7 @@ export const applyBroadRepulsionForces = (
   passMultiplier = 1,
   connMap?: ConnectivityMap,
   allowSameNetViaPairs = false,
+  runFinalViaSegmentCleanup = true,
 ) => {
   const mutableRoutes = cloneRoutes(routes)
   const maxPasses = Math.max(
@@ -2898,6 +2947,10 @@ export const applyBroadRepulsionForces = (
     )
     if (!passChanged) break
     changed = true
+  }
+
+  if (changed && runFinalViaSegmentCleanup) {
+    applyBroadViaSegmentCleanupPass(srj, mutableRoutes, connMap)
   }
 
   return changed ? materializeRoutes(mutableRoutes) : routes

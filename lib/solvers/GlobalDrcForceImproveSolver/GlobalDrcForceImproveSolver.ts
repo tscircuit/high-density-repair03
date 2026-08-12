@@ -1031,6 +1031,10 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           passMultiplier,
           this.connMap,
           this.drcEvaluator === undefined,
+          // This is a speculative candidate and is DRC-evaluated immediately.
+          // Final cleanup here can perturb branch selection and trigger another
+          // expensive broad attempt; direct/final broad outputs still clean up.
+          false,
         )
         if (broadCandidateRoutes === bestRoutes) continue
         const broadCandidateSnapshot = this.getSnapshot(broadCandidateRoutes)
