@@ -321,22 +321,72 @@ jobs:
 
             if (result.error) throw result.error
             if (result.status !== 0) process.exit(result.status ?? 1)
+
+            return {
+              output,
+              report: JSON.parse(fs.readFileSync(outputJson, 'utf8')),
+            }
           }
 
-          // Run the base first so a candidate regression cannot be hidden by a
-          // cold-start penalty that only affects the baseline.
-          runBenchmark({
-            label: 'Base benchmark',
+          const averageReports = (runs, outputStem) => {
+            const reference = runs[0].report
+            const sampleResults = reference.sampleResults.map((sample, sampleIndex) => {
+              const elapsedMs = runs.reduce(
+                (sum, run) => sum + run.report.sampleResults[sampleIndex].elapsedMs,
+                0,
+              ) / runs.length
+              return { ...sample, elapsedMs }
+            })
+            const totalSolveTimeMs = sampleResults.reduce(
+              (sum, sample) => sum + sample.elapsedMs,
+              0,
+            )
+            const report = {
+              ...reference,
+              totalSolveTimeMs,
+              averageSolveTimeMs: totalSolveTimeMs / sampleResults.length,
+              sampleResults,
+              metadata: {
+                ...reference.metadata,
+                pairedRuns: runs.length,
+              },
+            }
+            fs.writeFileSync(`${outputStem}.json`, `${JSON.stringify(report, null, 2)}\n`)
+            fs.writeFileSync(
+              `${outputStem}.txt`,
+              runs.map((run, index) => `## Run ${index + 1}\n\n${run.output}`).join('\n'),
+            )
+          }
+
+          // ABBA ordering gives each revision one early and one late run,
+          // reducing cold-cache, warm-up, and thermal-order bias.
+          const baseA = runBenchmark({
+            label: 'Base benchmark A',
             directory: 'baseline',
             sha: process.env.BASE_SHA,
-            outputStem: 'benchmark-result-main',
+            outputStem: 'benchmark-result-main-a',
           })
-          runBenchmark({
-            label: 'PR benchmark',
+          const candidateA = runBenchmark({
+            label: 'PR benchmark A',
             directory: 'candidate',
             sha: process.env.CANDIDATE_SHA,
-            outputStem: 'benchmark-result-pr',
+            outputStem: 'benchmark-result-pr-a',
           })
+          const candidateB = runBenchmark({
+            label: 'PR benchmark B',
+            directory: 'candidate',
+            sha: process.env.CANDIDATE_SHA,
+            outputStem: 'benchmark-result-pr-b',
+          })
+          const baseB = runBenchmark({
+            label: 'Base benchmark B',
+            directory: 'baseline',
+            sha: process.env.BASE_SHA,
+            outputStem: 'benchmark-result-main-b',
+          })
+
+          averageReports([baseA, baseB], 'benchmark-result-main')
+          averageReports([candidateA, candidateB], 'benchmark-result-pr')
 
           fs.copyFileSync('benchmark-result-pr.txt', 'benchmark-result.txt')
           fs.copyFileSync('benchmark-result-pr.json', 'benchmark-result.json')
@@ -422,7 +472,7 @@ jobs:
           const lines = [
             '# Paired benchmark',
             '',
-            `Base \`${process.env.BASE_SHA.slice(0, 7)}\` and PR \`${process.env.CANDIDATE_SHA.slice(0, 7)}\` ran sequentially on the same GitHub Actions runner.`,
+            `Base \`${process.env.BASE_SHA.slice(0, 7)}\` and PR \`${process.env.CANDIDATE_SHA.slice(0, 7)}\` each ran twice in ABBA order on the same GitHub Actions runner.`,
             '',
           ]
 
@@ -560,7 +610,7 @@ jobs:
             const body = [
               benchmarkFailed ? '## Benchmark Failed' : '## Benchmark Results',
               '',
-              `Base \`${String('${{ steps.parse.outputs.base_ref }}').slice(0, 7)}\` and PR \`${String('${{ steps.parse.outputs.ref }}').slice(0, 7)}\` ran sequentially on the same GitHub Actions runner.`,
+              `Base \`${String('${{ steps.parse.outputs.base_ref }}').slice(0, 7)}\` and PR \`${String('${{ steps.parse.outputs.ref }}').slice(0, 7)}\` each ran twice in ABBA order on the same GitHub Actions runner.`,
               '',
               ...(benchmarkFailed
                 ? [
