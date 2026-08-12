@@ -26,20 +26,22 @@ const createConnectivityMap = (srj: SimpleRouteJson): ConnectivityMap => {
     const rootConnectionNames = (
       connection as typeof connection & { __rootConnectionNames?: string[] }
     ).__rootConnectionNames
-    connMap.addConnections([
-      [connection.name, ...(rootConnectionNames ?? [])],
-    ])
+    connMap.addConnections([[connection.name, ...(rootConnectionNames ?? [])]])
   }
   for (const obstacle of srj.obstacles) {
     connMap.addConnections([
-      [obstacle.obstacleId, ...obstacle.connectedTo].filter(Boolean) as string[],
+      [obstacle.obstacleId, ...obstacle.connectedTo].filter(
+        Boolean,
+      ) as string[],
     ])
   }
   return connMap
 }
 
 const getTargetClearance = (routes: HighDensityRoute[]): number => {
-  const viaRoute = routes.find((route) => route.connectionName === VIA_ROUTE_NAME)!
+  const viaRoute = routes.find(
+    (route) => route.connectionName === VIA_ROUTE_NAME,
+  )!
   const traceRoute = routes.find(
     (route) => route.connectionName === TRACE_ROUTE_NAME,
   )!
@@ -55,7 +57,11 @@ const getTargetClearance = (routes: HighDensityRoute[]): number => {
       ),
     )
   }
-  return centerlineDistance - viaRoute.viaDiameter / 2 - traceRoute.traceThickness / 2
+  return (
+    centerlineDistance -
+    viaRoute.viaDiameter / 2 -
+    traceRoute.traceThickness / 2
+  )
 }
 
 test("broad repulsion preserves via-to-trace clearance while escaping pads", () => {
