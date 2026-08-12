@@ -15,9 +15,7 @@
         },
         "componentId": "pcb_component_2",
         "type": "rect",
-        "layers": [
-          "top"
-        ],
+        "layers": ["top"],
         "center": {
           "x": 2,
           "y": 3
@@ -257,16 +255,10 @@
           "pcb_smtpad_274",
           "pcb_port_298"
         ],
-        "offBoardConnectsTo": [
-          "source_component_internal_connection_0"
-        ],
+        "offBoardConnectsTo": ["source_component_internal_connection_0"],
         "netIsAssignable": true,
-        "zLayers": [
-          0
-        ],
-        "__zLayers": [
-          0
-        ]
+        "zLayers": [0],
+        "__zLayers": [0]
       },
       {
         "circuitJsonMetadata": {
@@ -276,9 +268,7 @@
         },
         "componentId": "pcb_component_2",
         "type": "rect",
-        "layers": [
-          "top"
-        ],
+        "layers": ["top"],
         "center": {
           "x": 6.99999,
           "y": 4.575054
@@ -292,12 +282,8 @@
           "pcb_smtpad_70",
           "pcb_port_97"
         ],
-        "zLayers": [
-          0
-        ],
-        "__zLayers": [
-          0
-        ]
+        "zLayers": [0],
+        "__zLayers": [0]
       }
     ],
     "connections": [
