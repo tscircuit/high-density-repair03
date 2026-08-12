@@ -2929,6 +2929,7 @@ export const applyBroadRepulsionForces = (
   passMultiplier = 1,
   connMap?: ConnectivityMap,
   allowSameNetViaPairs = false,
+  runFinalViaSegmentCleanup = true,
 ) => {
   const mutableRoutes = cloneRoutes(routes)
   const maxPasses = Math.max(
@@ -2948,7 +2949,7 @@ export const applyBroadRepulsionForces = (
     changed = true
   }
 
-  if (changed) {
+  if (changed && runFinalViaSegmentCleanup) {
     applyBroadViaSegmentCleanupPass(srj, mutableRoutes, connMap)
   }
 
