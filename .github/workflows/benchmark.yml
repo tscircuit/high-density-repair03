@@ -213,7 +213,13 @@ jobs:
                 benchmarkArgs.push('--max-iterations', maxIterations)
               }
 
-              ref = (inputs.ref || '').trim() || ref
+              const requestedRef = (inputs.ref || '').trim() || ref
+              const candidateCommit = await github.rest.repos.getCommit({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: requestedRef,
+              })
+              ref = candidateCommit.data.sha
 
               const repository = await github.rest.repos.get({
                 owner: context.repo.owner,
