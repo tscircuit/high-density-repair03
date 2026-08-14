@@ -200,10 +200,24 @@ const transformPointAroundObstacle = (
     : rotated
 }
 
-const getCellKey = (cellX: number, cellY: number) => `${cellX}:${cellY}`
-
 class SpatialHash<T> {
-  private readonly cells = new Map<string, T[]>()
+  /**
+   * Keep numeric coordinates numeric. Candidate evaluation creates and probes
+   * these indexes hundreds of times, so allocating a string for every visited
+   * cell used to dominate the exact-repair profile.
+   */
+  private readonly cellsByX = new Map<
+    number,
+    Map<number, Array<{ item: T; itemId: number }>>
+  >()
+  /**
+   * An item can occupy several cells. A monotonically increasing query stamp
+   * and dense item id remove duplicates without allocating a Set—or performing
+   * an object-keyed Map lookup—for every broad-phase candidate.
+   */
+  private readonly entryByItem = new Map<T, { item: T; itemId: number }>()
+  private lastQueryGenerationByItemId = new Uint32Array(64)
+  private queryGeneration = 0
 
   constructor(private readonly cellSize: number) {}
 
@@ -212,15 +226,31 @@ class SpatialHash<T> {
     const maxCellX = Math.floor(bounds.maxX / this.cellSize)
     const minCellY = Math.floor(bounds.minY / this.cellSize)
     const maxCellY = Math.floor(bounds.maxY / this.cellSize)
+    let entry = this.entryByItem.get(item)
+    if (!entry) {
+      entry = { item, itemId: this.entryByItem.size }
+      this.entryByItem.set(item, entry)
+      if (entry.itemId >= this.lastQueryGenerationByItemId.length) {
+        const generations = new Uint32Array(
+          this.lastQueryGenerationByItemId.length * 2,
+        )
+        generations.set(this.lastQueryGenerationByItemId)
+        this.lastQueryGenerationByItemId = generations
+      }
+    }
 
     for (let cellX = minCellX; cellX <= maxCellX; cellX += 1) {
+      let cellsByY = this.cellsByX.get(cellX)
+      if (!cellsByY) {
+        cellsByY = new Map<number, Array<{ item: T; itemId: number }>>()
+        this.cellsByX.set(cellX, cellsByY)
+      }
       for (let cellY = minCellY; cellY <= maxCellY; cellY += 1) {
-        const key = getCellKey(cellX, cellY)
-        const items = this.cells.get(key)
+        const items = cellsByY.get(cellY)
         if (items) {
-          items.push(item)
+          items.push(entry)
         } else {
-          this.cells.set(key, [item])
+          cellsByY.set(cellY, [entry])
         }
       }
     }
@@ -231,17 +261,33 @@ class SpatialHash<T> {
     const maxCellX = Math.floor(bounds.maxX / this.cellSize)
     const minCellY = Math.floor(bounds.minY / this.cellSize)
     const maxCellY = Math.floor(bounds.maxY / this.cellSize)
-    const results = new Set<T>()
+    this.queryGeneration += 1
+    if (this.queryGeneration >= 0xffffffff) {
+      this.lastQueryGenerationByItemId.fill(0)
+      this.queryGeneration = 1
+    }
+    const queryGeneration = this.queryGeneration
+    const results: T[] = []
 
     for (let cellX = minCellX; cellX <= maxCellX; cellX += 1) {
+      const cellsByY = this.cellsByX.get(cellX)
+      if (!cellsByY) continue
       for (let cellY = minCellY; cellY <= maxCellY; cellY += 1) {
-        const items = this.cells.get(getCellKey(cellX, cellY))
+        const items = cellsByY.get(cellY)
         if (!items) continue
-        for (const item of items) results.add(item)
+        for (const entry of items) {
+          if (
+            this.lastQueryGenerationByItemId[entry.itemId] === queryGeneration
+          ) {
+            continue
+          }
+          this.lastQueryGenerationByItemId[entry.itemId] = queryGeneration
+          results.push(entry.item)
+        }
       }
     }
 
-    return [...results]
+    return results
   }
 }
 
@@ -411,6 +457,11 @@ export class AutoroutingDrcEngine {
   private readonly cellSize: number
   private readonly connMap?: ConnectivityMap
   private readonly canonicalNetByAlias = new Map<string, string>()
+  private readonly resolvedNetById = new Map<string, string>()
+  private readonly connectivityByLeftId = new Map<
+    string,
+    Map<string, boolean>
+  >()
   private readonly obstacles: StaticObstacle[]
   private readonly obstacleIndexesByLayer = new Map<
     string,
@@ -488,21 +539,41 @@ export class AutoroutingDrcEngine {
   }
 
   private resolveNetId(id: string) {
+    const cachedNetId = this.resolvedNetById.get(id)
+    if (cachedNetId !== undefined) return cachedNetId
+
     const connMapNetId = this.connMap?.getNetConnectedToId(id)
-    if (connMapNetId) {
-      return (
-        this.canonicalNetByAlias.get(connMapNetId) ??
+    const resolvedNetId = connMapNetId
+      ? (this.canonicalNetByAlias.get(connMapNetId) ??
         this.canonicalNetByAlias.get(id) ??
-        connMapNetId
-      )
-    }
-    return this.canonicalNetByAlias.get(id) ?? id
+        connMapNetId)
+      : (this.canonicalNetByAlias.get(id) ?? id)
+    this.resolvedNetById.set(id, resolvedNetId)
+    return resolvedNetId
   }
 
   private areConnected(left: string, right: string) {
     if (left === right) return true
-    if (this.connMap?.areIdsConnected(left, right)) return true
-    return this.resolveNetId(left) === this.resolveNetId(right)
+    const cachedResult = this.connectivityByLeftId.get(left)?.get(right)
+    if (cachedResult !== undefined) return cachedResult
+
+    const areConnected = Boolean(
+      this.connMap?.areIdsConnected(left, right) ||
+        this.resolveNetId(left) === this.resolveNetId(right),
+    )
+    let rightIdsByLeft = this.connectivityByLeftId.get(left)
+    if (!rightIdsByLeft) {
+      rightIdsByLeft = new Map<string, boolean>()
+      this.connectivityByLeftId.set(left, rightIdsByLeft)
+    }
+    rightIdsByLeft.set(right, areConnected)
+    let leftIdsByRight = this.connectivityByLeftId.get(right)
+    if (!leftIdsByRight) {
+      leftIdsByRight = new Map<string, boolean>()
+      this.connectivityByLeftId.set(right, leftIdsByRight)
+    }
+    leftIdsByRight.set(left, areConnected)
+    return areConnected
   }
 
   private compileStaticObstacles() {
