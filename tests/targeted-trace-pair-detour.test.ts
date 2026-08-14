@@ -36,9 +36,9 @@ test("routes an exact trace crossing around the blocking segment endpoint", () =
         { x: 0, y: -0.2, z: 0 },
         { x: 0, y: 0.2, z: 0 },
       ],
-      vias: [],
+      vias: [{ x: 0, y: -0.2 }],
       traceThickness: 0.1,
-      viaDiameter: 0.3,
+      viaDiameter: 0.4,
     },
   ])
 
@@ -62,12 +62,12 @@ test("routes an exact trace crossing around the blocking segment endpoint", () =
   expect(changed).toBe(true)
   expect(routes[0]?.route).toHaveLength(4)
   expect(Math.min(...routes[0]!.route.map((point) => point.y))).toBeCloseTo(
-    -0.4,
+    -0.550001,
   )
   expect(routes[1]?.route).toHaveLength(2)
 })
 
-test("targeted repair runs trace-pair detours without enabling via-in-pad moves", () => {
+test("targeted exact sweep runs trace-pair detours without layer moves", () => {
   const srj: SimpleRouteJson = {
     bounds: { minX: -2, minY: -2, maxX: 2, maxY: 2 },
     connections: [
@@ -108,7 +108,7 @@ test("targeted repair runs trace-pair detours without enabling via-in-pad moves"
     enableLargeBoardBroadFallback: false,
     enablePostSolveClearanceRelaxation: false,
     enableTargetedErrorSweep: true,
-    enableSafeTraceLayerMoves: true,
+    enableSafeTraceLayerMoves: false,
     enableViaInPadLayerMoves: false,
     drcEvaluator: ({ routes }) =>
       (routes?.[0]?.route.length ?? 0) < 4

@@ -6,7 +6,7 @@ import {
   type SimpleRouteJson,
 } from "../lib"
 
-test("widens an exact pad detour when the minimum-clearance ring is blocked", () => {
+test("widens a default-mode pad detour resolved through PCB-port aliases", () => {
   const srj: SimpleRouteJson = {
     bounds: { minX: -3, minY: -2, maxX: 3, maxY: 2 },
     connections: [{ name: "routed_net", pointsToConnect: [] }],
@@ -17,7 +17,8 @@ test("widens an exact pad detour when the minimum-clearance ring is blocked", ()
         center: { x: 0, y: 0 },
         width: 0.6,
         height: 0.2,
-        connectedTo: ["pcb_smtpad_foreign", "foreign_net", "pcb_port_foreign"],
+        connectedTo: ["foreign_net", "pcb_port_foreign"],
+        obstacleId: "source_pad_foreign",
       },
     ],
     layerCount: 1,
@@ -42,6 +43,7 @@ test("widens an exact pad detour when the minimum-clearance ring is blocked", ()
     pcb_trace_id: "routed_net_0",
     pcb_trace_error_id: "overlap_routed_net_0_pcb_smtpad_foreign",
     pcb_pad_id: "pcb_smtpad_foreign",
+    pcb_port_ids: ["pcb_port_foreign"],
     center: { x: 0, y: 0 },
     minimum_clearance: 0.1,
   }
@@ -71,7 +73,7 @@ test("widens an exact pad detour when the minimum-clearance ring is blocked", ()
     enablePostSolveClearanceRelaxation: false,
     enableSafeTraceLayerMoves: false,
     enableViaInPadLayerMoves: false,
-    repairMode: "safe_topology_only",
+    repairMode: "default",
   })
 
   solver.solve()
@@ -84,6 +86,71 @@ test("widens an exact pad detour when the minimum-clearance ring is blocked", ()
   expect(
     Math.max(...solver.getOutput()[0]!.route.map((point) => Math.abs(point.y))),
   ).toBeGreaterThanOrEqual(0.8)
+})
+
+test("repairs a grazing pad clearance with a single tangent corner", () => {
+  const srj: SimpleRouteJson = {
+    bounds: { minX: -2, minY: -2, maxX: 2, maxY: 2 },
+    connections: [{ name: "routed_net", pointsToConnect: [] }],
+    obstacles: [
+      {
+        type: "rect",
+        layers: ["top"],
+        center: { x: 0, y: 0 },
+        width: 0.2,
+        height: 0.2,
+        connectedTo: ["foreign_net", "pcb_port_foreign"],
+        obstacleId: "source_pad_foreign",
+      },
+    ],
+    layerCount: 1,
+    minTraceWidth: 0.1,
+    minViaDiameter: 0.3,
+    minTraceToPadEdgeClearance: 0.1,
+  }
+  const hdRoutes: HighDensityRoute[] = [
+    {
+      connectionName: "routed_net",
+      route: [
+        { x: -1, y: -0.3, z: 0, pcb_port_id: "start" },
+        { x: 1, y: 0.3, z: 0, pcb_port_id: "end" },
+      ],
+      vias: [],
+      traceThickness: 0.1,
+      viaDiameter: 0.3,
+    },
+  ]
+  const padError = {
+    type: "pcb_trace_error",
+    pcb_trace_id: "routed_net_0",
+    pcb_trace_error_id: "overlap_routed_net_0_pcb_smtpad_foreign",
+    pcb_pad_id: "pcb_smtpad_foreign",
+    pcb_port_ids: ["pcb_port_foreign"],
+    center: { x: 0, y: 0 },
+    minimum_clearance: 0.1,
+  }
+  const drcEvaluator: DrcEvaluator = ({ routes }) => {
+    const route = routes?.[0]?.route ?? []
+    return route.length === 3
+      ? { errors: [] }
+      : { errors: [padError], errorsWithCenters: [padError] }
+  }
+  const solver = new GlobalDrcForceImproveSolver({
+    srj,
+    hdRoutes,
+    drcEvaluator,
+    maxIterations: 8,
+    enableLargeBoardBroadFallback: false,
+    enablePostSolveClearanceRelaxation: false,
+    enableSafeTraceLayerMoves: false,
+    enableViaInPadLayerMoves: false,
+  })
+
+  solver.solve()
+
+  expect(solver.failed).toBe(false)
+  expect(solver.stats.finalDrcIssueCount).toBe(0)
+  expect(solver.getOutput()[0]!.route).toHaveLength(3)
 })
 
 test("relocates a blocked layer transition without adding a corner detour", () => {

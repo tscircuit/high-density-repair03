@@ -132,7 +132,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     PadTraceDrcKey,
     number
   >()
-  private safeTopologyVariantsCheckedSinceImprovement = 0
+  private exactTopologyVariantsCheckedSinceImprovement = 0
   private safeTraceLayerCursorByErrorId = new Map<string, number>()
   private tracePairDetourCursorByErrorId = new Map<TraceDrcKey, number>()
   private errorCursor = 0
@@ -407,7 +407,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     let candidateAttemptsThisStep = 0
     let safeTraceLayerCandidateAttemptsThisStep = 0
     let padTraceClearanceDetourAttemptsThisStep = 0
-    let safeTopologyVariantsCheckedThisStep = 0
+    let exactTopologyVariantsCheckedThisStep = 0
     let acceptedCandidate = false
     let attemptedPeriodicLargeBoardBroadFallback = false
     const sameNetViaError = this.enableTargetedErrorSweep
@@ -435,10 +435,12 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     const padTraceErrors = centeredErrors.filter(
       (error) =>
         error.type === "pcb_pad_trace_clearance_error" ||
-        ((this.enableSafeTraceLayerMoves ||
-          this.repairMode === "safe_topology_only" ||
-          shouldTryTracePairTopology) &&
-          error.type === "pcb_trace_error"),
+        (error.type === "pcb_trace_error" &&
+          (typeof error.pcb_pad_id === "string" ||
+            this.enableSafeTraceLayerMoves ||
+            this.enableTargetedErrorSweep ||
+            this.repairMode === "safe_topology_only" ||
+            shouldTryTracePairTopology)),
     )
     const orderedPadTopologyErrors = padTraceErrors.map(
       (_, offset) =>
@@ -459,9 +461,13 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         getTraceRoutePairForError(error, bestSnapshot.traceRouteIndexById) !==
           undefined,
     ).length
+    const tracePairDetoursEnabled =
+      this.repairMode === "safe_topology_only" || this.enableTargetedErrorSweep
     for (const error of this.enableSafeTraceLayerMoves ||
     this.enableViaInPadLayerMoves ||
-    this.repairMode === "safe_topology_only"
+    this.repairMode === "safe_topology_only" ||
+    eligiblePadTraceClearanceErrorCount > 0 ||
+    (tracePairDetoursEnabled && eligibleTracePairDetourErrorCount > 0)
       ? orderedPadTopologyErrors
       : []) {
       const safeTraceLayerBudgetExhausted =
@@ -471,10 +477,10 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         !this.enableViaInPadLayerMoves ||
         candidateAttemptsThisStep >= maxCandidateAttemptsThisStep
       const padTraceClearanceBudgetExhausted =
-        this.repairMode !== "safe_topology_only" ||
+        eligiblePadTraceClearanceErrorCount === 0 ||
         padTraceClearanceDetourAttemptsThisStep >= maxCandidateAttemptsThisStep
       const tracePairDetourBudgetExhausted =
-        this.repairMode !== "safe_topology_only" ||
+        !tracePairDetoursEnabled ||
         candidateAttemptsThisStep >= maxCandidateAttemptsThisStep
       if (
         acceptedCandidate ||
@@ -507,11 +513,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         error,
         bestSnapshot.traceRouteIndexById,
       )
-      if (
-        this.repairMode === "safe_topology_only" &&
-        traceRouteIndex !== undefined &&
-        padTraceErrorKey
-      ) {
+      if (traceRouteIndex !== undefined && padTraceErrorKey) {
         let detourCursor =
           this.padTraceClearanceDetourCursorByErrorId.get(padTraceErrorKey) ?? 0
         let variantsChecked = 0
@@ -525,7 +527,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           detourCursor =
             (detourCursor + 1) % PAD_TRACE_CLEARANCE_DETOUR_VARIANT_COUNT
           variantsChecked += 1
-          safeTopologyVariantsCheckedThisStep += 1
+          exactTopologyVariantsCheckedThisStep += 1
           const candidateRoutes = cloneRoutesForIndexes(bestRoutes, [
             traceRouteIndex,
           ])
@@ -710,12 +712,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           )
         }
       }
-      const shouldTryTracePairDetour =
-        this.repairMode === "safe_topology_only" ||
-        (this.enableTargetedErrorSweep &&
-          shouldTryTracePairTopology &&
-          bestIssueCount <= 1)
-      if (shouldTryTracePairDetour && traceErrorKey && traceRoutePair) {
+      if (tracePairDetoursEnabled && traceErrorKey && traceRoutePair) {
         let detourCursor =
           this.tracePairDetourCursorByErrorId.get(traceErrorKey) ?? 0
         let detourVariantsChecked = 0
@@ -730,7 +727,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           detourCursor += 1
           detourVariantsChecked += 1
           if (this.repairMode === "safe_topology_only") {
-            safeTopologyVariantsCheckedThisStep += 1
+            exactTopologyVariantsCheckedThisStep += 1
           }
           const changedRouteIndex = traceRoutePair[variant.routeSide]
           const candidateRoutes = cloneRoutesForIndexes(bestRoutes, [
@@ -1008,10 +1005,10 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       if (acceptedCandidate) {
         this.padTraceClearanceDetourCursorByErrorId.clear()
         this.tracePairDetourCursorByErrorId.clear()
-        this.safeTopologyVariantsCheckedSinceImprovement = 0
+        this.exactTopologyVariantsCheckedSinceImprovement = 0
       } else {
-        this.safeTopologyVariantsCheckedSinceImprovement +=
-          safeTopologyVariantsCheckedThisStep
+        this.exactTopologyVariantsCheckedSinceImprovement +=
+          exactTopologyVariantsCheckedThisStep
       }
       this.updateStats(bestSnapshot)
       const totalVariantCount =
@@ -1020,7 +1017,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         eligibleTracePairDetourErrorCount * TRACE_PAIR_DETOUR_VARIANTS.length
       const allVariantsChecked =
         totalVariantCount === 0 ||
-        this.safeTopologyVariantsCheckedSinceImprovement >= totalVariantCount
+        this.exactTopologyVariantsCheckedSinceImprovement >= totalVariantCount
       if (bestSnapshot.count === 0 || allVariantsChecked) {
         this.solved = true
         this.progress = 1
@@ -1220,14 +1217,26 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
 
     if (acceptedCandidate) {
       this.largeBoardBroadFallbackMisses = 0
+      this.exactTopologyVariantsCheckedSinceImprovement = 0
     } else if (attemptedPeriodicLargeBoardBroadFallback) {
       this.largeBoardBroadFallbackMisses += 1
+    }
+    if (!acceptedCandidate) {
+      this.exactTopologyVariantsCheckedSinceImprovement +=
+        exactTopologyVariantsCheckedThisStep
     }
 
     this.outputHdRoutes = bestRoutes
     this.outputSnapshot = bestSnapshot
     this.stalledIterations = acceptedCandidate ? 0 : this.stalledIterations + 1
-    this.updateDrcCountPlateauState(bestSnapshot)
+    const uncheckedExactPadDetoursRemain =
+      eligiblePadTraceClearanceErrorCount > 0 &&
+      this.exactTopologyVariantsCheckedSinceImprovement <
+        eligiblePadTraceClearanceErrorCount *
+          PAD_TRACE_CLEARANCE_DETOUR_VARIANT_COUNT
+    if (!uncheckedExactPadDetoursRemain) {
+      this.updateDrcCountPlateauState(bestSnapshot)
+    }
     this.updateStats(bestSnapshot)
     if (this.solved || bestIssueCount === 0) {
       this.acceptSolvedRoutes(bestRoutes, bestSnapshot)

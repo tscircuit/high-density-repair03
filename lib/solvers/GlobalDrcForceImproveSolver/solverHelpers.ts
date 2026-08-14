@@ -3953,9 +3953,15 @@ export const applyTracePairDetourForError = ({
     typeof error.minimum_clearance === "number"
       ? error.minimum_clearance
       : (RELAXED_DRC_OPTIONS.traceClearance ?? 0.1)
+  const blockingEndpointIsVia = blockingRoute.vias.some((via) =>
+    areSameXY(via, blockingEndpoint),
+  )
+  const blockingFeatureRadius = blockingEndpointIsVia
+    ? Math.max(blockingSegment.radius, blockingRoute.viaDiameter / 2)
+    : blockingSegment.radius
   const requiredCenterlineClearance =
     movingSegment.radius +
-    blockingSegment.radius +
+    blockingFeatureRadius +
     minimumClearance +
     POSITION_EPSILON
   const createDetourPoint = (side: number): MutableRoute["route"][number] => ({

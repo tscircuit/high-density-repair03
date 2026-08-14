@@ -76,15 +76,22 @@ type TransitionRelocation = {
 const selectExactObstacle = ({
   srj,
   padId,
+  pcbPortIds,
   errorCenter,
 }: {
   srj: SimpleRouteJson
   padId: string
+  pcbPortIds: readonly string[]
   errorCenter: Point
 }): Obstacle | undefined => {
+  const pcbPortIdSet = new Set(pcbPortIds)
   const candidates = srj.obstacles.filter(
     (obstacle) =>
-      obstacle.obstacleId === padId || obstacle.connectedTo.includes(padId),
+      obstacle.obstacleId === padId ||
+      obstacle.connectedTo.includes(padId) ||
+      obstacle.connectedTo.some((connectionId) =>
+        pcbPortIdSet.has(connectionId),
+      ),
   )
   return candidates.sort((left, right) => {
     const leftDistance = getPointToBoundsDistance(
@@ -344,12 +351,16 @@ const getValidDetourPaths = ({
     [bottomRight, bottomLeft],
     [bottomLeft, topLeft],
   ]
+  const tangentPaths = [topLeft, topRight, bottomRight, bottomLeft].map(
+    (corner) => [corner],
+  )
   const directPaths = segmentCrossesBoundsInterior({ start, end, bounds })
     ? []
     : [[]]
 
   return [
     ...directPaths,
+    ...tangentPaths,
     ...sidePaths.flatMap((path) => [path, [...path].reverse()]),
   ]
     .filter((path) => path.every((point) => isPointOnBoard(point, srj)))
@@ -396,7 +407,17 @@ export const applyPadTraceClearanceDetour = ({
   }
 
   const route = routes[routeIndex]
-  const obstacle = selectExactObstacle({ srj, padId, errorCenter })
+  const pcbPortIds = Array.isArray(error.pcb_port_ids)
+    ? error.pcb_port_ids.filter(
+        (pcbPortId): pcbPortId is string => typeof pcbPortId === "string",
+      )
+    : []
+  const obstacle = selectExactObstacle({
+    srj,
+    padId,
+    pcbPortIds,
+    errorCenter,
+  })
   if (!route || !obstacle) return false
 
   const minimumClearance =
