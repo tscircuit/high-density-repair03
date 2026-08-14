@@ -147,6 +147,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   readonly autoroutingDrcEngine?: AutoroutingDrcEngine
   readonly viaHoleDiameter?: number
   readonly configuredMaxIterations?: number
+  readonly enableBroadFallback: boolean
   readonly enableLargeBoardBroadFallback: boolean
   readonly enableTargetedErrorSweep: boolean
   readonly enablePostSolveClearanceRelaxation: boolean
@@ -200,6 +201,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     }
     this.viaHoleDiameter = params.viaHoleDiameter
     this.configuredMaxIterations = params.maxIterations
+    this.enableBroadFallback = params.enableBroadFallback ?? true
     this.enableLargeBoardBroadFallback =
       params.enableLargeBoardBroadFallback ?? true
     this.enableTargetedErrorSweep = params.enableTargetedErrorSweep ?? false
@@ -223,6 +225,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         autoroutingDrcEngine: this.autoroutingDrcEngine,
         viaHoleDiameter: this.viaHoleDiameter,
         maxIterations: this.configuredMaxIterations,
+        enableBroadFallback: this.enableBroadFallback,
         enableLargeBoardBroadFallback: this.enableLargeBoardBroadFallback,
         enableTargetedErrorSweep: this.enableTargetedErrorSweep,
         enablePostSolveClearanceRelaxation:
@@ -1016,6 +1019,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       this.stalledIterations > 0 &&
       this.stalledIterations % largeBoardBroadFallbackCadence === 0
     if (
+      this.enableBroadFallback &&
       !acceptedCandidate &&
       (canAffordBroadFallback ||
         (this.effort >= 2 && this.stalledIterations >= 2) ||
