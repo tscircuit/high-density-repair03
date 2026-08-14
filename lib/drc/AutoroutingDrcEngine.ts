@@ -60,6 +60,7 @@ type StaticObstacle = {
   width: number
   height: number
   radius?: number
+  rotationDegrees?: number
   layers: string[]
   pcbPortId?: string
 }
@@ -147,17 +148,76 @@ const getViaBounds = (via: Via): Bounds => {
   }
 }
 
-const getObstacleBounds = (obstacle: StaticObstacle): Bounds => ({
-  minX: obstacle.x - obstacle.width / 2,
-  minY: obstacle.y - obstacle.height / 2,
-  maxX: obstacle.x + obstacle.width / 2,
-  maxY: obstacle.y + obstacle.height / 2,
+const getObstacleBounds = (obstacle: StaticObstacle): Bounds => {
+  if (obstacle.radius !== undefined) {
+    return {
+      minX: obstacle.x - obstacle.radius,
+      minY: obstacle.y - obstacle.radius,
+      maxX: obstacle.x + obstacle.radius,
+      maxY: obstacle.y + obstacle.radius,
+    }
+  }
+
+  const rotationRadians = ((obstacle.rotationDegrees ?? 0) * Math.PI) / 180
+  const cos = Math.abs(Math.cos(rotationRadians))
+  const sin = Math.abs(Math.sin(rotationRadians))
+  const halfWidth = obstacle.width / 2
+  const halfHeight = obstacle.height / 2
+  const extentX = cos * halfWidth + sin * halfHeight
+  const extentY = sin * halfWidth + cos * halfHeight
+  return {
+    minX: obstacle.x - extentX,
+    minY: obstacle.y - extentY,
+    maxX: obstacle.x + extentX,
+    maxY: obstacle.y + extentY,
+  }
+}
+
+const getObstacleLocalBounds = (obstacle: StaticObstacle): Bounds => ({
+  minX: -obstacle.width / 2,
+  minY: -obstacle.height / 2,
+  maxX: obstacle.width / 2,
+  maxY: obstacle.height / 2,
 })
 
-const getCellKey = (cellX: number, cellY: number) => `${cellX}:${cellY}`
+const transformPointAroundObstacle = (
+  point: Point,
+  obstacle: StaticObstacle,
+  direction: "to-local" | "to-world",
+): Point => {
+  const rotationRadians = ((obstacle.rotationDegrees ?? 0) * Math.PI) / 180
+  const radians = direction === "to-local" ? -rotationRadians : rotationRadians
+  const cos = Math.cos(radians)
+  const sin = Math.sin(radians)
+  const translatedX = direction === "to-local" ? point.x - obstacle.x : point.x
+  const translatedY = direction === "to-local" ? point.y - obstacle.y : point.y
+  const rotated = {
+    x: translatedX * cos - translatedY * sin,
+    y: translatedX * sin + translatedY * cos,
+  }
+  return direction === "to-world"
+    ? { x: rotated.x + obstacle.x, y: rotated.y + obstacle.y }
+    : rotated
+}
 
 class SpatialHash<T> {
-  private readonly cells = new Map<string, T[]>()
+  /**
+   * Keep numeric coordinates numeric. Candidate evaluation creates and probes
+   * these indexes hundreds of times, so allocating a string for every visited
+   * cell used to dominate the exact-repair profile.
+   */
+  private readonly cellsByX = new Map<
+    number,
+    Map<number, Array<{ item: T; itemId: number }>>
+  >()
+  /**
+   * An item can occupy several cells. A monotonically increasing query stamp
+   * and dense item id remove duplicates without allocating a Set—or performing
+   * an object-keyed Map lookup—for every broad-phase candidate.
+   */
+  private readonly entryByItem = new Map<T, { item: T; itemId: number }>()
+  private lastQueryGenerationByItemId = new Uint32Array(64)
+  private queryGeneration = 0
 
   constructor(private readonly cellSize: number) {}
 
@@ -166,15 +226,31 @@ class SpatialHash<T> {
     const maxCellX = Math.floor(bounds.maxX / this.cellSize)
     const minCellY = Math.floor(bounds.minY / this.cellSize)
     const maxCellY = Math.floor(bounds.maxY / this.cellSize)
+    let entry = this.entryByItem.get(item)
+    if (!entry) {
+      entry = { item, itemId: this.entryByItem.size }
+      this.entryByItem.set(item, entry)
+      if (entry.itemId >= this.lastQueryGenerationByItemId.length) {
+        const generations = new Uint32Array(
+          this.lastQueryGenerationByItemId.length * 2,
+        )
+        generations.set(this.lastQueryGenerationByItemId)
+        this.lastQueryGenerationByItemId = generations
+      }
+    }
 
     for (let cellX = minCellX; cellX <= maxCellX; cellX += 1) {
+      let cellsByY = this.cellsByX.get(cellX)
+      if (!cellsByY) {
+        cellsByY = new Map<number, Array<{ item: T; itemId: number }>>()
+        this.cellsByX.set(cellX, cellsByY)
+      }
       for (let cellY = minCellY; cellY <= maxCellY; cellY += 1) {
-        const key = getCellKey(cellX, cellY)
-        const items = this.cells.get(key)
+        const items = cellsByY.get(cellY)
         if (items) {
-          items.push(item)
+          items.push(entry)
         } else {
-          this.cells.set(key, [item])
+          cellsByY.set(cellY, [entry])
         }
       }
     }
@@ -185,17 +261,33 @@ class SpatialHash<T> {
     const maxCellX = Math.floor(bounds.maxX / this.cellSize)
     const minCellY = Math.floor(bounds.minY / this.cellSize)
     const maxCellY = Math.floor(bounds.maxY / this.cellSize)
-    const results = new Set<T>()
+    this.queryGeneration += 1
+    if (this.queryGeneration >= 0xffffffff) {
+      this.lastQueryGenerationByItemId.fill(0)
+      this.queryGeneration = 1
+    }
+    const queryGeneration = this.queryGeneration
+    const results: T[] = []
 
     for (let cellX = minCellX; cellX <= maxCellX; cellX += 1) {
+      const cellsByY = this.cellsByX.get(cellX)
+      if (!cellsByY) continue
       for (let cellY = minCellY; cellY <= maxCellY; cellY += 1) {
-        const items = this.cells.get(getCellKey(cellX, cellY))
+        const items = cellsByY.get(cellY)
         if (!items) continue
-        for (const item of items) results.add(item)
+        for (const entry of items) {
+          if (
+            this.lastQueryGenerationByItemId[entry.itemId] === queryGeneration
+          ) {
+            continue
+          }
+          this.lastQueryGenerationByItemId[entry.itemId] = queryGeneration
+          results.push(entry.item)
+        }
       }
     }
 
-    return [...results]
+    return results
   }
 }
 
@@ -303,6 +395,26 @@ const getClosestPointBetweenSegmentAndBounds = (
   }
 }
 
+const getClosestPointBetweenSegmentAndObstacle = (
+  segment: TraceSegment,
+  obstacle: StaticObstacle,
+): Point => {
+  if (obstacle.radius !== undefined) {
+    return getClosestPointBetweenSegmentAndPoint(segment, obstacle)
+  }
+
+  const localSegment = {
+    ...segment,
+    start: transformPointAroundObstacle(segment.start, obstacle, "to-local"),
+    end: transformPointAroundObstacle(segment.end, obstacle, "to-local"),
+  }
+  const localClosestPoint = getClosestPointBetweenSegmentAndBounds(
+    localSegment,
+    getObstacleLocalBounds(obstacle),
+  )
+  return transformPointAroundObstacle(localClosestPoint, obstacle, "to-world")
+}
+
 const getTracePortIds = (trace: SimplifiedPcbTrace) => {
   const portIds = new Set<string>()
   for (const routePoint of trace.route) {
@@ -345,6 +457,11 @@ export class AutoroutingDrcEngine {
   private readonly cellSize: number
   private readonly connMap?: ConnectivityMap
   private readonly canonicalNetByAlias = new Map<string, string>()
+  private readonly resolvedNetById = new Map<string, string>()
+  private readonly connectivityByLeftId = new Map<
+    string,
+    Map<string, boolean>
+  >()
   private readonly obstacles: StaticObstacle[]
   private readonly obstacleIndexesByLayer = new Map<
     string,
@@ -422,21 +539,41 @@ export class AutoroutingDrcEngine {
   }
 
   private resolveNetId(id: string) {
+    const cachedNetId = this.resolvedNetById.get(id)
+    if (cachedNetId !== undefined) return cachedNetId
+
     const connMapNetId = this.connMap?.getNetConnectedToId(id)
-    if (connMapNetId) {
-      return (
-        this.canonicalNetByAlias.get(connMapNetId) ??
+    const resolvedNetId = connMapNetId
+      ? (this.canonicalNetByAlias.get(connMapNetId) ??
         this.canonicalNetByAlias.get(id) ??
-        connMapNetId
-      )
-    }
-    return this.canonicalNetByAlias.get(id) ?? id
+        connMapNetId)
+      : (this.canonicalNetByAlias.get(id) ?? id)
+    this.resolvedNetById.set(id, resolvedNetId)
+    return resolvedNetId
   }
 
   private areConnected(left: string, right: string) {
     if (left === right) return true
-    if (this.connMap?.areIdsConnected(left, right)) return true
-    return this.resolveNetId(left) === this.resolveNetId(right)
+    const cachedResult = this.connectivityByLeftId.get(left)?.get(right)
+    if (cachedResult !== undefined) return cachedResult
+
+    const areConnected = Boolean(
+      this.connMap?.areIdsConnected(left, right) ||
+        this.resolveNetId(left) === this.resolveNetId(right),
+    )
+    let rightIdsByLeft = this.connectivityByLeftId.get(left)
+    if (!rightIdsByLeft) {
+      rightIdsByLeft = new Map<string, boolean>()
+      this.connectivityByLeftId.set(left, rightIdsByLeft)
+    }
+    rightIdsByLeft.set(right, areConnected)
+    let leftIdsByRight = this.connectivityByLeftId.get(right)
+    if (!leftIdsByRight) {
+      leftIdsByRight = new Map<string, boolean>()
+      this.connectivityByLeftId.set(right, leftIdsByRight)
+    }
+    leftIdsByRight.set(left, areConnected)
+    return areConnected
   }
 
   private compileStaticObstacles() {
@@ -452,9 +589,13 @@ export class AutoroutingDrcEngine {
       const platedHoleId = obstacle.connectedTo.find((id) =>
         id.startsWith("pcb_plated_hole_"),
       )
-      const pcbPortId = obstacle.connectedTo.find((id) =>
+      const pcbPortIds = obstacle.connectedTo.filter((id) =>
         id.startsWith("pcb_port_"),
       )
+      // Preprocessed obstacles may carry every alias on their electrical net.
+      // Reporting the first of several ports would attribute the physical pad
+      // to an unrelated component, so only retain an unambiguous physical port.
+      const pcbPortId = pcbPortIds.length === 1 ? pcbPortIds[0] : undefined
       if (!smtPadId && !platedHoleId && !pcbPortId) continue
 
       const isMultiLayer = obstacle.layers.length > 1
@@ -474,8 +615,13 @@ export class AutoroutingDrcEngine {
       if (addedIds.has(obstacleId)) continue
       addedIds.add(obstacleId)
 
+      const rotationDegrees = Number.isFinite(obstacle.ccwRotationDegrees)
+        ? obstacle.ccwRotationDegrees
+        : undefined
       const isCircular =
-        isMultiLayer && Math.abs(obstacle.width - obstacle.height) < 0.001
+        isMultiLayer &&
+        rotationDegrees === undefined &&
+        Math.abs(obstacle.width - obstacle.height) < 0.001
       obstacles.push({
         kind: "obstacle",
         obstacleType,
@@ -488,6 +634,7 @@ export class AutoroutingDrcEngine {
         ...(isCircular
           ? { radius: Math.max(obstacle.width, obstacle.height) / 2 }
           : {}),
+        ...(rotationDegrees !== undefined ? { rotationDegrees } : {}),
         layers: obstacle.layers,
         ...(pcbPortId ? { pcbPortId } : {}),
       })
@@ -696,10 +843,13 @@ export class AutoroutingDrcEngine {
     if (this.obstacleSharesNet(segment, obstacle)) return undefined
     this.lastRunStats.exactCheckCount += 1
 
-    const obstacleBounds = getObstacleBounds(obstacle)
     const shapeDistance =
       obstacle.radius === undefined
-        ? segmentToBoundsMinDistance(segment.start, segment.end, obstacleBounds)
+        ? segmentToBoundsMinDistance(
+            transformPointAroundObstacle(segment.start, obstacle, "to-local"),
+            transformPointAroundObstacle(segment.end, obstacle, "to-local"),
+            getObstacleLocalBounds(obstacle),
+          )
         : segmentToCircleMinDistance(segment.start, segment.end, {
             x: obstacle.x,
             y: obstacle.y,
@@ -719,6 +869,7 @@ export class AutoroutingDrcEngine {
         gap,
       ),
       pcb_trace_id: segment.traceId,
+      pcb_pad_id: obstacle.obstacleId,
       source_trace_id: "",
       pcb_trace_error_id: errorId,
       minimum_clearance: this.traceClearance,
@@ -730,10 +881,7 @@ export class AutoroutingDrcEngine {
           ...(obstacle.pcbPortId ? [obstacle.pcbPortId] : []),
         ]),
       ],
-      center:
-        obstacle.radius === undefined
-          ? getClosestPointBetweenSegmentAndBounds(segment, obstacleBounds)
-          : getClosestPointBetweenSegmentAndPoint(segment, obstacle),
+      center: getClosestPointBetweenSegmentAndObstacle(segment, obstacle),
     }
   }
 

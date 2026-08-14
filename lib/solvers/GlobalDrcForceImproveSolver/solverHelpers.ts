@@ -47,6 +47,8 @@ import type { HighDensityRoute } from "../../types/high-density-types"
 import { convertHdRouteToSimplifiedRoute } from "../../utils/convertHdRouteToSimplifiedRoute"
 import { mapZToLayerName } from "../../utils/mapZToLayerName"
 
+type TraceRouteId = string
+
 const cloneRoute = (route: HighDensityRoute): MutableRoute => ({
   ...route,
   route: route.route.map((point) => ({ ...point })),
@@ -84,6 +86,12 @@ const getDrcErrorType = (error: Record<string, unknown>) =>
       ? error.error_type
       : undefined
 
+export const isSameNetViaClearanceError = (error: Record<string, unknown>) =>
+  getDrcErrorType(error) === "pcb_via_clearance_error" &&
+  (error.pcb_via_pair_net_relation === "same_net" ||
+    (typeof error.pcb_error_id === "string" &&
+      error.pcb_error_id.startsWith("same_net_vias_close_")))
+
 export const isTraceObstacleDrcError = (error: Record<string, unknown>) => {
   const message =
     typeof error.message === "string" ? error.message.toLowerCase() : ""
@@ -98,10 +106,10 @@ const createSimplifiedTraces = (
   routes: HighDensityRoute[],
 ): {
   traces: SimplifiedPcbTraces
-  traceRouteIndexById: Map<string, number>
+  traceRouteIndexById: Map<TraceRouteId, number>
 } => {
   const traces: SimplifiedPcbTraces = []
-  const traceRouteIndexById = new Map<string, number>()
+  const traceRouteIndexById = new Map<TraceRouteId, number>()
   const routesByConnectionName = new Map<
     string,
     Array<{ route: HighDensityRoute; routeIndex: number }>
@@ -2464,6 +2472,109 @@ const canonicalizeSameNetViaPair = (
   return tryCanonicalizeVia(routes, viaToKeep, viaToMove, srj)
 }
 
+const getViaTransitionIndex = (route: MutableRoute, via: ViaNode) => {
+  const pointIndexSet = new Set(via.pointIndexes)
+  for (let pointIndex = 0; pointIndex < route.route.length - 1; pointIndex++) {
+    if (!pointIndexSet.has(pointIndex) || !pointIndexSet.has(pointIndex + 1)) {
+      continue
+    }
+    const current = route.route[pointIndex]
+    const next = route.route[pointIndex + 1]
+    if (
+      current &&
+      next &&
+      current.z !== next.z &&
+      areSameXY(current, next) &&
+      areSameXY(current, via)
+    ) {
+      return pointIndex
+    }
+  }
+  return undefined
+}
+
+/**
+ * Cancels A→B→A layer excursions bounded by two vias on the same trace. The
+ * geometry is retained exactly and only the redundant excursion's layer is
+ * rewritten; the caller's full DRC evaluation decides whether that layer is
+ * physically usable before accepting the candidate.
+ */
+export const cancelRedundantSameRouteViaPair = (
+  routes: MutableRoute[],
+  left: ViaNode,
+  right: ViaNode,
+) => {
+  if (left.routeIndex !== right.routeIndex) return false
+  const route = routes[left.routeIndex]
+  if (!route) return false
+  const leftTransitionIndex = getViaTransitionIndex(route, left)
+  const rightTransitionIndex = getViaTransitionIndex(route, right)
+  if (
+    leftTransitionIndex === undefined ||
+    rightTransitionIndex === undefined ||
+    leftTransitionIndex === rightTransitionIndex
+  ) {
+    return false
+  }
+  const firstTransitionIndex = Math.min(
+    leftTransitionIndex,
+    rightTransitionIndex,
+  )
+  const secondTransitionIndex = Math.max(
+    leftTransitionIndex,
+    rightTransitionIndex,
+  )
+  const outerStart = route.route[firstTransitionIndex]
+  const excursionStart = route.route[firstTransitionIndex + 1]
+  const excursionEnd = route.route[secondTransitionIndex]
+  const outerEnd = route.route[secondTransitionIndex + 1]
+  if (
+    !outerStart ||
+    !excursionStart ||
+    !excursionEnd ||
+    !outerEnd ||
+    outerStart.z !== outerEnd.z ||
+    excursionStart.z !== excursionEnd.z ||
+    outerStart.z === excursionStart.z
+  ) {
+    return false
+  }
+
+  for (
+    let pointIndex = firstTransitionIndex + 1;
+    pointIndex <= secondTransitionIndex;
+    pointIndex++
+  ) {
+    const point = route.route[pointIndex]
+    if (
+      !point ||
+      point.z !== excursionStart.z ||
+      point.pcb_port_id ||
+      point.insideJumperPad
+    ) {
+      return false
+    }
+  }
+  for (
+    let pointIndex = firstTransitionIndex;
+    pointIndex <= secondTransitionIndex;
+    pointIndex++
+  ) {
+    if (route.route[pointIndex]?.toNextSegmentType === "through_obstacle") {
+      return false
+    }
+  }
+
+  for (
+    let pointIndex = firstTransitionIndex + 1;
+    pointIndex <= secondTransitionIndex;
+    pointIndex++
+  ) {
+    route.route[pointIndex]!.z = outerStart.z
+  }
+  return true
+}
+
 const pushViaSegmentPair = (
   routes: MutableRoute[],
   via: ViaNode,
@@ -3041,7 +3152,7 @@ export const getSafeTraceLayerDrcIssueCount = (snapshot: DrcSnapshot) =>
 
 export const getTraceRouteIndexForError = (
   error: Record<string, unknown>,
-  traceRouteIndexById: Map<string, number>,
+  traceRouteIndexById: Map<TraceRouteId, number>,
 ) => {
   const traceId = error.pcb_trace_id
   return typeof traceId === "string"
@@ -3428,7 +3539,7 @@ export const applyViaInPadLayerMoveForError = (
   srj: SimpleRouteJson,
   routes: MutableRoute[],
   error: Record<string, unknown>,
-  traceRouteIndexById: Map<string, number>,
+  traceRouteIndexById: Map<TraceRouteId, number>,
   targetZ: number,
   connMap?: ConnectivityMap,
   viaHoleDiameter?: number,
@@ -3491,7 +3602,7 @@ export const applyTerminalViaRelocationForError = (
   srj: SimpleRouteJson,
   routes: MutableRoute[],
   error: Record<string, unknown>,
-  traceRouteIndexById: Map<string, number>,
+  traceRouteIndexById: Map<TraceRouteId, number>,
   endpointSide: "start" | "end",
   connMap?: ConnectivityMap,
   viaHoleDiameter?: number,
@@ -3632,7 +3743,7 @@ export const applyTerminalViaRelocationForError = (
 
 export const getTraceRoutePairForError = (
   error: Record<string, unknown>,
-  traceRouteIndexById: Map<string, number>,
+  traceRouteIndexById: Map<TraceRouteId, number>,
 ): [number, number] | undefined => {
   const primaryTraceId = error.pcb_trace_id
   if (typeof primaryTraceId !== "string") return undefined
@@ -3718,7 +3829,7 @@ export const applyTracePairLayerMoveForError = (
   srj: SimpleRouteJson,
   routes: MutableRoute[],
   error: Record<string, unknown>,
-  traceRouteIndexById: Map<string, number>,
+  traceRouteIndexById: Map<TraceRouteId, number>,
   routeSide: 0 | 1,
   targetZ: number,
   spanExpansion = 0,
@@ -3781,56 +3892,121 @@ export const applyTracePairLayerMoveForError = (
   return true
 }
 
-/** Adds a same-layer dogleg around the exact conflict location for one trace. */
-export const applyTraceDetourForError = (
-  routes: MutableRoute[],
-  error: Record<string, unknown>,
-  routeIndex: number,
-  halfSpan: number,
-  offset: number,
-  directionSign: -1 | 1,
-) => {
-  if (halfSpan <= 0 || offset <= 0) return false
-  const selection = getTraceSegmentForError(routes, error, routeIndex)
-  if (!selection) return false
-  const { center, route, segment } = selection
+/** Routes one exact trace segment around an endpoint of the blocking segment. */
+export const applyTracePairDetourForError = ({
+  srj,
+  routes,
+  error,
+  traceRouteIndexById,
+  routeSide,
+  blockingEndpointSide,
+}: {
+  srj: SimpleRouteJson
+  routes: MutableRoute[]
+  error: Record<string, unknown>
+  traceRouteIndexById: Map<TraceRouteId, number>
+  routeSide: 0 | 1
+  blockingEndpointSide: 0 | 1
+}) => {
+  if (getDrcErrorType(error) !== "pcb_trace_error") return false
+  const center = getErrorCenter(error)
+  const routePair = getTraceRoutePairForError(error, traceRouteIndexById)
+  if (!center || !routePair) return false
 
-  const segmentX = segment.end.x - segment.start.x
-  const segmentY = segment.end.y - segment.start.y
-  const segmentLength = Math.hypot(segmentX, segmentY)
-  if (segmentLength <= POSITION_EPSILON) return false
-  const projection = pointToSegmentProjection(center, segment)
-  const beforeT = clampValue(
-    projection.t - halfSpan / segmentLength,
-    0.02,
-    0.98,
+  const routeIndex = routePair[routeSide]
+  const blockingRouteIndex = routePair[routeSide === 0 ? 1 : 0]
+  const route = routes[routeIndex]
+  const blockingRoute = routes[blockingRouteIndex]
+  if (!route || !blockingRoute) return false
+  const movingSegment = getNearestSegment(
+    collectSegmentsForRoute(route, routeIndex),
+    center,
   )
-  const afterT = clampValue(projection.t + halfSpan / segmentLength, 0.02, 0.98)
-  if (beforeT >= afterT) return false
+  const blockingSegment = getNearestSegment(
+    collectSegmentsForRoute(blockingRoute, blockingRouteIndex),
+    center,
+  )
+  if (!movingSegment || !blockingSegment) return false
+  if (movingSegment.z !== blockingSegment.z) return false
 
-  const pointAt = (t: number): MutableRoute["route"][number] => ({
-    x: segment.start.x + segmentX * t,
-    y: segment.start.y + segmentY * t,
-    z: segment.z,
+  const blockingX = blockingSegment.end.x - blockingSegment.start.x
+  const blockingY = blockingSegment.end.y - blockingSegment.start.y
+  const blockingLength = Math.hypot(blockingX, blockingY)
+  if (blockingLength <= POSITION_EPSILON) return false
+  const tangentX = blockingX / blockingLength
+  const tangentY = blockingY / blockingLength
+  const normalX = -tangentY
+  const normalY = tangentX
+  const getSide = (point: Point) =>
+    Math.sign(
+      blockingX * (point.y - blockingSegment.start.y) -
+        blockingY * (point.x - blockingSegment.start.x),
+    )
+  const startSide = getSide(movingSegment.start)
+  const endSide = getSide(movingSegment.end)
+  if (startSide === 0 || endSide === 0 || startSide === endSide) return false
+
+  const blockingEndpoint =
+    blockingEndpointSide === 0 ? blockingSegment.start : blockingSegment.end
+  const outwardSign = blockingEndpointSide === 0 ? -1 : 1
+  const minimumClearance =
+    typeof error.minimum_clearance === "number"
+      ? error.minimum_clearance
+      : (RELAXED_DRC_OPTIONS.traceClearance ?? 0.1)
+  const blockingEndpointIsVia = blockingRoute.vias.some((via) =>
+    areSameXY(via, blockingEndpoint),
+  )
+  const blockingFeatureRadius = blockingEndpointIsVia
+    ? Math.max(blockingSegment.radius, blockingRoute.viaDiameter / 2)
+    : blockingSegment.radius
+  const requiredCenterlineClearance =
+    movingSegment.radius +
+    blockingFeatureRadius +
+    minimumClearance +
+    POSITION_EPSILON
+  const createDetourPoint = (side: number): MutableRoute["route"][number] => ({
+    x:
+      blockingEndpoint.x +
+      tangentX * outwardSign * requiredCenterlineClearance +
+      normalX * side * requiredCenterlineClearance,
+    y:
+      blockingEndpoint.y +
+      tangentY * outwardSign * requiredCenterlineClearance +
+      normalY * side * requiredCenterlineClearance,
+    z: movingSegment.z,
   })
-  const before = pointAt(beforeT)
-  const after = pointAt(afterT)
-  const normalX = (-segmentY / segmentLength) * directionSign
-  const normalY = (segmentX / segmentLength) * directionSign
-  const originalStart = route.route[segment.startIndex]!
-  const originalEnd = route.route[segment.endIndex]!
+  const startDetour = createDetourPoint(startSide)
+  const endDetour = createDetourPoint(endSide)
+  if (
+    !pointIsInsideBoard(srj, startDetour) ||
+    !pointIsInsideBoard(srj, endDetour)
+  ) {
+    return false
+  }
+
+  const originalStart = route.route[movingSegment.startIndex]!
+  const originalEnd = route.route[movingSegment.endIndex]!
+  const candidatePoints = [originalStart, startDetour, endDetour, originalEnd]
+  const clearsBlockingSegment = candidatePoints
+    .slice(0, -1)
+    .every(
+      (point, index) =>
+        segmentToSegmentMinDistance(
+          point,
+          candidatePoints[index + 1]!,
+          blockingSegment.start,
+          blockingSegment.end,
+        ) >=
+        requiredCenterlineClearance - POSITION_EPSILON,
+    )
+  if (!clearsBlockingSegment) return false
+
   route.route.splice(
-    segment.startIndex,
+    movingSegment.startIndex,
     2,
     { ...originalStart },
-    before,
-    {
-      ...before,
-      x: before.x + normalX * offset,
-      y: before.y + normalY * offset,
-    },
-    { ...after, x: after.x + normalX * offset, y: after.y + normalY * offset },
-    after,
+    startDetour,
+    endDetour,
     { ...originalEnd },
   )
   return true
@@ -3930,27 +4106,6 @@ export const applyTraceWaypointDetourForError = (
   return true
 }
 
-export const applyTracePairDetourForError = (
-  routes: MutableRoute[],
-  error: Record<string, unknown>,
-  traceRouteIndexById: Map<string, number>,
-  routeSide: 0 | 1,
-  halfSpan: number,
-  offset: number,
-  directionSign: -1 | 1,
-) => {
-  const routePair = getTraceRoutePairForError(error, traceRouteIndexById)
-  if (!routePair) return false
-  return applyTraceDetourForError(
-    routes,
-    error,
-    routePair[routeSide],
-    halfSpan,
-    offset,
-    directionSign,
-  )
-}
-
 export const isBetterDrcSnapshot = (
   candidateSnapshot: DrcSnapshot,
   candidateViaIssueCount: number,
@@ -3968,12 +4123,16 @@ export const applyDrcErrorForces = (
   srj: SimpleRouteJson,
   routes: MutableRoute[],
   errors: Array<Record<string, unknown>>,
-  traceRouteIndexById: Map<string, number>,
+  traceRouteIndexById: Map<TraceRouteId, number>,
   scale: number,
   connMap?: ConnectivityMap,
   enableCanonicalPairRepairs = true,
   enableSameNetViaCanonicalization = false,
   allowSharedViaSiteMove = true,
+  sameNetViaRepairMode:
+    | "cancel_excursion"
+    | "canonicalize"
+    | "separate" = "cancel_excursion",
 ) => {
   let changed = false
   const vias = collectViaNodes(routes)
@@ -3990,21 +4149,42 @@ export const applyDrcErrorForces = (
       const nearestViaPair = getNearestViaPair(vias, center)
       if (nearestViaPair) {
         const shouldCanonicalizeSameNetViaPair =
-          enableSameNetViaCanonicalization &&
-          getDrcErrorType(error) === "pcb_via_clearance_error" &&
-          error.pcb_via_pair_net_relation === "same_net"
+          enableSameNetViaCanonicalization && isSameNetViaClearanceError(error)
         const isCanonicalViaPairError =
           enableCanonicalPairRepairs &&
           getDrcErrorType(error) === "pcb_via_clearance_error"
         changed =
           (shouldCanonicalizeSameNetViaPair
-            ? canonicalizeSameNetViaPair(
-                routes,
-                nearestViaPair[0],
-                nearestViaPair[1],
-                srj,
-                connMap,
-              )
+            ? sameNetViaRepairMode === "separate"
+              ? pushViaViaPair(
+                  routes,
+                  nearestViaPair[0],
+                  nearestViaPair[1],
+                  srj,
+                  connMap,
+                  VIA_PAIR_REPAIR_MAX_MOVE * Math.abs(scale),
+                  true,
+                )
+              : sameNetViaRepairMode === "canonicalize"
+                ? canonicalizeSameNetViaPair(
+                    routes,
+                    nearestViaPair[0],
+                    nearestViaPair[1],
+                    srj,
+                    connMap,
+                  )
+                : cancelRedundantSameRouteViaPair(
+                    routes,
+                    nearestViaPair[0],
+                    nearestViaPair[1],
+                  ) ||
+                  canonicalizeSameNetViaPair(
+                    routes,
+                    nearestViaPair[0],
+                    nearestViaPair[1],
+                    srj,
+                    connMap,
+                  )
             : pushViaViaPair(
                 routes,
                 nearestViaPair[0],
