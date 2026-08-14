@@ -86,6 +86,12 @@ const getDrcErrorType = (error: Record<string, unknown>) =>
       ? error.error_type
       : undefined
 
+export const isSameNetViaClearanceError = (error: Record<string, unknown>) =>
+  getDrcErrorType(error) === "pcb_via_clearance_error" &&
+  (error.pcb_via_pair_net_relation === "same_net" ||
+    (typeof error.pcb_error_id === "string" &&
+      error.pcb_error_id.startsWith("same_net_vias_close_")))
+
 export const isTraceObstacleDrcError = (error: Record<string, unknown>) => {
   const message =
     typeof error.message === "string" ? error.message.toLowerCase() : ""
@@ -2466,6 +2472,109 @@ const canonicalizeSameNetViaPair = (
   return tryCanonicalizeVia(routes, viaToKeep, viaToMove, srj)
 }
 
+const getViaTransitionIndex = (route: MutableRoute, via: ViaNode) => {
+  const pointIndexSet = new Set(via.pointIndexes)
+  for (let pointIndex = 0; pointIndex < route.route.length - 1; pointIndex++) {
+    if (!pointIndexSet.has(pointIndex) || !pointIndexSet.has(pointIndex + 1)) {
+      continue
+    }
+    const current = route.route[pointIndex]
+    const next = route.route[pointIndex + 1]
+    if (
+      current &&
+      next &&
+      current.z !== next.z &&
+      areSameXY(current, next) &&
+      areSameXY(current, via)
+    ) {
+      return pointIndex
+    }
+  }
+  return undefined
+}
+
+/**
+ * Cancels A→B→A layer excursions bounded by two vias on the same trace. The
+ * geometry is retained exactly and only the redundant excursion's layer is
+ * rewritten; the caller's full DRC evaluation decides whether that layer is
+ * physically usable before accepting the candidate.
+ */
+export const cancelRedundantSameRouteViaPair = (
+  routes: MutableRoute[],
+  left: ViaNode,
+  right: ViaNode,
+) => {
+  if (left.routeIndex !== right.routeIndex) return false
+  const route = routes[left.routeIndex]
+  if (!route) return false
+  const leftTransitionIndex = getViaTransitionIndex(route, left)
+  const rightTransitionIndex = getViaTransitionIndex(route, right)
+  if (
+    leftTransitionIndex === undefined ||
+    rightTransitionIndex === undefined ||
+    leftTransitionIndex === rightTransitionIndex
+  ) {
+    return false
+  }
+  const firstTransitionIndex = Math.min(
+    leftTransitionIndex,
+    rightTransitionIndex,
+  )
+  const secondTransitionIndex = Math.max(
+    leftTransitionIndex,
+    rightTransitionIndex,
+  )
+  const outerStart = route.route[firstTransitionIndex]
+  const excursionStart = route.route[firstTransitionIndex + 1]
+  const excursionEnd = route.route[secondTransitionIndex]
+  const outerEnd = route.route[secondTransitionIndex + 1]
+  if (
+    !outerStart ||
+    !excursionStart ||
+    !excursionEnd ||
+    !outerEnd ||
+    outerStart.z !== outerEnd.z ||
+    excursionStart.z !== excursionEnd.z ||
+    outerStart.z === excursionStart.z
+  ) {
+    return false
+  }
+
+  for (
+    let pointIndex = firstTransitionIndex + 1;
+    pointIndex <= secondTransitionIndex;
+    pointIndex++
+  ) {
+    const point = route.route[pointIndex]
+    if (
+      !point ||
+      point.z !== excursionStart.z ||
+      point.pcb_port_id ||
+      point.insideJumperPad
+    ) {
+      return false
+    }
+  }
+  for (
+    let pointIndex = firstTransitionIndex;
+    pointIndex <= secondTransitionIndex;
+    pointIndex++
+  ) {
+    if (route.route[pointIndex]?.toNextSegmentType === "through_obstacle") {
+      return false
+    }
+  }
+
+  for (
+    let pointIndex = firstTransitionIndex + 1;
+    pointIndex <= secondTransitionIndex;
+    pointIndex++
+  ) {
+    route.route[pointIndex]!.z = outerStart.z
+  }
+  return true
+}
+
 const pushViaSegmentPair = (
   routes: MutableRoute[],
   via: ViaNode,
@@ -3843,9 +3952,7 @@ export const applyTracePairDetourForError = ({
   const minimumClearance =
     typeof error.minimum_clearance === "number"
       ? error.minimum_clearance
-      : (srj.minTraceToPadEdgeClearance ??
-        RELAXED_DRC_OPTIONS.traceClearance ??
-        0.1)
+      : (RELAXED_DRC_OPTIONS.traceClearance ?? 0.1)
   const requiredCenterlineClearance =
     movingSegment.radius +
     blockingSegment.radius +
@@ -4016,6 +4123,10 @@ export const applyDrcErrorForces = (
   enableCanonicalPairRepairs = true,
   enableSameNetViaCanonicalization = false,
   allowSharedViaSiteMove = true,
+  sameNetViaRepairMode:
+    | "cancel_excursion"
+    | "canonicalize"
+    | "separate" = "cancel_excursion",
 ) => {
   let changed = false
   const vias = collectViaNodes(routes)
@@ -4032,21 +4143,42 @@ export const applyDrcErrorForces = (
       const nearestViaPair = getNearestViaPair(vias, center)
       if (nearestViaPair) {
         const shouldCanonicalizeSameNetViaPair =
-          enableSameNetViaCanonicalization &&
-          getDrcErrorType(error) === "pcb_via_clearance_error" &&
-          error.pcb_via_pair_net_relation === "same_net"
+          enableSameNetViaCanonicalization && isSameNetViaClearanceError(error)
         const isCanonicalViaPairError =
           enableCanonicalPairRepairs &&
           getDrcErrorType(error) === "pcb_via_clearance_error"
         changed =
           (shouldCanonicalizeSameNetViaPair
-            ? canonicalizeSameNetViaPair(
-                routes,
-                nearestViaPair[0],
-                nearestViaPair[1],
-                srj,
-                connMap,
-              )
+            ? sameNetViaRepairMode === "separate"
+              ? pushViaViaPair(
+                  routes,
+                  nearestViaPair[0],
+                  nearestViaPair[1],
+                  srj,
+                  connMap,
+                  VIA_PAIR_REPAIR_MAX_MOVE * Math.abs(scale),
+                  true,
+                )
+              : sameNetViaRepairMode === "canonicalize"
+                ? canonicalizeSameNetViaPair(
+                    routes,
+                    nearestViaPair[0],
+                    nearestViaPair[1],
+                    srj,
+                    connMap,
+                  )
+                : cancelRedundantSameRouteViaPair(
+                    routes,
+                    nearestViaPair[0],
+                    nearestViaPair[1],
+                  ) ||
+                  canonicalizeSameNetViaPair(
+                    routes,
+                    nearestViaPair[0],
+                    nearestViaPair[1],
+                    srj,
+                    connMap,
+                  )
             : pushViaViaPair(
                 routes,
                 nearestViaPair[0],

@@ -135,6 +135,33 @@ test("applies the reference DRC tolerance at the clearance boundary", () => {
   expect(evaluateAtSeparation(0.196).errors).toHaveLength(0)
 })
 
+test("treats explicitly rotated square plated-hole pads as rectangles", () => {
+  const srj = createSrj(["routed_net", "foreign_pad_net"], {
+    obstacles: [
+      {
+        type: "rect",
+        layers: ["top", "bottom"],
+        center: { x: 0, y: 0 },
+        width: 1.6,
+        height: 1.6,
+        ccwRotationDegrees: 270,
+        connectedTo: ["pcb_plated_hole_foreign", "foreign_pad_net"],
+      },
+    ],
+  })
+  const result = new AutoroutingDrcEngine(srj).evaluate([
+    createWireTrace({
+      traceId: "trace_near_square_corner",
+      connectionName: "routed_net",
+      start: { x: -0.996834045634858, y: 0.7169986438069055 },
+      end: { x: -0.797, y: 0.987 },
+    }),
+  ])
+
+  expect(result.errors).toHaveLength(1)
+  expect(result.errors[0]?.actual_clearance).toBeCloseTo(0.0588361429, 6)
+})
+
 test("reports clearance metadata when a trace pair contacts more than once", () => {
   const srj = createSrj(["net_a", "net_b"])
   const result = new AutoroutingDrcEngine(srj).evaluate([

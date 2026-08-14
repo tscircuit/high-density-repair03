@@ -33,6 +33,7 @@ import {
   getTraceRouteIndexForError,
   getTraceRoutePairForError,
   getViaDrcIssueCount,
+  isSameNetViaClearanceError,
   isTraceObstacleDrcError,
   isBetterDrcSnapshot,
   materializeRoutes,
@@ -410,11 +411,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     let acceptedCandidate = false
     let attemptedPeriodicLargeBoardBroadFallback = false
     const sameNetViaError = this.enableTargetedErrorSweep
-      ? centeredErrors.find(
-          (error) =>
-            error.type === "pcb_via_clearance_error" &&
-            error.pcb_via_pair_net_relation === "same_net",
-        )
+      ? centeredErrors.find(isSameNetViaClearanceError)
       : undefined
     const prioritizedErrors = sameNetViaError
       ? [
@@ -715,9 +712,8 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       }
       const shouldTryTracePairDetour =
         this.repairMode === "safe_topology_only" ||
-        (this.enableViaInPadLayerMoves &&
+        (this.enableTargetedErrorSweep &&
           shouldTryTracePairTopology &&
-          this.iterations % 2 === 0 &&
           bestIssueCount <= 1)
       if (shouldTryTracePairDetour && traceErrorKey && traceRoutePair) {
         let detourCursor =
@@ -1096,8 +1092,17 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       this.errorCursor = (errorIndex + 1) % prioritizedErrors.length
       const canMoveSharedViaSiteWithoutTradingDrcErrors = bestIssueCount === 1
 
-      for (const scale of getForceScalesForEffort(this.effort)) {
+      const forceScales = getForceScalesForEffort(this.effort)
+      const isSameNetViaError = isSameNetViaClearanceError(error)
+      const sameNetViaRepairModes = [
+        "cancel_excursion",
+        "canonicalize",
+        "separate",
+      ] as const
+      for (let scaleIndex = 0; scaleIndex < forceScales.length; scaleIndex++) {
         if (candidateAttemptsThisStep >= maxCandidateAttemptsThisStep) break
+
+        const scale = forceScales[scaleIndex]!
 
         const candidateRoutes = cloneRoutes(bestRoutes)
         const changed = applyDrcErrorForces(
@@ -1110,6 +1115,9 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           true,
           this.enableTargetedErrorSweep,
           canMoveSharedViaSiteWithoutTradingDrcErrors,
+          isSameNetViaError
+            ? sameNetViaRepairModes[scaleIndex % sameNetViaRepairModes.length]
+            : undefined,
         )
         if (!changed) continue
 

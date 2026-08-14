@@ -5,7 +5,15 @@ import type { Bounds2D, MutableRoute, Point } from "./internalTypes"
 import { COORDINATE_EPSILON, POSITION_EPSILON } from "./solverConfig"
 import { clampValue } from "./spatialIndex"
 
-export const PAD_TRACE_CLEARANCE_DETOUR_VARIANT_COUNT = 8
+// Each side of the obstacle is explored on progressively wider clearance
+// rings. A tight visibility path is cheapest, while the wider rings allow the
+// same deterministic search to route around neighboring copper that blocks
+// the pad's minimum-clearance envelope.
+const PAD_TRACE_CLEARANCE_DETOUR_EXPANSION_FACTORS = [0, 1, 2, 4, 8] as const
+const PAD_TRACE_CLEARANCE_PATHS_PER_EXPANSION = 3
+export const PAD_TRACE_CLEARANCE_DETOUR_VARIANT_COUNT =
+  PAD_TRACE_CLEARANCE_DETOUR_EXPANSION_FACTORS.length *
+  PAD_TRACE_CLEARANCE_PATHS_PER_EXPANSION
 
 type RoutePoint = MutableRoute["route"][number]
 type Obstacle = SimpleRouteJson["obstacles"][number]
@@ -336,9 +344,14 @@ const getValidDetourPaths = ({
     [bottomRight, bottomLeft],
     [bottomLeft, topLeft],
   ]
+  const directPaths = segmentCrossesBoundsInterior({ start, end, bounds })
+    ? []
+    : [[]]
 
-  return sidePaths
-    .flatMap((path) => [path, [...path].reverse()])
+  return [
+    ...directPaths,
+    ...sidePaths.flatMap((path) => [path, [...path].reverse()]),
+  ]
     .filter((path) => path.every((point) => isPointOnBoard(point, srj)))
     .filter((path) => {
       const points = [start, ...path, end]
@@ -394,12 +407,19 @@ export const applyPadTraceClearanceDetour = ({
     (route.traceThickness ?? srj.minTraceWidth) / 2 +
     minimumClearance +
     POSITION_EPSILON
+  const expansionIndex = Math.floor(
+    variantIndex / PAD_TRACE_CLEARANCE_PATHS_PER_EXPANSION,
+  )
+  const expansionFactor =
+    PAD_TRACE_CLEARANCE_DETOUR_EXPANSION_FACTORS[expansionIndex]
+  if (expansionFactor === undefined) return false
+  const routingClearance = clearance * (1 + expansionFactor)
   const affectedRun = getAffectedRun({
     route,
     obstacle,
     srj,
     errorCenter,
-    clearance,
+    clearance: routingClearance,
   })
   const firstSegmentIndex = affectedRun?.[0]
   const lastSegmentIndex = affectedRun?.at(-1)
@@ -413,10 +433,10 @@ export const applyPadTraceClearanceDetour = ({
 
   const obstacleBounds = getObstacleBounds(obstacle)
   const clearanceBounds = {
-    minX: obstacleBounds.minX - clearance,
-    minY: obstacleBounds.minY - clearance,
-    maxX: obstacleBounds.maxX + clearance,
-    maxY: obstacleBounds.maxY + clearance,
+    minX: obstacleBounds.minX - routingClearance,
+    minY: obstacleBounds.minY - routingClearance,
+    maxX: obstacleBounds.maxX + routingClearance,
+    maxY: obstacleBounds.maxY + routingClearance,
   }
   const startRelocation = pointIsInsideBounds(startAnchor, clearanceBounds)
     ? getTransitionRelocation({
@@ -451,8 +471,11 @@ export const applyPadTraceClearanceDetour = ({
     end: endRelocation?.target ?? endAnchor,
     bounds: clearanceBounds,
     srj,
-  })[variantIndex]
+  })[variantIndex % PAD_TRACE_CLEARANCE_PATHS_PER_EXPANSION]
   if (!detourPath) return false
+  if (detourPath.length === 0 && !startRelocation && !endRelocation) {
+    return false
+  }
 
   for (const relocation of [startRelocation, endRelocation]) {
     if (!relocation) continue

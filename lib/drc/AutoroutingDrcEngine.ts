@@ -60,6 +60,7 @@ type StaticObstacle = {
   width: number
   height: number
   radius?: number
+  rotationDegrees?: number
   layers: string[]
   pcbPortId?: string
 }
@@ -147,12 +148,57 @@ const getViaBounds = (via: Via): Bounds => {
   }
 }
 
-const getObstacleBounds = (obstacle: StaticObstacle): Bounds => ({
-  minX: obstacle.x - obstacle.width / 2,
-  minY: obstacle.y - obstacle.height / 2,
-  maxX: obstacle.x + obstacle.width / 2,
-  maxY: obstacle.y + obstacle.height / 2,
+const getObstacleBounds = (obstacle: StaticObstacle): Bounds => {
+  if (obstacle.radius !== undefined) {
+    return {
+      minX: obstacle.x - obstacle.radius,
+      minY: obstacle.y - obstacle.radius,
+      maxX: obstacle.x + obstacle.radius,
+      maxY: obstacle.y + obstacle.radius,
+    }
+  }
+
+  const rotationRadians = ((obstacle.rotationDegrees ?? 0) * Math.PI) / 180
+  const cos = Math.abs(Math.cos(rotationRadians))
+  const sin = Math.abs(Math.sin(rotationRadians))
+  const halfWidth = obstacle.width / 2
+  const halfHeight = obstacle.height / 2
+  const extentX = cos * halfWidth + sin * halfHeight
+  const extentY = sin * halfWidth + cos * halfHeight
+  return {
+    minX: obstacle.x - extentX,
+    minY: obstacle.y - extentY,
+    maxX: obstacle.x + extentX,
+    maxY: obstacle.y + extentY,
+  }
+}
+
+const getObstacleLocalBounds = (obstacle: StaticObstacle): Bounds => ({
+  minX: -obstacle.width / 2,
+  minY: -obstacle.height / 2,
+  maxX: obstacle.width / 2,
+  maxY: obstacle.height / 2,
 })
+
+const transformPointAroundObstacle = (
+  point: Point,
+  obstacle: StaticObstacle,
+  direction: "to-local" | "to-world",
+): Point => {
+  const rotationRadians = ((obstacle.rotationDegrees ?? 0) * Math.PI) / 180
+  const radians = direction === "to-local" ? -rotationRadians : rotationRadians
+  const cos = Math.cos(radians)
+  const sin = Math.sin(radians)
+  const translatedX = direction === "to-local" ? point.x - obstacle.x : point.x
+  const translatedY = direction === "to-local" ? point.y - obstacle.y : point.y
+  const rotated = {
+    x: translatedX * cos - translatedY * sin,
+    y: translatedX * sin + translatedY * cos,
+  }
+  return direction === "to-world"
+    ? { x: rotated.x + obstacle.x, y: rotated.y + obstacle.y }
+    : rotated
+}
 
 const getCellKey = (cellX: number, cellY: number) => `${cellX}:${cellY}`
 
@@ -301,6 +347,26 @@ const getClosestPointBetweenSegmentAndBounds = (
     x: (pointOnSegment.x + pointOnBounds.x) / 2,
     y: (pointOnSegment.y + pointOnBounds.y) / 2,
   }
+}
+
+const getClosestPointBetweenSegmentAndObstacle = (
+  segment: TraceSegment,
+  obstacle: StaticObstacle,
+): Point => {
+  if (obstacle.radius !== undefined) {
+    return getClosestPointBetweenSegmentAndPoint(segment, obstacle)
+  }
+
+  const localSegment = {
+    ...segment,
+    start: transformPointAroundObstacle(segment.start, obstacle, "to-local"),
+    end: transformPointAroundObstacle(segment.end, obstacle, "to-local"),
+  }
+  const localClosestPoint = getClosestPointBetweenSegmentAndBounds(
+    localSegment,
+    getObstacleLocalBounds(obstacle),
+  )
+  return transformPointAroundObstacle(localClosestPoint, obstacle, "to-world")
 }
 
 const getTracePortIds = (trace: SimplifiedPcbTrace) => {
@@ -452,9 +518,13 @@ export class AutoroutingDrcEngine {
       const platedHoleId = obstacle.connectedTo.find((id) =>
         id.startsWith("pcb_plated_hole_"),
       )
-      const pcbPortId = obstacle.connectedTo.find((id) =>
+      const pcbPortIds = obstacle.connectedTo.filter((id) =>
         id.startsWith("pcb_port_"),
       )
+      // Preprocessed obstacles may carry every alias on their electrical net.
+      // Reporting the first of several ports would attribute the physical pad
+      // to an unrelated component, so only retain an unambiguous physical port.
+      const pcbPortId = pcbPortIds.length === 1 ? pcbPortIds[0] : undefined
       if (!smtPadId && !platedHoleId && !pcbPortId) continue
 
       const isMultiLayer = obstacle.layers.length > 1
@@ -474,8 +544,13 @@ export class AutoroutingDrcEngine {
       if (addedIds.has(obstacleId)) continue
       addedIds.add(obstacleId)
 
+      const rotationDegrees = Number.isFinite(obstacle.ccwRotationDegrees)
+        ? obstacle.ccwRotationDegrees
+        : undefined
       const isCircular =
-        isMultiLayer && Math.abs(obstacle.width - obstacle.height) < 0.001
+        isMultiLayer &&
+        rotationDegrees === undefined &&
+        Math.abs(obstacle.width - obstacle.height) < 0.001
       obstacles.push({
         kind: "obstacle",
         obstacleType,
@@ -488,6 +563,7 @@ export class AutoroutingDrcEngine {
         ...(isCircular
           ? { radius: Math.max(obstacle.width, obstacle.height) / 2 }
           : {}),
+        ...(rotationDegrees !== undefined ? { rotationDegrees } : {}),
         layers: obstacle.layers,
         ...(pcbPortId ? { pcbPortId } : {}),
       })
@@ -696,10 +772,13 @@ export class AutoroutingDrcEngine {
     if (this.obstacleSharesNet(segment, obstacle)) return undefined
     this.lastRunStats.exactCheckCount += 1
 
-    const obstacleBounds = getObstacleBounds(obstacle)
     const shapeDistance =
       obstacle.radius === undefined
-        ? segmentToBoundsMinDistance(segment.start, segment.end, obstacleBounds)
+        ? segmentToBoundsMinDistance(
+            transformPointAroundObstacle(segment.start, obstacle, "to-local"),
+            transformPointAroundObstacle(segment.end, obstacle, "to-local"),
+            getObstacleLocalBounds(obstacle),
+          )
         : segmentToCircleMinDistance(segment.start, segment.end, {
             x: obstacle.x,
             y: obstacle.y,
@@ -731,10 +810,7 @@ export class AutoroutingDrcEngine {
           ...(obstacle.pcbPortId ? [obstacle.pcbPortId] : []),
         ]),
       ],
-      center:
-        obstacle.radius === undefined
-          ? getClosestPointBetweenSegmentAndBounds(segment, obstacleBounds)
-          : getClosestPointBetweenSegmentAndPoint(segment, obstacle),
+      center: getClosestPointBetweenSegmentAndObstacle(segment, obstacle),
     }
   }
 
