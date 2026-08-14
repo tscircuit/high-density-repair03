@@ -47,6 +47,8 @@ import type { HighDensityRoute } from "../../types/high-density-types"
 import { convertHdRouteToSimplifiedRoute } from "../../utils/convertHdRouteToSimplifiedRoute"
 import { mapZToLayerName } from "../../utils/mapZToLayerName"
 
+type TraceRouteId = string
+
 const cloneRoute = (route: HighDensityRoute): MutableRoute => ({
   ...route,
   route: route.route.map((point) => ({ ...point })),
@@ -98,10 +100,10 @@ const createSimplifiedTraces = (
   routes: HighDensityRoute[],
 ): {
   traces: SimplifiedPcbTraces
-  traceRouteIndexById: Map<string, number>
+  traceRouteIndexById: Map<TraceRouteId, number>
 } => {
   const traces: SimplifiedPcbTraces = []
-  const traceRouteIndexById = new Map<string, number>()
+  const traceRouteIndexById = new Map<TraceRouteId, number>()
   const routesByConnectionName = new Map<
     string,
     Array<{ route: HighDensityRoute; routeIndex: number }>
@@ -3041,7 +3043,7 @@ export const getSafeTraceLayerDrcIssueCount = (snapshot: DrcSnapshot) =>
 
 export const getTraceRouteIndexForError = (
   error: Record<string, unknown>,
-  traceRouteIndexById: Map<string, number>,
+  traceRouteIndexById: Map<TraceRouteId, number>,
 ) => {
   const traceId = error.pcb_trace_id
   return typeof traceId === "string"
@@ -3428,7 +3430,7 @@ export const applyViaInPadLayerMoveForError = (
   srj: SimpleRouteJson,
   routes: MutableRoute[],
   error: Record<string, unknown>,
-  traceRouteIndexById: Map<string, number>,
+  traceRouteIndexById: Map<TraceRouteId, number>,
   targetZ: number,
   connMap?: ConnectivityMap,
   viaHoleDiameter?: number,
@@ -3491,7 +3493,7 @@ export const applyTerminalViaRelocationForError = (
   srj: SimpleRouteJson,
   routes: MutableRoute[],
   error: Record<string, unknown>,
-  traceRouteIndexById: Map<string, number>,
+  traceRouteIndexById: Map<TraceRouteId, number>,
   endpointSide: "start" | "end",
   connMap?: ConnectivityMap,
   viaHoleDiameter?: number,
@@ -3632,7 +3634,7 @@ export const applyTerminalViaRelocationForError = (
 
 export const getTraceRoutePairForError = (
   error: Record<string, unknown>,
-  traceRouteIndexById: Map<string, number>,
+  traceRouteIndexById: Map<TraceRouteId, number>,
 ): [number, number] | undefined => {
   const primaryTraceId = error.pcb_trace_id
   if (typeof primaryTraceId !== "string") return undefined
@@ -3718,7 +3720,7 @@ export const applyTracePairLayerMoveForError = (
   srj: SimpleRouteJson,
   routes: MutableRoute[],
   error: Record<string, unknown>,
-  traceRouteIndexById: Map<string, number>,
+  traceRouteIndexById: Map<TraceRouteId, number>,
   routeSide: 0 | 1,
   targetZ: number,
   spanExpansion = 0,
@@ -3781,56 +3783,117 @@ export const applyTracePairLayerMoveForError = (
   return true
 }
 
-/** Adds a same-layer dogleg around the exact conflict location for one trace. */
-export const applyTraceDetourForError = (
-  routes: MutableRoute[],
-  error: Record<string, unknown>,
-  routeIndex: number,
-  halfSpan: number,
-  offset: number,
-  directionSign: -1 | 1,
-) => {
-  if (halfSpan <= 0 || offset <= 0) return false
-  const selection = getTraceSegmentForError(routes, error, routeIndex)
-  if (!selection) return false
-  const { center, route, segment } = selection
+/** Routes one exact trace segment around an endpoint of the blocking segment. */
+export const applyTracePairDetourForError = ({
+  srj,
+  routes,
+  error,
+  traceRouteIndexById,
+  routeSide,
+  blockingEndpointSide,
+}: {
+  srj: SimpleRouteJson
+  routes: MutableRoute[]
+  error: Record<string, unknown>
+  traceRouteIndexById: Map<TraceRouteId, number>
+  routeSide: 0 | 1
+  blockingEndpointSide: 0 | 1
+}) => {
+  if (getDrcErrorType(error) !== "pcb_trace_error") return false
+  const center = getErrorCenter(error)
+  const routePair = getTraceRoutePairForError(error, traceRouteIndexById)
+  if (!center || !routePair) return false
 
-  const segmentX = segment.end.x - segment.start.x
-  const segmentY = segment.end.y - segment.start.y
-  const segmentLength = Math.hypot(segmentX, segmentY)
-  if (segmentLength <= POSITION_EPSILON) return false
-  const projection = pointToSegmentProjection(center, segment)
-  const beforeT = clampValue(
-    projection.t - halfSpan / segmentLength,
-    0.02,
-    0.98,
+  const routeIndex = routePair[routeSide]
+  const blockingRouteIndex = routePair[routeSide === 0 ? 1 : 0]
+  const route = routes[routeIndex]
+  const blockingRoute = routes[blockingRouteIndex]
+  if (!route || !blockingRoute) return false
+  const movingSegment = getNearestSegment(
+    collectSegmentsForRoute(route, routeIndex),
+    center,
   )
-  const afterT = clampValue(projection.t + halfSpan / segmentLength, 0.02, 0.98)
-  if (beforeT >= afterT) return false
+  const blockingSegment = getNearestSegment(
+    collectSegmentsForRoute(blockingRoute, blockingRouteIndex),
+    center,
+  )
+  if (!movingSegment || !blockingSegment) return false
+  if (movingSegment.z !== blockingSegment.z) return false
 
-  const pointAt = (t: number): MutableRoute["route"][number] => ({
-    x: segment.start.x + segmentX * t,
-    y: segment.start.y + segmentY * t,
-    z: segment.z,
+  const blockingX = blockingSegment.end.x - blockingSegment.start.x
+  const blockingY = blockingSegment.end.y - blockingSegment.start.y
+  const blockingLength = Math.hypot(blockingX, blockingY)
+  if (blockingLength <= POSITION_EPSILON) return false
+  const tangentX = blockingX / blockingLength
+  const tangentY = blockingY / blockingLength
+  const normalX = -tangentY
+  const normalY = tangentX
+  const getSide = (point: Point) =>
+    Math.sign(
+      blockingX * (point.y - blockingSegment.start.y) -
+        blockingY * (point.x - blockingSegment.start.x),
+    )
+  const startSide = getSide(movingSegment.start)
+  const endSide = getSide(movingSegment.end)
+  if (startSide === 0 || endSide === 0 || startSide === endSide) return false
+
+  const blockingEndpoint =
+    blockingEndpointSide === 0 ? blockingSegment.start : blockingSegment.end
+  const outwardSign = blockingEndpointSide === 0 ? -1 : 1
+  const minimumClearance =
+    typeof error.minimum_clearance === "number"
+      ? error.minimum_clearance
+      : (srj.minTraceToPadEdgeClearance ??
+        RELAXED_DRC_OPTIONS.traceClearance ??
+        0.1)
+  const requiredCenterlineClearance =
+    movingSegment.radius +
+    blockingSegment.radius +
+    minimumClearance +
+    POSITION_EPSILON
+  const createDetourPoint = (side: number): MutableRoute["route"][number] => ({
+    x:
+      blockingEndpoint.x +
+      tangentX * outwardSign * requiredCenterlineClearance +
+      normalX * side * requiredCenterlineClearance,
+    y:
+      blockingEndpoint.y +
+      tangentY * outwardSign * requiredCenterlineClearance +
+      normalY * side * requiredCenterlineClearance,
+    z: movingSegment.z,
   })
-  const before = pointAt(beforeT)
-  const after = pointAt(afterT)
-  const normalX = (-segmentY / segmentLength) * directionSign
-  const normalY = (segmentX / segmentLength) * directionSign
-  const originalStart = route.route[segment.startIndex]!
-  const originalEnd = route.route[segment.endIndex]!
+  const startDetour = createDetourPoint(startSide)
+  const endDetour = createDetourPoint(endSide)
+  if (
+    !pointIsInsideBoard(srj, startDetour) ||
+    !pointIsInsideBoard(srj, endDetour)
+  ) {
+    return false
+  }
+
+  const originalStart = route.route[movingSegment.startIndex]!
+  const originalEnd = route.route[movingSegment.endIndex]!
+  const candidatePoints = [originalStart, startDetour, endDetour, originalEnd]
+  const clearsBlockingSegment = candidatePoints
+    .slice(0, -1)
+    .every(
+      (point, index) =>
+        segmentToSegmentMinDistance(
+          point,
+          candidatePoints[index + 1]!,
+          blockingSegment.start,
+          blockingSegment.end,
+        ) >=
+        requiredCenterlineClearance - POSITION_EPSILON,
+    )
+  if (!clearsBlockingSegment) return false
+
   route.route.splice(
-    segment.startIndex,
+    movingSegment.startIndex,
     2,
     { ...originalStart },
-    before,
-    {
-      ...before,
-      x: before.x + normalX * offset,
-      y: before.y + normalY * offset,
-    },
-    { ...after, x: after.x + normalX * offset, y: after.y + normalY * offset },
-    after,
+    startDetour,
+    endDetour,
     { ...originalEnd },
   )
   return true
@@ -3930,27 +3993,6 @@ export const applyTraceWaypointDetourForError = (
   return true
 }
 
-export const applyTracePairDetourForError = (
-  routes: MutableRoute[],
-  error: Record<string, unknown>,
-  traceRouteIndexById: Map<string, number>,
-  routeSide: 0 | 1,
-  halfSpan: number,
-  offset: number,
-  directionSign: -1 | 1,
-) => {
-  const routePair = getTraceRoutePairForError(error, traceRouteIndexById)
-  if (!routePair) return false
-  return applyTraceDetourForError(
-    routes,
-    error,
-    routePair[routeSide],
-    halfSpan,
-    offset,
-    directionSign,
-  )
-}
-
 export const isBetterDrcSnapshot = (
   candidateSnapshot: DrcSnapshot,
   candidateViaIssueCount: number,
@@ -3968,7 +4010,7 @@ export const applyDrcErrorForces = (
   srj: SimpleRouteJson,
   routes: MutableRoute[],
   errors: Array<Record<string, unknown>>,
-  traceRouteIndexById: Map<string, number>,
+  traceRouteIndexById: Map<TraceRouteId, number>,
   scale: number,
   connMap?: ConnectivityMap,
   enableCanonicalPairRepairs = true,
