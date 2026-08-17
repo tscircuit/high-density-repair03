@@ -3987,7 +3987,8 @@ export const applyDrcErrorForces = (
     const viaIds = error.pcb_via_ids
     if (Array.isArray(viaIds) && viaIds.length > 0) {
       repulsionPoint = getRepulsionPointForError(srj, error, center)
-      const nearestViaPair = getNearestViaPair(vias, center)
+      const nearestViaPair =
+        viaIds.length > 1 ? getNearestViaPair(vias, center) : undefined
       if (nearestViaPair) {
         const shouldCanonicalizeSameNetViaPair =
           enableSameNetViaCanonicalization &&
