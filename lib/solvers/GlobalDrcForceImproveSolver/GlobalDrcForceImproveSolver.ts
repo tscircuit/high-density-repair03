@@ -411,24 +411,27 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     let tracePairDetourAttemptedThisStep = false
     let acceptedCandidate = false
     let attemptedPeriodicLargeBoardBroadFallback = false
-    const sameNetViaError = this.enableTargetedErrorSweep
-      ? centeredErrors.find(
+    const prioritizedViaError = this.enableTargetedErrorSweep
+      ? (centeredErrors.find(
           (error) =>
             error.type === "pcb_via_clearance_error" &&
             error.pcb_via_pair_net_relation === "same_net",
-        )
+        ) ??
+        centeredErrors.find(
+          (error) => error.type === "pcb_via_clearance_error",
+        ))
       : undefined
-    const prioritizedErrors = sameNetViaError
+    const prioritizedErrors = prioritizedViaError
       ? [
-          sameNetViaError,
-          ...centeredErrors.filter((error) => error !== sameNetViaError),
+          prioritizedViaError,
+          ...centeredErrors.filter((error) => error !== prioritizedViaError),
         ]
       : centeredErrors
     const maxErrorsThisStep = Math.min(
       prioritizedErrors.length,
       Math.max(1, Math.ceil(this.effort)),
     )
-    const startErrorIndex = sameNetViaError
+    const startErrorIndex = prioritizedViaError
       ? 0
       : this.errorCursor % prioritizedErrors.length
 
@@ -437,7 +440,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       : []
     const shouldTryTracePairTopology =
       bestIssueCount <= 1 || this.initialLowCountErrorsHaveMovableTraces
-    const padTraceErrors = sameNetViaError
+    const padTraceErrors = prioritizedViaError
       ? []
       : centeredErrors.filter(
           (error) =>
