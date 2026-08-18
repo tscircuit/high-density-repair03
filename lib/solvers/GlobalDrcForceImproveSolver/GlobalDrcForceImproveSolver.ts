@@ -693,6 +693,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
                 comparisonCount,
                 comparisonScore,
                 comparisonViaIssueCount,
+                bestTopologyCandidate?.snapshot ?? bestSnapshot,
               )
             : candidateViaIssueCount <= comparisonViaIssueCount &&
               candidateSnapshot.count < comparisonCount
@@ -749,6 +750,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
             comparisonCount,
             comparisonScore,
             comparisonViaIssueCount,
+            bestTopologyCandidate?.snapshot ?? bestSnapshot,
           )
         ) {
           bestTopologyCandidate = {
@@ -802,6 +804,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
             comparisonCount,
             comparisonScore,
             comparisonViaIssueCount,
+            bestTopologyCandidate?.snapshot ?? bestSnapshot,
           )
         ) {
           bestTopologyCandidate = {
@@ -866,6 +869,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
                 comparisonCount,
                 comparisonScore,
                 comparisonViaIssueCount,
+                bestTopologyCandidate?.snapshot ?? bestSnapshot,
               )
             ) {
               bestTopologyCandidate = {
@@ -925,6 +929,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
             bestIssueCount,
             bestIssueScore,
             bestViaIssueCount,
+            bestSnapshot,
           )
         ) {
           bestRoutes = materializedCandidateRoutes
@@ -987,6 +992,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
             bestIssueCount,
             bestIssueScore,
             bestViaIssueCount,
+            bestSnapshot,
           )
         ) {
           bestRoutes = materializedCandidateRoutes
@@ -1052,6 +1058,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
             bestIssueCount,
             bestIssueScore,
             bestViaIssueCount,
+            bestSnapshot,
           )
         ) {
           continue

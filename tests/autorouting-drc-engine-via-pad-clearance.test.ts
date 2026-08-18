@@ -59,6 +59,7 @@ test("detects different-net via-to-pad clearance", () => {
   expect(result.errors).toHaveLength(1)
   expect(result.errors[0]).toMatchObject({
     type: "pcb_pad_pad_clearance_error",
+    pcb_trace_id: "trace_with_via",
     pcb_pad_ids: ["via_0", "pcb_smtpad_foreign"],
     pcb_via_ids: ["via_0"],
     minimum_clearance: 0.1,

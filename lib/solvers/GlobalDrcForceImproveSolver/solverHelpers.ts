@@ -580,6 +580,16 @@ const getRepulsionPointForError = (
     return center
   }
 
+  const referencedPadIds = Array.isArray(error.pcb_pad_ids)
+    ? error.pcb_pad_ids.filter((id): id is string => typeof id === "string")
+    : []
+  const referencedObstacle = srj.obstacles.find(
+    (obstacle) =>
+      referencedPadIds.some((id) => obstacle.connectedTo.includes(id)) &&
+      (obstacleFilter?.(obstacle) ?? true),
+  )
+  if (referencedObstacle) return referencedObstacle.center
+
   return (
     getNearestObstacleNearPoint(srj, center, 0.6, obstacleFilter)?.center ??
     center
@@ -2219,7 +2229,7 @@ const getNearestSegment = (
   return best?.segment
 }
 
-const getNearestVia = (vias: ViaNode[], point: Point) => {
+const getNearestVia = (vias: ViaNode[], point: Point, routeIndex?: number) => {
   let best:
     | {
         via: ViaNode
@@ -2228,6 +2238,7 @@ const getNearestVia = (vias: ViaNode[], point: Point) => {
     | undefined
 
   for (const via of vias) {
+    if (routeIndex !== undefined && via.routeIndex !== routeIndex) continue
     const distance = Math.hypot(via.x - point.x, via.y - point.y)
     if (!best || distance < best.distance) {
       best = { via, distance }
@@ -3029,6 +3040,14 @@ const isViaDrcError = (error: Record<string, unknown>) =>
 
 export const getViaDrcIssueCount = (snapshot: DrcSnapshot) =>
   snapshot.errors.filter(isViaDrcError).length
+
+const isViaPadDrcError = (error: Record<string, unknown>) =>
+  getDrcErrorType(error) === "pcb_pad_pad_clearance_error" &&
+  Array.isArray(error.pcb_via_ids) &&
+  error.pcb_via_ids.length === 1
+
+export const getNonViaPadDrcIssueCount = (snapshot: DrcSnapshot) =>
+  snapshot.errors.filter((error) => !isViaPadDrcError(error)).length
 
 export const getSafeTraceLayerDrcIssueCount = (snapshot: DrcSnapshot) =>
   snapshot.errors.filter((error) => {
@@ -3957,12 +3976,24 @@ export const isBetterDrcSnapshot = (
   bestIssueCount: number,
   bestIssueScore: number,
   bestViaIssueCount: number,
-) =>
-  candidateSnapshot.count < bestIssueCount ||
-  (candidateSnapshot.count === bestIssueCount &&
-    candidateSnapshot.issueScore < bestIssueScore) ||
-  (candidateSnapshot.count === bestIssueCount &&
-    candidateViaIssueCount < bestViaIssueCount)
+  bestSnapshot?: DrcSnapshot,
+) => {
+  if (
+    bestSnapshot &&
+    getNonViaPadDrcIssueCount(candidateSnapshot) >
+      getNonViaPadDrcIssueCount(bestSnapshot)
+  ) {
+    return false
+  }
+
+  return (
+    candidateSnapshot.count < bestIssueCount ||
+    (candidateSnapshot.count === bestIssueCount &&
+      candidateSnapshot.issueScore < bestIssueScore) ||
+    (candidateSnapshot.count === bestIssueCount &&
+      candidateViaIssueCount < bestViaIssueCount)
+  )
+}
 
 export const applyDrcErrorForces = (
   srj: SimpleRouteJson,
@@ -3987,6 +4018,10 @@ export const applyDrcErrorForces = (
     const viaIds = error.pcb_via_ids
     if (Array.isArray(viaIds) && viaIds.length > 0) {
       repulsionPoint = getRepulsionPointForError(srj, error, center)
+      const targetRouteIndex = getTraceRouteIndexForError(
+        error,
+        traceRouteIndexById,
+      )
       const nearestViaPair =
         viaIds.length > 1 ? getNearestViaPair(vias, center) : undefined
       if (nearestViaPair) {
@@ -4016,7 +4051,7 @@ export const applyDrcErrorForces = (
                 isCanonicalViaPairError,
               )) || changed
       } else {
-        const nearestVia = getNearestVia(vias, center)
+        const nearestVia = getNearestVia(vias, center, targetRouteIndex)
         if (nearestVia) {
           changed =
             moveViaAwayFromPoint(routes, nearestVia, repulsionPoint, srj) ||

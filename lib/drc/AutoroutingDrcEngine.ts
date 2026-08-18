@@ -795,6 +795,7 @@ export class AutoroutingDrcEngine {
       error_type: "pcb_pad_pad_clearance_error",
       pcb_pad_pad_clearance_error_id: errorId,
       message: `pcb_via "${via.viaId}" and ${obstacle.obstacleType} "${obstacle.obstacleId}" are too close (gap: ${gap.toFixed(3)}mm)`,
+      pcb_trace_id: via.traceId,
       pcb_pad_ids: [via.viaId, obstacle.obstacleId],
       pcb_via_ids: [via.viaId],
       minimum_clearance: this.viaToPadClearance,

@@ -2,6 +2,7 @@ import { expect, test } from "bun:test"
 import {
   applyDrcErrorForces,
   cloneRoutes,
+  isBetterDrcSnapshot,
 } from "../lib/solvers/GlobalDrcForceImproveSolver/solverHelpers"
 import type { SimpleRouteJson } from "../lib/types"
 
@@ -12,8 +13,17 @@ test("moves only the via reported by a via-to-pad clearance error", () => {
       { name: "via_net", pointsToConnect: [] },
       { name: "other_via_net", pointsToConnect: [] },
       { name: "pad_net", pointsToConnect: [] },
+      { name: "distractor_net", pointsToConnect: [] },
     ],
     obstacles: [
+      {
+        type: "rect",
+        layers: ["top"],
+        center: { x: 0.2, y: 0.1 },
+        width: 0.1,
+        height: 0.1,
+        connectedTo: ["pcb_smtpad_distractor", "distractor_net"],
+      },
       {
         type: "rect",
         layers: ["top"],
@@ -43,12 +53,12 @@ test("moves only the via reported by a via-to-pad clearance error", () => {
     {
       connectionName: "other_via_net",
       route: [
-        { x: 1, y: 1, z: 0 },
-        { x: 1.5, y: 1, z: 0 },
-        { x: 1.5, y: 1, z: 1 },
-        { x: 2, y: 1, z: 1 },
+        { x: -1, y: 0.5, z: 0 },
+        { x: 0.2, y: 0, z: 0 },
+        { x: 0.2, y: 0, z: 1 },
+        { x: 2, y: 0.5, z: 1 },
       ],
-      vias: [{ x: 1.5, y: 1 }],
+      vias: [{ x: 0.2, y: 0 }],
       traceThickness: 0.1,
       viaDiameter: 0.3,
     },
@@ -60,6 +70,7 @@ test("moves only the via reported by a via-to-pad clearance error", () => {
     [
       {
         type: "pcb_pad_pad_clearance_error",
+        pcb_trace_id: "via_net_0",
         pcb_pad_ids: ["via_0", "pcb_smtpad_foreign"],
         pcb_via_ids: ["via_0"],
         message:
@@ -67,11 +78,37 @@ test("moves only the via reported by a via-to-pad clearance error", () => {
         center: { x: 0.2, y: 0 },
       },
     ],
-    new Map(),
+    new Map([["via_net_0", 0]]),
     1,
   )
 
   expect(changed).toBe(true)
   expect(routes[0]?.route[1]?.x).toBeLessThan(0)
-  expect(routes[1]?.route[1]).toMatchObject({ x: 1.5, y: 1 })
+  expect(routes[0]?.route[1]?.y).toBe(0)
+  expect(routes[1]?.route[1]).toMatchObject({ x: 0.2, y: 0 })
+})
+
+test("does not trade a via-to-pad error for a pre-existing DRC type", () => {
+  const traceRouteIndexById = new Map<string, number>()
+  const bestSnapshot = {
+    errors: [
+      {
+        type: "pcb_pad_pad_clearance_error",
+        pcb_via_ids: ["via_0"],
+      },
+    ],
+    count: 1,
+    issueScore: 1,
+    traceRouteIndexById,
+  }
+  const candidateSnapshot = {
+    errors: [{ type: "pcb_trace_error" }],
+    count: 1,
+    issueScore: 0.1,
+    traceRouteIndexById,
+  }
+
+  expect(isBetterDrcSnapshot(candidateSnapshot, 0, 1, 1, 1, bestSnapshot)).toBe(
+    false,
+  )
 })
