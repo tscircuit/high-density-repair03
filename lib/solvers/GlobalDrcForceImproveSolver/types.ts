@@ -42,6 +42,12 @@ export type GlobalDrcForceImproveSolverParams = {
   enablePostSolveClearanceRelaxation?: boolean
   enableSafeTraceLayerMoves?: boolean
   enableViaInPadLayerMoves?: boolean
+  /**
+   * Keep newly detected via-to-pad issues from changing legacy DRC branch
+   * selection. Intended for bounded integration pipelines that must preserve
+   * their established relaxed-DRC result before attempting the new repair.
+   */
+  deferViaPadRepairsUntilLegacyClear?: boolean
 }
 
 export type GlobalDrcBranchPortfolioSolverParams =
