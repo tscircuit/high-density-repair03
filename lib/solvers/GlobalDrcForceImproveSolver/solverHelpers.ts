@@ -265,7 +265,10 @@ export const getDrcSnapshot = (
   }
 
   const drc =
-    autoroutingDrcEngine?.evaluate(traces, { preferWorstTraceContact }) ??
+    autoroutingDrcEngine?.evaluate(traces, {
+      preferWorstTraceContact,
+      deferViaPadErrorsUntilLegacyClear: deferViaPadRepairsUntilLegacyClear,
+    }) ??
     getDrcErrors(
       convertToCircuitJson(
         drcSrj,

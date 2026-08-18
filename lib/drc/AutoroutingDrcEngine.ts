@@ -113,6 +113,16 @@ export interface AutoroutingDrcEngineOptions {
   connMap?: ConnectivityMap
 }
 
+export interface AutoroutingDrcEngineRunOptions {
+  preferWorstTraceContact?: boolean
+  /**
+   * Skip via-to-pad checks when a legacy trace or via DRC already exists.
+   * This avoids work for guarded repair pipelines that cannot act on the new
+   * error type until the established DRC set is clean.
+   */
+  deferViaPadErrorsUntilLegacyClear?: boolean
+}
+
 export interface AutoroutingDrcEngineRunStats {
   traceCount: number
   segmentCount: number
@@ -853,7 +863,7 @@ export class AutoroutingDrcEngine {
 
   evaluate(
     traces: SimplifiedPcbTraces,
-    options: { preferWorstTraceContact?: boolean } = {},
+    options: AutoroutingDrcEngineRunOptions = {},
   ): AutoroutingDrcResult {
     const { segments, vias } = this.collectDynamicGeometry(traces)
     const dynamicIndexesByLayer = this.buildDynamicIndexes(segments, vias)
@@ -899,17 +909,24 @@ export class AutoroutingDrcEngine {
       }
     }
 
-    for (const via of vias) {
-      const checkedObstacles = new Set<StaticObstacle>()
-      for (const layer of via.layers) {
-        const obstacleCandidates =
-          this.obstacleIndexesByLayer.get(layer)?.query(getViaBounds(via)) ?? []
-        for (const obstacle of obstacleCandidates) {
-          if (checkedObstacles.has(obstacle)) continue
-          checkedObstacles.add(obstacle)
-          this.lastRunStats.broadPhaseCandidateCount += 1
-          const error = this.checkViaObstacle(via, obstacle)
-          if (error) detectedViaPadErrors.push(error)
+    const detectedViaErrors = this.checkViaPairs(vias)
+    const hasLegacyErrors =
+      detectedTraceErrors.length > 0 || detectedViaErrors.length > 0
+
+    if (!options.deferViaPadErrorsUntilLegacyClear || !hasLegacyErrors) {
+      for (const via of vias) {
+        const checkedObstacles = new Set<StaticObstacle>()
+        for (const layer of via.layers) {
+          const obstacleCandidates =
+            this.obstacleIndexesByLayer.get(layer)?.query(getViaBounds(via)) ??
+            []
+          for (const obstacle of obstacleCandidates) {
+            if (checkedObstacles.has(obstacle)) continue
+            checkedObstacles.add(obstacle)
+            this.lastRunStats.broadPhaseCandidateCount += 1
+            const error = this.checkViaObstacle(via, obstacle)
+            if (error) detectedViaPadErrors.push(error)
+          }
         }
       }
     }
@@ -959,7 +976,7 @@ export class AutoroutingDrcEngine {
           : error,
     )
     errors.push(...detectedViaPadErrors)
-    errors.push(...this.checkViaPairs(vias))
+    errors.push(...detectedViaErrors)
     const errorsWithCenters = errors.filter((error) => error.center)
     const locationAwareErrors = errorsWithCenters as Array<
       AutoroutingDrcError & { center: Point }

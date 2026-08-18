@@ -6,6 +6,7 @@ export {
 export { AutoroutingDrcEngine } from "./drc"
 export type {
   AutoroutingDrcEngineOptions,
+  AutoroutingDrcEngineRunOptions,
   AutoroutingDrcEngineRunStats,
   AutoroutingDrcError,
   AutoroutingDrcResult,
