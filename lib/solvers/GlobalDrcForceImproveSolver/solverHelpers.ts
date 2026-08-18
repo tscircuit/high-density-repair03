@@ -199,6 +199,24 @@ const getDrcIssueScore = (
     0,
   )
 
+const prioritizeLegacyDrcErrors = (
+  errors: Array<Record<string, unknown>>,
+  errorsWithCenters: Array<Record<string, unknown>>,
+) => {
+  const hasViaPadError = errors.some(isViaPadDrcError)
+  const hasLegacyError = errors.some((error) => !isViaPadDrcError(error))
+  if (!hasViaPadError || !hasLegacyError) {
+    return { errors, errorsWithCenters }
+  }
+
+  return {
+    errors: errors.filter((error) => !isViaPadDrcError(error)),
+    errorsWithCenters: errorsWithCenters.filter(
+      (error) => !isViaPadDrcError(error),
+    ),
+  }
+}
+
 export const getDrcSnapshot = (
   srj: SimpleRouteJson,
   routes: HighDensityRoute[],
@@ -219,18 +237,21 @@ export const getDrcSnapshot = (
   })
 
   if (drcResult) {
-    const errors = Array.isArray(drcResult) ? drcResult : drcResult.errors
-    const errorsWithCenters = Array.isArray(drcResult)
+    const rawErrors = Array.isArray(drcResult) ? drcResult : drcResult.errors
+    const rawErrorsWithCenters = Array.isArray(drcResult)
       ? drcResult
       : (drcResult.errorsWithCenters ?? drcResult.errors)
+    const { errors, errorsWithCenters } = prioritizeLegacyDrcErrors(
+      rawErrors as Array<Record<string, unknown>>,
+      rawErrorsWithCenters as Array<Record<string, unknown>>,
+    )
 
     return {
-      errors: errorsWithCenters as Array<Record<string, unknown>>,
+      errors: errorsWithCenters,
       count: errors.length,
-      issueScore: getDrcIssueScore(
-        errorsWithCenters as Array<Record<string, unknown>>,
-        { preferWorstClearance: preferWorstTraceContact },
-      ),
+      issueScore: getDrcIssueScore(errorsWithCenters, {
+        preferWorstClearance: preferWorstTraceContact,
+      }),
       traceRouteIndexById,
     }
   }
@@ -254,18 +275,21 @@ export const getDrcSnapshot = (
       },
     )
 
+  const rawErrors = drc.errors as unknown as Array<Record<string, unknown>>
+  const rawErrorsWithCenters = (drc.errorsWithCenters.length > 0
+    ? drc.errorsWithCenters
+    : drc.errors) as unknown as Array<Record<string, unknown>>
+  const { errors, errorsWithCenters } = prioritizeLegacyDrcErrors(
+    rawErrors,
+    rawErrorsWithCenters,
+  )
+
   return {
-    errors:
-      drc.errorsWithCenters.length > 0
-        ? (drc.errorsWithCenters as unknown as Array<Record<string, unknown>>)
-        : (drc.errors as unknown as Array<Record<string, unknown>>),
-    count: drc.errors.length,
-    issueScore: getDrcIssueScore(
-      (drc.errorsWithCenters.length > 0
-        ? drc.errorsWithCenters
-        : drc.errors) as unknown as Array<Record<string, unknown>>,
-      { preferWorstClearance: preferWorstTraceContact },
-    ),
+    errors: errorsWithCenters,
+    count: errors.length,
+    issueScore: getDrcIssueScore(errorsWithCenters, {
+      preferWorstClearance: preferWorstTraceContact,
+    }),
     traceRouteIndexById,
   }
 }
@@ -3039,15 +3063,44 @@ const isViaDrcError = (error: Record<string, unknown>) =>
   Array.isArray(error.pcb_via_ids)
 
 export const getViaDrcIssueCount = (snapshot: DrcSnapshot) =>
-  snapshot.errors.filter(isViaDrcError).length
+  snapshot.errors.filter(
+    (error) => isViaDrcError(error) && !isViaPadDrcError(error),
+  ).length
 
-const isViaPadDrcError = (error: Record<string, unknown>) =>
+export const isViaPadDrcError = (error: Record<string, unknown>) =>
   getDrcErrorType(error) === "pcb_pad_pad_clearance_error" &&
   Array.isArray(error.pcb_via_ids) &&
   error.pcb_via_ids.length === 1
 
 export const getNonViaPadDrcIssueCount = (snapshot: DrcSnapshot) =>
-  snapshot.errors.filter((error) => !isViaPadDrcError(error)).length
+  Math.max(
+    snapshot.errors.filter((error) => !isViaPadDrcError(error)).length,
+    snapshot.count - snapshot.errors.filter(isViaPadDrcError).length,
+  )
+
+export const isDrcSnapshotCountBetter = (
+  candidateSnapshot: DrcSnapshot,
+  bestSnapshot: DrcSnapshot,
+) => {
+  const candidateLegacyCount = getNonViaPadDrcIssueCount(candidateSnapshot)
+  const bestLegacyCount = getNonViaPadDrcIssueCount(bestSnapshot)
+  return candidateLegacyCount !== bestLegacyCount
+    ? candidateLegacyCount < bestLegacyCount
+    : candidateSnapshot.count < bestSnapshot.count
+}
+
+/**
+ * Preserve the established repair order when the evaluator learns a new DRC
+ * type. A newly detected via-to-pad issue must not consume the bounded repair
+ * budget while an older trace/via issue is still present; otherwise boards
+ * that were previously clean can leave the portfolio with legacy residue.
+ */
+export const getLegacyFirstRepairErrors = (
+  errors: Array<Record<string, unknown>>,
+) => {
+  const legacyErrors = errors.filter((error) => !isViaPadDrcError(error))
+  return legacyErrors.length > 0 ? legacyErrors : errors
+}
 
 export const getSafeTraceLayerDrcIssueCount = (snapshot: DrcSnapshot) =>
   snapshot.errors.filter((error) => {
@@ -3980,10 +4033,13 @@ export const isBetterDrcSnapshot = (
 ) => {
   if (
     bestSnapshot &&
-    getNonViaPadDrcIssueCount(candidateSnapshot) >
+    getNonViaPadDrcIssueCount(candidateSnapshot) !==
       getNonViaPadDrcIssueCount(bestSnapshot)
   ) {
-    return false
+    return (
+      getNonViaPadDrcIssueCount(candidateSnapshot) <
+      getNonViaPadDrcIssueCount(bestSnapshot)
+    )
   }
 
   return (

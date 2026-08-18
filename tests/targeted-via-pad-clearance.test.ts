@@ -2,6 +2,8 @@ import { expect, test } from "bun:test"
 import {
   applyDrcErrorForces,
   cloneRoutes,
+  getLegacyFirstRepairErrors,
+  getDrcSnapshot,
   isBetterDrcSnapshot,
 } from "../lib/solvers/GlobalDrcForceImproveSolver/solverHelpers"
 import type { SimpleRouteJson } from "../lib/types"
@@ -111,4 +113,79 @@ test("does not trade a via-to-pad error for a pre-existing DRC type", () => {
   expect(isBetterDrcSnapshot(candidateSnapshot, 0, 1, 1, 1, bestSnapshot)).toBe(
     false,
   )
+})
+
+test("repairs legacy DRC errors before newly detected via-to-pad errors", () => {
+  const viaPadError = {
+    type: "pcb_pad_pad_clearance_error",
+    pcb_via_ids: ["via_0"],
+  }
+  const traceError = { type: "pcb_trace_error" }
+  const viaError = {
+    type: "pcb_via_clearance_error",
+    pcb_via_ids: ["via_1", "via_2"],
+  }
+
+  expect(
+    getLegacyFirstRepairErrors([viaPadError, traceError, viaError]),
+  ).toEqual([traceError, viaError])
+  expect(getLegacyFirstRepairErrors([viaPadError])).toEqual([viaPadError])
+})
+
+test("defers via-to-pad errors from snapshot scoring until legacy DRCs clear", () => {
+  const traceRouteIndexById = new Map<string, number>()
+  const routes = [
+    {
+      connectionName: "net",
+      route: [
+        { x: 0, y: 0, z: 0 },
+        { x: 1, y: 0, z: 0 },
+      ],
+      vias: [],
+      traceThickness: 0.1,
+      viaDiameter: 0.3,
+    },
+  ]
+  const srj = {
+    bounds: { minX: -1, minY: -1, maxX: 2, maxY: 1 },
+    connections: [{ name: "net", pointsToConnect: [] }],
+    obstacles: [],
+    layerCount: 2,
+    minTraceWidth: 0.1,
+    minViaDiameter: 0.3,
+  }
+  const mixedSnapshot = getDrcSnapshot(srj, routes, () => ({
+    errors: [
+      { type: "pcb_trace_error", center: { x: 0.5, y: 0 } },
+      {
+        type: "pcb_pad_pad_clearance_error",
+        pcb_via_ids: ["via_0"],
+        center: { x: 0.5, y: 0.5 },
+      },
+    ],
+  }))
+  const viaPadOnlySnapshot = getDrcSnapshot(srj, routes, () => ({
+    errors: [
+      {
+        type: "pcb_pad_pad_clearance_error",
+        pcb_via_ids: ["via_0"],
+        center: { x: 0.5, y: 0.5 },
+      },
+    ],
+  }))
+
+  expect(mixedSnapshot).toMatchObject({
+    count: 1,
+    errors: [{ type: "pcb_trace_error" }],
+  })
+  expect(viaPadOnlySnapshot).toMatchObject({
+    count: 1,
+    errors: [{ type: "pcb_pad_pad_clearance_error" }],
+  })
+  expect(
+    isBetterDrcSnapshot(viaPadOnlySnapshot, 1, 1, 1, 0, {
+      ...mixedSnapshot,
+      traceRouteIndexById,
+    }),
+  ).toBe(true)
 })

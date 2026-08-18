@@ -7,7 +7,9 @@ import { RELAXED_DRC_OPTIONS } from "./drcPresets"
 import { getDrcSnapshot } from "./drc-snapshot"
 import {
   applyBroadRepulsionForces,
+  getNonViaPadDrcIssueCount,
   getSafeTraceLayerDrcIssueCount,
+  isDrcSnapshotCountBetter,
 } from "./solverHelpers"
 import type { DrcSnapshot, GlobalDrcBranchPortfolioSolverParams } from "./types"
 
@@ -140,6 +142,8 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       drcBranchPortfolioViaInPadPhaseAttempted: Boolean(this.viaInPadSolver),
       drcBranchPortfolioViaInPadMaxIterations:
         this.params.viaInPadMaxIterations,
+      drcBranchPortfolioFinalNonViaPadDrcIssueCount:
+        getNonViaPadDrcIssueCount(snapshot),
     }
     this.solved = true
   }
@@ -227,7 +231,9 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       this.params.connMap,
       this.autoroutingDrcEngine,
     )
-    if (this.broadInputSnapshot.count >= this.baselineSnapshot!.count) {
+    if (
+      !isDrcSnapshotCountBetter(this.broadInputSnapshot, this.baselineSnapshot!)
+    ) {
       this.startSafeTraceLayerPhase(
         this.baselineSolver!.getOutput(),
         this.baselineSnapshot!,
@@ -297,7 +303,9 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         this.params.connMap,
         this.autoroutingDrcEngine,
       )
-      if (this.broadSnapshot.count < this.baselineSnapshot!.count) {
+      if (
+        isDrcSnapshotCountBetter(this.broadSnapshot, this.baselineSnapshot!)
+      ) {
         this.startSafeTraceLayerPhase(
           broadRoutes,
           this.broadSnapshot,
