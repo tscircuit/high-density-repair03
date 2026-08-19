@@ -48,6 +48,12 @@ export type GlobalDrcBranchPortfolioSolverParams =
   GlobalDrcForceImproveSolverParams & {
     broadMaxIterations: number
     broadPassMultiplier: number
+    /**
+     * Re-evaluate the selected portfolio output with the primary DRC evaluator
+     * and fail instead of reporting solved when any issue remains. Defaults to
+     * false so best-effort portfolio consumers retain their existing contract.
+     */
+    requireZeroDrcForSolved?: boolean
     viaInPadDrcEvaluator?: DrcEvaluator
     viaInPadMaxIterations?: number
   }

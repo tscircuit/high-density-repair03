@@ -171,8 +171,8 @@ test("moves terminal-reaching trace transitions outside connected pads", () => {
 
   partialSolver.solve()
 
-  expect(partialSolver.solved).toBe(false)
-  expect(partialSolver.failed).toBe(true)
+  expect(partialSolver.solved).toBe(true)
+  expect(partialSolver.failed).toBe(false)
   expect(partialSolver.getOutput()).toEqual(hdRoutes)
   expect(
     partialSolver.stats.drcBranchPortfolioSafeTraceLayerPhaseAttempted,
@@ -208,8 +208,8 @@ test("moves terminal-reaching trace transitions outside connected pads", () => {
 
   traceCompleteSolver.solve()
 
-  expect(traceCompleteSolver.solved).toBe(false)
-  expect(traceCompleteSolver.failed).toBe(true)
+  expect(traceCompleteSolver.solved).toBe(true)
+  expect(traceCompleteSolver.failed).toBe(false)
   expect(traceCompleteSolver.getOutput()).not.toEqual(hdRoutes)
   expect(
     traceCompleteSolver.stats.drcBranchPortfolioSafeTraceLayerPhaseAccepted,

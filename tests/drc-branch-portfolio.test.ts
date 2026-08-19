@@ -7,7 +7,7 @@ import {
   type SimpleRouteJson,
 } from "../lib"
 
-test("only the exact branch portfolio fails on residual DRC", () => {
+test("zero-DRC completion is opt-in for the branch portfolio", () => {
   const srj: SimpleRouteJson = {
     bounds: { minX: 0, minY: 0, maxX: 10, maxY: 10 },
     connections: [],
@@ -43,7 +43,22 @@ test("only the exact branch portfolio fails on residual DRC", () => {
   expect(bestEffortSolver.failed).toBe(false)
   expect(bestEffortSolver.stats.finalDrcIssueCount).toBe(1)
 
-  const exactPortfolioSolver = new GlobalDrcBranchPortfolioSolver(sharedParams)
+  const bestEffortPortfolioSolver = new GlobalDrcBranchPortfolioSolver(
+    sharedParams,
+  )
+  bestEffortPortfolioSolver.solve()
+
+  expect(bestEffortPortfolioSolver.solved).toBe(true)
+  expect(bestEffortPortfolioSolver.failed).toBe(false)
+  expect(bestEffortPortfolioSolver.stats.finalDrcIssueCount).toBe(1)
+  expect(
+    bestEffortPortfolioSolver.stats.drcBranchPortfolioFinalDrcIssueCount,
+  ).toBeUndefined()
+
+  const exactPortfolioSolver = new GlobalDrcBranchPortfolioSolver({
+    ...sharedParams,
+    requireZeroDrcForSolved: true,
+  })
   exactPortfolioSolver.solve()
 
   expect(exactPortfolioSolver.solved).toBe(false)

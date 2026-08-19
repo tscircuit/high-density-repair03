@@ -117,17 +117,24 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
     this.activeSubSolver = null
     this.phase = "done"
     this.progress = 1
-    const finalSnapshot = getDrcSnapshot(
-      this.params.srj,
-      routes,
-      this.params.drcEvaluator,
-      this.params.connMap,
-      this.autoroutingDrcEngine,
-    )
+    const finalSnapshot = this.params.requireZeroDrcForSolved
+      ? getDrcSnapshot(
+          this.params.srj,
+          routes,
+          this.params.drcEvaluator,
+          this.params.connMap,
+          this.autoroutingDrcEngine,
+        )
+      : undefined
     this.stats = {
       ...(this.portfolioSelectedSolver?.stats ?? {}),
       ...(selectedSolver?.stats ?? {}),
-      finalDrcIssueCount: finalSnapshot.count,
+      ...(finalSnapshot
+        ? {
+            finalDrcIssueCount: finalSnapshot.count,
+            drcBranchPortfolioFinalDrcIssueCount: finalSnapshot.count,
+          }
+        : {}),
       drcBranchPortfolioInitialDrcIssueCount:
         this.inputSnapshot?.count ?? snapshot.count,
       drcBranchPortfolioBaselineDrcIssueCount:
@@ -135,7 +142,6 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       drcBranchPortfolioBroadInitialDrcIssueCount:
         this.broadInputSnapshot?.count,
       drcBranchPortfolioBroadFinalDrcIssueCount: this.broadSnapshot?.count,
-      drcBranchPortfolioFinalDrcIssueCount: finalSnapshot.count,
       drcBranchPortfolioBroadMaxIterations: this.broadMaxIterations,
       drcBranchPortfolioBroadBranchAttempted: Boolean(this.broadSolver),
       drcBranchPortfolioBroadBranchAccepted:
@@ -150,7 +156,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       drcBranchPortfolioViaInPadMaxIterations:
         this.params.viaInPadMaxIterations,
     }
-    if (finalSnapshot.count === 0) {
+    if (!finalSnapshot || finalSnapshot.count === 0) {
       this.solved = true
     } else {
       this.error = `${this.getSolverName()} exhausted exact repair with ${finalSnapshot.count} residual DRC issue${finalSnapshot.count === 1 ? "" : "s"}`

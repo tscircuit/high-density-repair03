@@ -114,6 +114,7 @@ test("repairs the exact dataset01 circuit143 DRC chain without broad fallback", 
     viaInPadMaxIterations: 32,
     broadMaxIterations: 12,
     broadPassMultiplier: 3,
+    requireZeroDrcForSolved: true,
   })
 
   solver.solve()
