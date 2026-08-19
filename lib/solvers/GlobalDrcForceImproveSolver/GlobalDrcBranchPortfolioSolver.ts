@@ -7,10 +7,13 @@ import { RELAXED_DRC_OPTIONS } from "./drcPresets"
 import { getDrcSnapshot } from "./drc-snapshot"
 import {
   applyBroadRepulsionForces,
+  cloneRoutes,
   getNonViaPadDrcIssueCount,
+  hasNewDrcErrorIdentities,
   getSafeTraceLayerDrcIssueCount,
   isDrcSnapshotCountBetter,
   isViaPadDrcError,
+  materializeRoutes,
 } from "./solverHelpers"
 import type {
   DrcEvaluator,
@@ -30,6 +33,7 @@ type PortfolioPhase =
 export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
   readonly params: GlobalDrcBranchPortfolioSolverParams
   readonly inputHdRoutes: HighDensityRoute[]
+  readonly guardedInputHdRoutes: HighDensityRoute[]
   readonly broadMaxIterations: number
   readonly broadPassMultiplier: number
   readonly autoroutingDrcEngine?: AutoroutingDrcEngine
@@ -57,6 +61,12 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
   private referenceInputDrcIssueCount?: number
   private referenceCandidateDrcIssueCount?: number
   private referenceCandidateRolledBack = false
+  private mixedReferenceInputDrcIssueCount?: number
+  private mixedReferenceCandidateDrcIssueCount?: number
+  private referenceInputSnapshot?: {
+    errors: Array<Record<string, unknown>>
+    count: number
+  }
 
   constructor(params: GlobalDrcBranchPortfolioSolverParams) {
     super()
@@ -120,9 +130,15 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       autoroutingDrcEngine: this.autoroutingDrcEngine,
     }
     this.inputHdRoutes = params.hdRoutes
+    this.guardedInputHdRoutes = materializeRoutes(cloneRoutes(params.hdRoutes))
     this.broadMaxIterations = params.broadMaxIterations
     this.broadPassMultiplier = params.broadPassMultiplier
     this.outputHdRoutes = params.hdRoutes
+    if (this.params.referenceDrcEvaluator) {
+      this.referenceInputSnapshot = this.getReferenceDrcSnapshot(
+        this.inputHdRoutes,
+      )
+    }
   }
 
   override getConstructorParams() {
@@ -142,6 +158,31 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
     }
   }
 
+  private getReferenceDrcSnapshot(routes: HighDensityRoute[]) {
+    const evaluatorInput = {
+      traces: [],
+      srj: this.params.srj,
+      routes,
+      hdRoutes: routes,
+    }
+    const cachedResult =
+      this.params.referenceDrcEvaluator?.getCachedResult?.(evaluatorInput)
+    if (cachedResult) {
+      const errors = Array.isArray(cachedResult)
+        ? cachedResult
+        : cachedResult.errors
+      return { errors, count: errors.length }
+    }
+    return getDrcSnapshot(
+      this.params.srj,
+      routes,
+      this.params.referenceDrcEvaluator,
+      this.params.connMap,
+      this.autoroutingDrcEngine,
+      false,
+    )
+  }
+
   private finishWithOutput(
     routes: HighDensityRoute[],
     snapshot: DrcSnapshot,
@@ -150,26 +191,20 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
     let acceptedRoutes = routes
     let acceptedSnapshot = snapshot
     if (this.params.referenceDrcEvaluator) {
-      this.referenceInputDrcIssueCount ??= getDrcSnapshot(
-        this.params.srj,
-        this.inputHdRoutes,
-        this.params.referenceDrcEvaluator,
-        this.params.connMap,
-        this.autoroutingDrcEngine,
-        false,
-      ).count
-      this.referenceCandidateDrcIssueCount = getDrcSnapshot(
-        this.params.srj,
-        routes,
-        this.params.referenceDrcEvaluator,
-        this.params.connMap,
-        this.autoroutingDrcEngine,
-        false,
-      ).count
+      const referenceInputSnapshot = this.referenceInputSnapshot!
+      const referenceCandidateSnapshot =
+        this.getReferenceDrcSnapshot(acceptedRoutes)
+      this.referenceInputDrcIssueCount = referenceInputSnapshot.count
+      this.referenceCandidateDrcIssueCount = referenceCandidateSnapshot.count
       if (
-        this.referenceCandidateDrcIssueCount > this.referenceInputDrcIssueCount
+        referenceCandidateSnapshot.count > referenceInputSnapshot.count ||
+        (referenceCandidateSnapshot.count === referenceInputSnapshot.count &&
+          hasNewDrcErrorIdentities(
+            referenceCandidateSnapshot.errors,
+            referenceInputSnapshot.errors,
+          ))
       ) {
-        acceptedRoutes = this.inputHdRoutes
+        acceptedRoutes = this.guardedInputHdRoutes
         acceptedSnapshot = this.inputSnapshot!
         this.referenceCandidateRolledBack = true
       }
@@ -216,6 +251,10 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         this.referenceCandidateDrcIssueCount,
       drcBranchPortfolioReferenceCandidateRolledBack:
         this.referenceCandidateRolledBack,
+      drcBranchPortfolioMixedReferenceInputDrcIssueCount:
+        this.mixedReferenceInputDrcIssueCount,
+      drcBranchPortfolioMixedReferenceCandidateDrcIssueCount:
+        this.mixedReferenceCandidateDrcIssueCount,
     }
     this.solved = true
   }
@@ -225,6 +264,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       ...this.params,
       hdRoutes: this.inputHdRoutes,
       drcEvaluator: this.legacyDrcEvaluator,
+      referenceDrcEvaluator: undefined,
       enableSafeTraceLayerMoves: false,
       enableViaInPadLayerMoves: false,
     })
@@ -248,6 +288,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       ...this.params,
       hdRoutes: routes,
       drcEvaluator: this.legacyDrcEvaluator,
+      referenceDrcEvaluator: undefined,
       maxIterations:
         this.params.viaInPadMaxIterations ?? this.params.maxIterations,
       enableLargeBoardBroadFallback: false,
@@ -305,6 +346,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       ...this.params,
       hdRoutes: this.safeTraceLayerInputRoutes!,
       drcEvaluator: this.params.drcEvaluator,
+      referenceDrcEvaluator: undefined,
       maxIterations:
         this.params.viaInPadMaxIterations ?? this.params.maxIterations,
       enableLargeBoardBroadFallback: false,
@@ -347,6 +389,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       ...this.params,
       hdRoutes: broadInputRoutes,
       drcEvaluator: this.legacyDrcEvaluator,
+      referenceDrcEvaluator: undefined,
       maxIterations: this.broadMaxIterations,
       enableSafeTraceLayerMoves: false,
       enableViaInPadLayerMoves: false,
@@ -479,9 +522,24 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         this.autoroutingDrcEngine,
         false,
       )
-      this.mixedSafeTraceLayerPhaseAccepted =
-        getNonViaPadDrcIssueCount(mixedSnapshot) <
+      const doesNotRegressLegacyDrc =
+        getNonViaPadDrcIssueCount(mixedSnapshot) <=
         getNonViaPadDrcIssueCount(this.legacySafeTraceLayerSnapshot!)
+      let improvesReferenceDrc = true
+      if (this.params.referenceDrcEvaluator) {
+        const referenceInputSnapshot = this.getReferenceDrcSnapshot(
+          this.legacySafeTraceLayerRoutes!,
+        )
+        const referenceCandidateSnapshot =
+          this.getReferenceDrcSnapshot(mixedRoutes)
+        this.mixedReferenceInputDrcIssueCount = referenceInputSnapshot.count
+        this.mixedReferenceCandidateDrcIssueCount =
+          referenceCandidateSnapshot.count
+        improvesReferenceDrc =
+          referenceCandidateSnapshot.count <= referenceInputSnapshot.count
+      }
+      this.mixedSafeTraceLayerPhaseAccepted =
+        doesNotRegressLegacyDrc && improvesReferenceDrc
       this.startViaInPadPhase(
         this.mixedSafeTraceLayerPhaseAccepted
           ? mixedRoutes

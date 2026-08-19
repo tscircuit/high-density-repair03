@@ -147,6 +147,7 @@ const SAFE_TRACE_LAYER_LOCAL_EXPANSIONS = [0, 1, 2] as const
 export class GlobalDrcForceImproveSolver extends BaseSolver {
   readonly srj: SimpleRouteJson
   readonly inputHdRoutes: HighDensityRoute[]
+  readonly guardedInputHdRoutes: HighDensityRoute[]
   readonly connMap?: ConnectivityMap
   readonly effort: number
   readonly drcEvaluator?: DrcEvaluator
@@ -187,11 +188,17 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   private referenceInputDrcIssueCount?: number
   private referenceCandidateDrcIssueCount?: number
   private referenceCandidateRolledBack = false
+  private referenceInputSnapshot?: {
+    errors: Array<Record<string, unknown>>
+    count: number
+  }
+  private inputSnapshot?: DrcSnapshot
 
   constructor(params: GlobalDrcForceImproveSolverParams) {
     super()
     this.srj = params.srj
     this.inputHdRoutes = params.hdRoutes
+    this.guardedInputHdRoutes = materializeRoutes(cloneRoutes(params.hdRoutes))
     this.connMap = params.connMap
     this.effort = params.effort ?? 1
     this.drcEvaluator = params.drcEvaluator
@@ -226,6 +233,11 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     this.enableSafeTraceLayerMoves = params.enableSafeTraceLayerMoves ?? false
     this.enableViaInPadLayerMoves = params.enableViaInPadLayerMoves ?? false
     this.outputHdRoutes = params.hdRoutes
+    if (this.referenceDrcEvaluator) {
+      this.referenceInputSnapshot = this.getReferenceDrcSnapshot(
+        this.inputHdRoutes,
+      )
+    }
     this.MAX_ITERATIONS =
       this.configuredMaxIterations ?? getBaseMaxIterations(this.effort)
   }
@@ -318,7 +330,21 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     )
   }
 
-  private getReferenceDrcIssueCount(routes: HighDensityRoute[]) {
+  private getReferenceDrcSnapshot(routes: HighDensityRoute[]) {
+    const evaluatorInput = {
+      traces: [],
+      srj: this.srj,
+      routes,
+      hdRoutes: routes,
+    }
+    const cachedResult =
+      this.referenceDrcEvaluator?.getCachedResult?.(evaluatorInput)
+    if (cachedResult) {
+      const errors = Array.isArray(cachedResult)
+        ? cachedResult
+        : cachedResult.errors
+      return { errors, count: errors.length }
+    }
     return getDrcSnapshot(
       this.srj,
       routes,
@@ -326,7 +352,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       this.connMap,
       this.autoroutingDrcEngine,
       false,
-    ).count
+    )
   }
 
   private getViaIssueCount(snapshot: DrcSnapshot) {
@@ -360,17 +386,17 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
 
     let acceptedRoutes = relaxedRoutes
     let acceptedSnapshot = relaxedSnapshot
+    const inputSnapshot =
+      this.inputSnapshot ?? this.getSnapshot(this.guardedInputHdRoutes)
     if (this.referenceDrcEvaluator) {
-      this.referenceInputDrcIssueCount ??= this.getReferenceDrcIssueCount(
-        this.inputHdRoutes,
-      )
-      this.referenceCandidateDrcIssueCount =
-        this.getReferenceDrcIssueCount(relaxedRoutes)
-      if (
-        this.referenceCandidateDrcIssueCount > this.referenceInputDrcIssueCount
-      ) {
-        acceptedRoutes = this.inputHdRoutes
-        acceptedSnapshot = this.getSnapshot(this.inputHdRoutes)
+      const referenceInputSnapshot = this.referenceInputSnapshot!
+      const referenceCandidateSnapshot =
+        this.getReferenceDrcSnapshot(acceptedRoutes)
+      this.referenceInputDrcIssueCount = referenceInputSnapshot.count
+      this.referenceCandidateDrcIssueCount = referenceCandidateSnapshot.count
+      if (referenceCandidateSnapshot.count > referenceInputSnapshot.count) {
+        acceptedRoutes = this.guardedInputHdRoutes
+        acceptedSnapshot = inputSnapshot
         this.referenceCandidateRolledBack = true
       }
     }
@@ -464,6 +490,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       }
     }
     if (this.initialDrcIssueCount === undefined) {
+      this.inputSnapshot = bestSnapshot
       this.initialDrcIssueCount = bestSnapshot.count
       this.initialRepairDrcIssueCount = this.getRepairIssueCount(bestSnapshot)
       const initialRepairErrors = getLegacyFirstRepairErrors(

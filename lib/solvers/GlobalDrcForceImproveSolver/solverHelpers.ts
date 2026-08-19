@@ -3063,6 +3063,37 @@ export const isViaPadDrcError = (error: Record<string, unknown>) =>
   Array.isArray(error.pcb_via_ids) &&
   error.pcb_via_ids.length === 1
 
+const getDrcErrorIdentity = (error: Record<string, unknown>) => {
+  const identifiers = Object.entries(error)
+    .filter(
+      ([key, value]) =>
+        key !== "source_trace_id" &&
+        (key.endsWith("_id") || key.endsWith("_ids")) &&
+        value !== undefined &&
+        value !== "",
+    )
+    .sort(([keyA], [keyB]) => keyA.localeCompare(keyB))
+  const normalizedMessage =
+    typeof error.message === "string"
+      ? error.message.replace(/-?\d+\.\d+/g, "#")
+      : ""
+  return JSON.stringify([
+    getDrcErrorType(error),
+    identifiers,
+    normalizedMessage,
+  ])
+}
+
+export const hasNewDrcErrorIdentities = (
+  candidateErrors: Array<Record<string, unknown>>,
+  inputErrors: Array<Record<string, unknown>>,
+) => {
+  const inputIdentities = new Set(inputErrors.map(getDrcErrorIdentity))
+  return candidateErrors.some(
+    (error) => !inputIdentities.has(getDrcErrorIdentity(error)),
+  )
+}
+
 export const getNonViaPadDrcIssueCount = (snapshot: DrcSnapshot) =>
   Math.max(
     snapshot.errors.filter((error) => !isViaPadDrcError(error)).length,

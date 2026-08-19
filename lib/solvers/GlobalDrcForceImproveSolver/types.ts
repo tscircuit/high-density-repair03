@@ -23,6 +23,8 @@ export type DrcEvaluatorFunction = (
 export type DrcEvaluator = DrcEvaluatorFunction & {
   /** Staged evaluator for the established DRC set before via-to-pad repair. */
   evaluateLegacy?: DrcEvaluatorFunction
+  /** Returns a previously computed result for the exact route geometry. */
+  getCachedResult?: (input: DrcEvaluatorInput) => DrcEvaluatorResult | undefined
 }
 
 export type DrcSnapshot = {
