@@ -49,7 +49,7 @@ const convertHdRoutesToSimplifiedTraces = (
           route_type: "wire",
           x: point.x,
           y: point.y,
-          width: point.traceThickness ?? route.traceThickness,
+          width: route.traceThickness,
           layer,
         })
       }
@@ -81,7 +81,9 @@ test("repairs the exact dataset01 circuit143 DRC chain without broad fallback", 
       ),
     )
 
-  const initialDrc = drcEvaluator({ routes: hdRoutes, traces: [] })
+  const initialDrc = engine.evaluate(
+    convertHdRoutesToSimplifiedTraces(hdRoutes, srj.layerCount),
+  )
   expect(initialDrc.errors).toHaveLength(2)
   expect(
     initialDrc.errors.some(
@@ -116,7 +118,9 @@ test("repairs the exact dataset01 circuit143 DRC chain without broad fallback", 
 
   solver.solve()
 
-  const finalDrc = drcEvaluator({ routes: solver.getOutput(), traces: [] })
+  const finalDrc = engine.evaluate(
+    convertHdRoutesToSimplifiedTraces(solver.getOutput(), srj.layerCount),
+  )
   expect(solver.solved).toBe(true)
   expect(solver.failed).toBe(false)
   expect(finalDrc.errors).toHaveLength(0)
