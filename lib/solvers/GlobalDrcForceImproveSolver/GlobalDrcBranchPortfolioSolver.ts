@@ -231,14 +231,9 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       this.params.connMap,
       this.autoroutingDrcEngine,
       false,
-      this.params.deferViaPadRepairsUntilLegacyClear,
     )
     if (
-      !isDrcSnapshotCountBetter(
-        this.broadInputSnapshot,
-        this.baselineSnapshot!,
-        this.params.deferViaPadRepairsUntilLegacyClear,
-      )
+      !isDrcSnapshotCountBetter(this.broadInputSnapshot, this.baselineSnapshot!)
     ) {
       this.startSafeTraceLayerPhase(
         this.baselineSolver!.getOutput(),
@@ -267,7 +262,6 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         this.params.connMap,
         this.autoroutingDrcEngine,
         false,
-        this.params.deferViaPadRepairsUntilLegacyClear,
       )
       if (this.inputSnapshot.count === 0) {
         this.startViaInPadPhase(this.inputHdRoutes, this.inputSnapshot)
@@ -288,7 +282,6 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         this.params.connMap,
         this.autoroutingDrcEngine,
         false,
-        this.params.deferViaPadRepairsUntilLegacyClear,
       )
       if (this.baselineSnapshot.count === 0) {
         this.startViaInPadPhase(
@@ -313,14 +306,9 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         this.params.connMap,
         this.autoroutingDrcEngine,
         false,
-        this.params.deferViaPadRepairsUntilLegacyClear,
       )
       if (
-        isDrcSnapshotCountBetter(
-          this.broadSnapshot,
-          this.baselineSnapshot!,
-          this.params.deferViaPadRepairsUntilLegacyClear,
-        )
+        isDrcSnapshotCountBetter(this.broadSnapshot, this.baselineSnapshot!)
       ) {
         this.startSafeTraceLayerPhase(
           broadRoutes,
@@ -348,7 +336,6 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         this.params.connMap,
         this.autoroutingDrcEngine,
         false,
-        this.params.deferViaPadRepairsUntilLegacyClear,
       )
       this.safeTraceLayerPhaseAccepted =
         getSafeTraceLayerDrcIssueCount(safeTraceLayerSnapshot) === 0
@@ -387,7 +374,6 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         this.params.connMap,
         this.autoroutingDrcEngine,
         false,
-        this.params.deferViaPadRepairsUntilLegacyClear,
       )
       this.finishWithOutput(
         viaInPadRoutes,

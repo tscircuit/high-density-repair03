@@ -132,7 +132,7 @@ test("repairs legacy DRC errors before newly detected via-to-pad errors", () => 
   expect(getLegacyFirstRepairErrors([viaPadError])).toEqual([viaPadError])
 })
 
-test("defers via-to-pad errors from snapshot scoring until legacy DRCs clear", () => {
+test("keeps complete snapshots while prioritizing legacy DRC repairs", () => {
   const traceRouteIndexById = new Map<string, number>()
   const routes = [
     {
@@ -162,18 +162,9 @@ test("defers via-to-pad errors from snapshot scoring until legacy DRCs clear", (
       center: { x: 0.5, y: 0.5 },
     },
   ]
-  const defaultSnapshot = getDrcSnapshot(srj, routes, () => ({
+  const mixedSnapshot = getDrcSnapshot(srj, routes, () => ({
     errors: mixedErrors,
   }))
-  const mixedSnapshot = getDrcSnapshot(
-    srj,
-    routes,
-    () => ({ errors: mixedErrors }),
-    undefined,
-    undefined,
-    false,
-    true,
-  )
   const viaPadOnlySnapshot = getDrcSnapshot(srj, routes, () => ({
     errors: [
       {
@@ -184,27 +175,21 @@ test("defers via-to-pad errors from snapshot scoring until legacy DRCs clear", (
     ],
   }))
 
-  expect(defaultSnapshot).toMatchObject({ count: 2 })
   expect(mixedSnapshot).toMatchObject({
-    count: 1,
-    errors: [{ type: "pcb_trace_error" }],
+    count: 2,
+    errors: [
+      { type: "pcb_trace_error" },
+      { type: "pcb_pad_pad_clearance_error" },
+    ],
   })
   expect(viaPadOnlySnapshot).toMatchObject({
     count: 1,
     errors: [{ type: "pcb_pad_pad_clearance_error" }],
   })
   expect(
-    isBetterDrcSnapshot(
-      viaPadOnlySnapshot,
-      1,
-      1,
-      1,
-      0,
-      {
-        ...mixedSnapshot,
-        traceRouteIndexById,
-      },
-      true,
-    ),
+    isBetterDrcSnapshot(viaPadOnlySnapshot, 1, 1, 1, 0, {
+      ...mixedSnapshot,
+      traceRouteIndexById,
+    }),
   ).toBe(true)
 })

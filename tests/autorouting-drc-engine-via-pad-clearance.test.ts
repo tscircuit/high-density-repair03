@@ -65,14 +65,9 @@ test("detects different-net via-to-pad clearance", () => {
     minimum_clearance: 0.1,
   })
   expect(result.errors[0]?.actual_clearance).toBeCloseTo(0.05)
-
-  const guardedResult = new AutoroutingDrcEngine(srj).evaluate(traces, {
-    deferViaPadErrorsUntilLegacyClear: true,
-  })
-  expect(guardedResult.errors).toEqual(result.errors)
 })
 
-test("defers via-to-pad checks while legacy DRC errors remain", () => {
+test("reports via-to-pad errors while legacy DRC errors remain", () => {
   const srj: SimpleRouteJson = {
     bounds: { minX: -2, minY: -1, maxX: 2, maxY: 2 },
     connections: [
@@ -129,9 +124,4 @@ test("defers via-to-pad checks while legacy DRC errors remain", () => {
     "pcb_trace_error",
     "pcb_pad_pad_clearance_error",
   ])
-  expect(
-    engine
-      .evaluate(traces, { deferViaPadErrorsUntilLegacyClear: true })
-      .errors.map((error) => error.type),
-  ).toEqual(["pcb_trace_error"])
 })

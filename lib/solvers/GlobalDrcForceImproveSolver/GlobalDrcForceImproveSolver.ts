@@ -157,7 +157,6 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   readonly enablePostSolveClearanceRelaxation: boolean
   readonly enableSafeTraceLayerMoves: boolean
   readonly enableViaInPadLayerMoves: boolean
-  readonly deferViaPadRepairsUntilLegacyClear: boolean
   outputHdRoutes: HighDensityRoute[]
   private initialDrcIssueCount: number | undefined
   private initialLowCountErrorsHaveMovableTraces = false
@@ -218,8 +217,6 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       params.enablePostSolveClearanceRelaxation ?? true
     this.enableSafeTraceLayerMoves = params.enableSafeTraceLayerMoves ?? false
     this.enableViaInPadLayerMoves = params.enableViaInPadLayerMoves ?? false
-    this.deferViaPadRepairsUntilLegacyClear =
-      params.deferViaPadRepairsUntilLegacyClear ?? false
     this.outputHdRoutes = params.hdRoutes
     this.MAX_ITERATIONS =
       this.configuredMaxIterations ?? getBaseMaxIterations(this.effort)
@@ -243,8 +240,6 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           this.enablePostSolveClearanceRelaxation,
         enableSafeTraceLayerMoves: this.enableSafeTraceLayerMoves,
         enableViaInPadLayerMoves: this.enableViaInPadLayerMoves,
-        deferViaPadRepairsUntilLegacyClear:
-          this.deferViaPadRepairsUntilLegacyClear,
       },
     ] as const
   }
@@ -305,15 +300,11 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       this.connMap,
       this.autoroutingDrcEngine,
       this.initialLowCountErrorsHaveMovableTraces,
-      this.deferViaPadRepairsUntilLegacyClear,
     )
   }
 
   private getViaIssueCount(snapshot: DrcSnapshot) {
-    return getViaDrcIssueCount(
-      snapshot,
-      !this.deferViaPadRepairsUntilLegacyClear,
-    )
+    return getViaDrcIssueCount(snapshot, false)
   }
 
   private acceptSolvedRoutes(
@@ -404,16 +395,11 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     let bestRoutes = this.outputHdRoutes
     let bestSnapshot = this.outputSnapshot ?? this.getSnapshot(bestRoutes)
     const nonViaPadIssueCount = getNonViaPadDrcIssueCount(bestSnapshot)
-    if (
-      this.deferViaPadRepairsUntilLegacyClear &&
-      this.legacyCleanCheckpoint &&
-      nonViaPadIssueCount > 0
-    ) {
+    if (this.legacyCleanCheckpoint && nonViaPadIssueCount > 0) {
       this.finishAtLegacyCleanCheckpoint()
       return
     }
     if (
-      this.deferViaPadRepairsUntilLegacyClear &&
       !this.legacyCleanCheckpoint &&
       nonViaPadIssueCount === 0 &&
       bestSnapshot.errors.some(isViaPadDrcError)
@@ -464,9 +450,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     let tracePairDetourAttemptedThisStep = false
     let acceptedCandidate = false
     let attemptedPeriodicLargeBoardBroadFallback = false
-    const activeRepairErrors = this.deferViaPadRepairsUntilLegacyClear
-      ? getLegacyFirstRepairErrors(centeredErrors)
-      : centeredErrors
+    const activeRepairErrors = getLegacyFirstRepairErrors(centeredErrors)
     const sameNetViaError = this.enableTargetedErrorSweep
       ? activeRepairErrors.find(
           (error) =>
@@ -633,11 +617,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
 
           if (
             candidateViaIssueCount <= comparisonViaIssueCount &&
-            isDrcSnapshotCountBetter(
-              candidateSnapshot,
-              comparisonSnapshot,
-              this.deferViaPadRepairsUntilLegacyClear,
-            )
+            isDrcSnapshotCountBetter(candidateSnapshot, comparisonSnapshot)
           ) {
             bestTopologyCandidate = {
               routes: materializedCandidateRoutes,
@@ -758,13 +738,11 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
                 comparisonScore,
                 comparisonViaIssueCount,
                 bestTopologyCandidate?.snapshot ?? bestSnapshot,
-                this.deferViaPadRepairsUntilLegacyClear,
               )
             : candidateViaIssueCount <= comparisonViaIssueCount &&
               isDrcSnapshotCountBetter(
                 candidateSnapshot,
                 bestTopologyCandidate?.snapshot ?? bestSnapshot,
-                this.deferViaPadRepairsUntilLegacyClear,
               )
           if (isBetterTopologyCandidate) {
             bestTopologyCandidate = {
@@ -820,7 +798,6 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
             comparisonScore,
             comparisonViaIssueCount,
             bestTopologyCandidate?.snapshot ?? bestSnapshot,
-            this.deferViaPadRepairsUntilLegacyClear,
           )
         ) {
           bestTopologyCandidate = {
@@ -875,7 +852,6 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
             comparisonScore,
             comparisonViaIssueCount,
             bestTopologyCandidate?.snapshot ?? bestSnapshot,
-            this.deferViaPadRepairsUntilLegacyClear,
           )
         ) {
           bestTopologyCandidate = {
@@ -941,7 +917,6 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
                 comparisonScore,
                 comparisonViaIssueCount,
                 bestTopologyCandidate?.snapshot ?? bestSnapshot,
-                this.deferViaPadRepairsUntilLegacyClear,
               )
             ) {
               bestTopologyCandidate = {
@@ -1002,7 +977,6 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
             bestIssueScore,
             bestViaIssueCount,
             bestSnapshot,
-            this.deferViaPadRepairsUntilLegacyClear,
           )
         ) {
           bestRoutes = materializedCandidateRoutes
@@ -1066,7 +1040,6 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
             bestIssueScore,
             bestViaIssueCount,
             bestSnapshot,
-            this.deferViaPadRepairsUntilLegacyClear,
           )
         ) {
           bestRoutes = materializedCandidateRoutes
@@ -1133,7 +1106,6 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
             bestIssueScore,
             bestViaIssueCount,
             bestSnapshot,
-            this.deferViaPadRepairsUntilLegacyClear,
           )
         ) {
           continue
