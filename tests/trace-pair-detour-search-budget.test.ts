@@ -45,7 +45,9 @@ test("bounds detour search when an exact trace pair cannot be resolved", () => {
 
   solver.solve()
 
-  expect(solver.solved).toBe(true)
+  expect(solver.solved).toBe(false)
+  expect(solver.failed).toBe(true)
+  expect(solver.residualDrcIssueCount).toBe(1)
   expect(solver.iterations).toBe(2)
   expect(solver.stats.globalDrcForceImproveViaInPadCandidateAttempts).toBe(0)
 })

@@ -174,7 +174,9 @@ test("visualizes a terminal trace trapped against foreign SMT pads", () => {
 
   expect(inputSnapshot.count).toBeGreaterThan(0)
   expect(outputSnapshot.count).toBeLessThanOrEqual(inputSnapshot.count)
-  expect(solver.failed).toBe(false)
+  expect(solver.solved).toBe(false)
+  expect(solver.failed).toBe(true)
+  expect(solver.residualDrcIssueCount).toBe(outputSnapshot.count)
 
   const snapshotSvg = getSvgFromGraphicsObject(
     stackGraphicsHorizontally([beforeRepair, afterRepair], {
