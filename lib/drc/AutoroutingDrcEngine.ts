@@ -859,6 +859,26 @@ export class AutoroutingDrcEngine {
     traces: SimplifiedPcbTraces,
     options: AutoroutingDrcEngineRunOptions = {},
   ): AutoroutingDrcResult {
+    return this.evaluateInternal(traces, options, true)
+  }
+
+  /**
+   * Evaluates the established trace/via DRC set used by the first repair
+   * stage. Via-to-pad errors remain part of the normal complete evaluation and
+   * are handled by the subsequent staged repair pass.
+   */
+  evaluateLegacy(
+    traces: SimplifiedPcbTraces,
+    options: AutoroutingDrcEngineRunOptions = {},
+  ): AutoroutingDrcResult {
+    return this.evaluateInternal(traces, options, false)
+  }
+
+  private evaluateInternal(
+    traces: SimplifiedPcbTraces,
+    options: AutoroutingDrcEngineRunOptions,
+    includeViaPadErrors: boolean,
+  ): AutoroutingDrcResult {
     const { segments, vias } = this.collectDynamicGeometry(traces)
     const dynamicIndexesByLayer = this.buildDynamicIndexes(segments, vias)
     const detectedTraceErrors: AutoroutingDrcError[] = []
@@ -905,17 +925,20 @@ export class AutoroutingDrcEngine {
 
     const detectedViaErrors = this.checkViaPairs(vias)
 
-    for (const via of vias) {
-      const checkedObstacles = new Set<StaticObstacle>()
-      for (const layer of via.layers) {
-        const obstacleCandidates =
-          this.obstacleIndexesByLayer.get(layer)?.query(getViaBounds(via)) ?? []
-        for (const obstacle of obstacleCandidates) {
-          if (checkedObstacles.has(obstacle)) continue
-          checkedObstacles.add(obstacle)
-          this.lastRunStats.broadPhaseCandidateCount += 1
-          const error = this.checkViaObstacle(via, obstacle)
-          if (error) detectedViaPadErrors.push(error)
+    if (includeViaPadErrors) {
+      for (const via of vias) {
+        const checkedObstacles = new Set<StaticObstacle>()
+        for (const layer of via.layers) {
+          const obstacleCandidates =
+            this.obstacleIndexesByLayer.get(layer)?.query(getViaBounds(via)) ??
+            []
+          for (const obstacle of obstacleCandidates) {
+            if (checkedObstacles.has(obstacle)) continue
+            checkedObstacles.add(obstacle)
+            this.lastRunStats.broadPhaseCandidateCount += 1
+            const error = this.checkViaObstacle(via, obstacle)
+            if (error) detectedViaPadErrors.push(error)
+          }
         }
       }
     }

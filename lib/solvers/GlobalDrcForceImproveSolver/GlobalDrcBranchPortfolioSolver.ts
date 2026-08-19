@@ -54,6 +54,9 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
   private viaInPadSolver?: GlobalDrcForceImproveSolver
   private portfolioSelectedSolver?: GlobalDrcForceImproveSolver
   private selectedSolver?: GlobalDrcForceImproveSolver
+  private referenceInputDrcIssueCount?: number
+  private referenceCandidateDrcIssueCount?: number
+  private referenceCandidateRolledBack = false
 
   constructor(params: GlobalDrcBranchPortfolioSolverParams) {
     super()
@@ -95,9 +98,11 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
               RELAXED_DRC_OPTIONS.viaClearance,
           }))
     this.legacyDrcEvaluator = (input) => {
-      const result = params.drcEvaluator
-        ? params.drcEvaluator(input)
-        : this.autoroutingDrcEngine!.evaluate(input.traces)
+      const stagedLegacyEvaluator =
+        params.drcEvaluator?.evaluateLegacy ?? params.drcEvaluator
+      const result = stagedLegacyEvaluator
+        ? stagedLegacyEvaluator(input)
+        : this.autoroutingDrcEngine!.evaluateLegacy(input.traces)
       const errors = Array.isArray(result) ? result : result.errors
       const errorsWithCenters = Array.isArray(result)
         ? result
@@ -142,7 +147,34 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
     snapshot: DrcSnapshot,
     selectedSolver?: GlobalDrcForceImproveSolver,
   ) {
-    this.outputHdRoutes = routes
+    let acceptedRoutes = routes
+    let acceptedSnapshot = snapshot
+    if (this.params.referenceDrcEvaluator) {
+      this.referenceInputDrcIssueCount ??= getDrcSnapshot(
+        this.params.srj,
+        this.inputHdRoutes,
+        this.params.referenceDrcEvaluator,
+        this.params.connMap,
+        this.autoroutingDrcEngine,
+        false,
+      ).count
+      this.referenceCandidateDrcIssueCount = getDrcSnapshot(
+        this.params.srj,
+        routes,
+        this.params.referenceDrcEvaluator,
+        this.params.connMap,
+        this.autoroutingDrcEngine,
+        false,
+      ).count
+      if (
+        this.referenceCandidateDrcIssueCount > this.referenceInputDrcIssueCount
+      ) {
+        acceptedRoutes = this.inputHdRoutes
+        acceptedSnapshot = this.inputSnapshot!
+        this.referenceCandidateRolledBack = true
+      }
+    }
+    this.outputHdRoutes = acceptedRoutes
     this.selectedSolver = selectedSolver
     this.activeSubSolver = null
     this.phase = "done"
@@ -150,7 +182,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
     this.stats = {
       ...(this.portfolioSelectedSolver?.stats ?? {}),
       ...(selectedSolver?.stats ?? {}),
-      finalDrcIssueCount: snapshot.count,
+      finalDrcIssueCount: acceptedSnapshot.count,
       drcBranchPortfolioInitialDrcIssueCount:
         this.inputSnapshot?.count ?? snapshot.count,
       drcBranchPortfolioBaselineDrcIssueCount:
@@ -177,7 +209,13 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       drcBranchPortfolioViaInPadMaxIterations:
         this.params.viaInPadMaxIterations,
       drcBranchPortfolioFinalNonViaPadDrcIssueCount:
-        getNonViaPadDrcIssueCount(snapshot),
+        getNonViaPadDrcIssueCount(acceptedSnapshot),
+      drcBranchPortfolioReferenceInputDrcIssueCount:
+        this.referenceInputDrcIssueCount,
+      drcBranchPortfolioReferenceCandidateDrcIssueCount:
+        this.referenceCandidateDrcIssueCount,
+      drcBranchPortfolioReferenceCandidateRolledBack:
+        this.referenceCandidateRolledBack,
     }
     this.solved = true
   }

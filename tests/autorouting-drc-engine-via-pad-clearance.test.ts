@@ -120,6 +120,9 @@ test("reports via-to-pad errors while legacy DRC errors remain", () => {
   ]
   const engine = new AutoroutingDrcEngine(srj)
 
+  expect(
+    engine.evaluateLegacy(traces).errors.map((error) => error.type),
+  ).toEqual(["pcb_trace_error"])
   expect(engine.evaluate(traces).errors.map((error) => error.type)).toEqual([
     "pcb_trace_error",
     "pcb_pad_pad_clearance_error",

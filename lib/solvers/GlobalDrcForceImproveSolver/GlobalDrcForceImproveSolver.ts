@@ -150,6 +150,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   readonly connMap?: ConnectivityMap
   readonly effort: number
   readonly drcEvaluator?: DrcEvaluator
+  readonly referenceDrcEvaluator?: DrcEvaluator
   readonly autoroutingDrcEngine?: AutoroutingDrcEngine
   readonly viaHoleDiameter?: number
   readonly configuredMaxIterations?: number
@@ -183,6 +184,9 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     | { routes: HighDensityRoute[]; snapshot: DrcSnapshot }
     | undefined
   private viaPadRepairRolledBack = false
+  private referenceInputDrcIssueCount?: number
+  private referenceCandidateDrcIssueCount?: number
+  private referenceCandidateRolledBack = false
 
   constructor(params: GlobalDrcForceImproveSolverParams) {
     super()
@@ -191,6 +195,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     this.connMap = params.connMap
     this.effort = params.effort ?? 1
     this.drcEvaluator = params.drcEvaluator
+    this.referenceDrcEvaluator = params.referenceDrcEvaluator
     this.autoroutingDrcEngine =
       params.autoroutingDrcEngine ??
       (params.drcEvaluator
@@ -233,6 +238,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         connMap: this.connMap,
         effort: this.effort,
         drcEvaluator: this.drcEvaluator,
+        referenceDrcEvaluator: this.referenceDrcEvaluator,
         autoroutingDrcEngine: this.autoroutingDrcEngine,
         viaHoleDiameter: this.viaHoleDiameter,
         maxIterations: this.configuredMaxIterations,
@@ -268,6 +274,12 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       globalDrcForceImproveLargeBoardBroadFallbackMisses:
         this.largeBoardBroadFallbackMisses,
       globalDrcForceImproveViaPadRepairRolledBack: this.viaPadRepairRolledBack,
+      globalDrcForceImproveReferenceInputDrcIssueCount:
+        this.referenceInputDrcIssueCount,
+      globalDrcForceImproveReferenceCandidateDrcIssueCount:
+        this.referenceCandidateDrcIssueCount,
+      globalDrcForceImproveReferenceCandidateRolledBack:
+        this.referenceCandidateRolledBack,
     }
   }
 
@@ -306,6 +318,17 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     )
   }
 
+  private getReferenceDrcIssueCount(routes: HighDensityRoute[]) {
+    return getDrcSnapshot(
+      this.srj,
+      routes,
+      this.referenceDrcEvaluator,
+      this.connMap,
+      this.autoroutingDrcEngine,
+      false,
+    ).count
+  }
+
   private getViaIssueCount(snapshot: DrcSnapshot) {
     return getViaDrcIssueCount(snapshot, false)
   }
@@ -335,10 +358,27 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     const relaxedSnapshot =
       relaxedRoutes === routes ? snapshot : this.getSnapshot(relaxedRoutes)
 
-    this.outputHdRoutes = relaxedRoutes
-    this.outputSnapshot = relaxedSnapshot
+    let acceptedRoutes = relaxedRoutes
+    let acceptedSnapshot = relaxedSnapshot
+    if (this.referenceDrcEvaluator) {
+      this.referenceInputDrcIssueCount ??= this.getReferenceDrcIssueCount(
+        this.inputHdRoutes,
+      )
+      this.referenceCandidateDrcIssueCount =
+        this.getReferenceDrcIssueCount(relaxedRoutes)
+      if (
+        this.referenceCandidateDrcIssueCount > this.referenceInputDrcIssueCount
+      ) {
+        acceptedRoutes = this.inputHdRoutes
+        acceptedSnapshot = this.getSnapshot(this.inputHdRoutes)
+        this.referenceCandidateRolledBack = true
+      }
+    }
+
+    this.outputHdRoutes = acceptedRoutes
+    this.outputSnapshot = acceptedSnapshot
     this.stalledIterations = 0
-    this.updateStats(relaxedSnapshot)
+    this.updateStats(acceptedSnapshot)
     this.solved = true
   }
 
