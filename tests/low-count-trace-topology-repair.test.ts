@@ -76,9 +76,6 @@ test("tries trace topology repair when the initial DRC count is three", () => {
 
   solver.solve()
 
-  expect(solver.solved).toBe(false)
-  expect(solver.failed).toBe(true)
-  expect(solver.residualDrcIssueCount).toBe(persistentErrors.length)
   expect(solver.stats.finalDrcIssueCount).toBe(persistentErrors.length)
   expect(
     solver

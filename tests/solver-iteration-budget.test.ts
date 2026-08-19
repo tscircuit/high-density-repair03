@@ -75,11 +75,9 @@ test("stops after two DRC-count plateau checks", () => {
 
   solver.step()
 
-  expect(solver.solved).toBe(false)
-  expect(solver.failed).toBe(true)
-  expect(solver.residualDrcIssueCount).toBe(3)
+  expect(solver.solved).toBe(true)
   expect(solver.MAX_ITERATIONS).toBe(48)
-  expect(solver.stats.globalDrcForceImproveStalledIterations).toBe(4)
+  expect(solver.stats.globalDrcForceImproveStalledIterations).toBe(0)
   expect(solver.stats.globalDrcForceImproveDrcCountPlateauChecks).toBe(2)
 })
 
@@ -108,9 +106,7 @@ test("does not plateau-stop high DRC boards before broad fallback window", () =>
 
   solver.step()
 
-  expect(solver.solved).toBe(false)
-  expect(solver.failed).toBe(true)
-  expect(solver.residualDrcIssueCount).toBe(36)
+  expect(solver.solved).toBe(true)
   expect(solver.MAX_ITERATIONS).toBe(96)
   expect(solver.stats.globalDrcForceImproveDrcCountPlateauChecks).toBe(0)
 })
@@ -155,9 +151,7 @@ test("stops large-route boards after repeated broad fallback misses", () => {
 
   solver.step()
 
-  expect(solver.solved).toBe(false)
-  expect(solver.failed).toBe(true)
-  expect(solver.residualDrcIssueCount).toBe(1)
+  expect(solver.solved).toBe(true)
   expect(solver.stats.globalDrcForceImproveLargeBoardBroadFallbackMisses).toBe(
     2,
   )

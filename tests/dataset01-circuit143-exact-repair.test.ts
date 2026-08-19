@@ -128,6 +128,7 @@ test("repairs the exact dataset01 circuit143 DRC chain without broad fallback", 
   expect(solver.stats.drcBranchPortfolioInitialDrcIssueCount).toBe(2)
   expect(solver.stats.drcBranchPortfolioBaselineDrcIssueCount).toBe(1)
   expect(solver.stats.finalDrcIssueCount).toBe(0)
+  expect(solver.stats.drcBranchPortfolioFinalDrcIssueCount).toBe(0)
   expect(solver.stats.drcBranchPortfolioBroadInitialDrcIssueCount).toBe(
     undefined,
   )

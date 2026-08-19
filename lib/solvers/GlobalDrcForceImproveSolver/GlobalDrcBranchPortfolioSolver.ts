@@ -102,7 +102,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
   private stepBranch(solver: GlobalDrcForceImproveSolver, branchName: string) {
     this.activeSubSolver = solver
     solver.step()
-    if (solver.failed && solver.residualDrcIssueCount === undefined) {
+    if (solver.failed) {
       throw new Error(`${branchName} DRC repair branch failed: ${solver.error}`)
     }
   }
@@ -117,9 +117,17 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
     this.activeSubSolver = null
     this.phase = "done"
     this.progress = 1
+    const finalSnapshot = getDrcSnapshot(
+      this.params.srj,
+      routes,
+      this.params.drcEvaluator,
+      this.params.connMap,
+      this.autoroutingDrcEngine,
+    )
     this.stats = {
       ...(this.portfolioSelectedSolver?.stats ?? {}),
       ...(selectedSolver?.stats ?? {}),
+      finalDrcIssueCount: finalSnapshot.count,
       drcBranchPortfolioInitialDrcIssueCount:
         this.inputSnapshot?.count ?? snapshot.count,
       drcBranchPortfolioBaselineDrcIssueCount:
@@ -127,6 +135,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       drcBranchPortfolioBroadInitialDrcIssueCount:
         this.broadInputSnapshot?.count,
       drcBranchPortfolioBroadFinalDrcIssueCount: this.broadSnapshot?.count,
+      drcBranchPortfolioFinalDrcIssueCount: finalSnapshot.count,
       drcBranchPortfolioBroadMaxIterations: this.broadMaxIterations,
       drcBranchPortfolioBroadBranchAttempted: Boolean(this.broadSolver),
       drcBranchPortfolioBroadBranchAccepted:
@@ -141,10 +150,10 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       drcBranchPortfolioViaInPadMaxIterations:
         this.params.viaInPadMaxIterations,
     }
-    if (snapshot.count === 0) {
+    if (finalSnapshot.count === 0) {
       this.solved = true
     } else {
-      this.error = `${this.getSolverName()} exhausted exact repair with ${snapshot.count} residual DRC issue${snapshot.count === 1 ? "" : "s"}`
+      this.error = `${this.getSolverName()} exhausted exact repair with ${finalSnapshot.count} residual DRC issue${finalSnapshot.count === 1 ? "" : "s"}`
       this.failed = true
     }
   }
@@ -279,7 +288,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
 
     if (this.phase === "baseline") {
       this.stepBranch(this.baselineSolver!, "baseline")
-      if (!this.baselineSolver!.solved && !this.baselineSolver!.failed) return
+      if (!this.baselineSolver!.solved) return
       const baselineRoutes = this.baselineSolver!.getOutput()
       this.baselineSnapshot = getDrcSnapshot(
         this.params.srj,
@@ -302,7 +311,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
 
     if (this.phase === "broad") {
       this.stepBranch(this.broadSolver!, "broad")
-      if (!this.broadSolver!.solved && !this.broadSolver!.failed) return
+      if (!this.broadSolver!.solved) return
       const broadRoutes = this.broadSolver!.getOutput()
       this.broadSnapshot = getDrcSnapshot(
         this.params.srj,
@@ -329,12 +338,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
 
     if (this.phase === "safeTraceLayer") {
       this.stepBranch(this.safeTraceLayerSolver!, "safe trace-layer")
-      if (
-        !this.safeTraceLayerSolver!.solved &&
-        !this.safeTraceLayerSolver!.failed
-      ) {
-        return
-      }
+      if (!this.safeTraceLayerSolver!.solved) return
       const safeTraceLayerRoutes = this.safeTraceLayerSolver!.getOutput()
       const safeTraceLayerSnapshot = getDrcSnapshot(
         this.params.srj,
@@ -371,7 +375,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
 
     if (this.phase === "viaInPad") {
       this.stepBranch(this.viaInPadSolver!, "via-in-pad")
-      if (!this.viaInPadSolver!.solved && !this.viaInPadSolver!.failed) return
+      if (!this.viaInPadSolver!.solved) return
       const viaInPadRoutes = this.viaInPadSolver!.getOutput()
       const viaInPadSnapshot = getDrcSnapshot(
         this.params.srj,

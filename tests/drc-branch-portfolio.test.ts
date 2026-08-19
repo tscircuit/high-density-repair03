@@ -1,10 +1,64 @@
 import { expect, test } from "bun:test"
 import {
   GlobalDrcBranchPortfolioSolver,
+  GlobalDrcForceImproveSolver,
   type DrcEvaluator,
   type HighDensityRoute,
   type SimpleRouteJson,
 } from "../lib"
+
+test("only the exact branch portfolio fails on residual DRC", () => {
+  const srj: SimpleRouteJson = {
+    bounds: { minX: 0, minY: 0, maxX: 10, maxY: 10 },
+    connections: [],
+    obstacles: [],
+    layerCount: 2,
+    minTraceWidth: 0.1,
+    minViaDiameter: 0.3,
+  }
+  const residualError = {
+    type: "pcb_trace_error",
+    message: "synthetic residual DRC",
+    center: { x: 5, y: 5 },
+  }
+  const drcEvaluator: DrcEvaluator = () => [residualError]
+  const sharedParams = {
+    srj,
+    hdRoutes: [],
+    drcEvaluator,
+    maxIterations: 1,
+    enableBroadFallback: false,
+    enableLargeBoardBroadFallback: false,
+    enablePostSolveClearanceRelaxation: false,
+    enableSafeTraceLayerMoves: false,
+    enableViaInPadLayerMoves: false,
+    broadMaxIterations: 1,
+    broadPassMultiplier: 1,
+  }
+
+  const bestEffortSolver = new GlobalDrcForceImproveSolver(sharedParams)
+  bestEffortSolver.solve()
+
+  expect(bestEffortSolver.solved).toBe(true)
+  expect(bestEffortSolver.failed).toBe(false)
+  expect(bestEffortSolver.stats.finalDrcIssueCount).toBe(1)
+
+  const exactPortfolioSolver = new GlobalDrcBranchPortfolioSolver(sharedParams)
+  exactPortfolioSolver.solve()
+
+  expect(exactPortfolioSolver.solved).toBe(false)
+  expect(exactPortfolioSolver.failed).toBe(true)
+  expect(exactPortfolioSolver.stats.finalDrcIssueCount).toBe(1)
+  expect(exactPortfolioSolver.stats.drcBranchPortfolioFinalDrcIssueCount).toBe(
+    1,
+  )
+  expect(
+    exactPortfolioSolver.stats.drcBranchPortfolioBroadBranchAttempted,
+  ).toBe(false)
+  expect(exactPortfolioSolver.stats.drcBranchPortfolioBroadBranchAccepted).toBe(
+    false,
+  )
+})
 
 test("uses a broad branch only when it lowers the exact DRC count", () => {
   const collidingRoutes: HighDensityRoute[] = ["A", "B"].map(
