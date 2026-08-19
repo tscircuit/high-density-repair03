@@ -4,7 +4,10 @@ import {
   cloneRoutes,
   getLegacyFirstRepairErrors,
   getDrcSnapshot,
+  getRepairDrcIssueCount,
+  getRepairDrcIssueScore,
   isBetterDrcSnapshot,
+  isDrcSnapshotCountBetter,
 } from "../lib/solvers/GlobalDrcForceImproveSolver/solverHelpers"
 import type { SimpleRouteJson } from "../lib/types"
 
@@ -130,6 +133,41 @@ test("repairs legacy DRC errors before newly detected via-to-pad errors", () => 
     getLegacyFirstRepairErrors([viaPadError, traceError, viaError]),
   ).toEqual([traceError, viaError])
   expect(getLegacyFirstRepairErrors([viaPadError])).toEqual([viaPadError])
+})
+
+test("does not spend the legacy repair budget on via-to-pad count changes", () => {
+  const traceRouteIndexById = new Map<string, number>()
+  const viaPadError = {
+    type: "pcb_pad_pad_clearance_error",
+    pcb_via_ids: ["via_0"],
+  }
+  const bestSnapshot = {
+    errors: [{ type: "pcb_trace_error" }, viaPadError, viaPadError],
+    count: 3,
+    issueScore: 3,
+    traceRouteIndexById,
+  }
+  const fewerViaPadErrors = {
+    errors: [{ type: "pcb_trace_error" }],
+    count: 1,
+    issueScore: 1,
+    traceRouteIndexById,
+  }
+  const legacyClean = {
+    errors: [viaPadError, viaPadError],
+    count: 2,
+    issueScore: 2,
+    traceRouteIndexById,
+  }
+
+  expect(getRepairDrcIssueCount(bestSnapshot)).toBe(1)
+  expect(getRepairDrcIssueScore(bestSnapshot)).toBe(1)
+  expect(isDrcSnapshotCountBetter(fewerViaPadErrors, bestSnapshot)).toBe(false)
+  expect(isBetterDrcSnapshot(fewerViaPadErrors, 0, 1, 1, 0, bestSnapshot)).toBe(
+    false,
+  )
+  expect(isDrcSnapshotCountBetter(legacyClean, bestSnapshot)).toBe(true)
+  expect(isDrcSnapshotCountBetter(fewerViaPadErrors, legacyClean)).toBe(false)
 })
 
 test("keeps complete snapshots while prioritizing legacy DRC repairs", () => {

@@ -3061,15 +3061,29 @@ export const getNonViaPadDrcIssueCount = (snapshot: DrcSnapshot) =>
     snapshot.count - snapshot.errors.filter(isViaPadDrcError).length,
   )
 
+export const getRepairDrcIssueCount = (snapshot: DrcSnapshot) => {
+  const legacyIssueCount = getNonViaPadDrcIssueCount(snapshot)
+  return legacyIssueCount > 0 ? legacyIssueCount : snapshot.count
+}
+
+export const getRepairDrcIssueScore = (snapshot: DrcSnapshot) =>
+  getNonViaPadDrcIssueCount(snapshot) > 0
+    ? getDrcIssueScore(
+        snapshot.errors.filter((error) => !isViaPadDrcError(error)),
+      )
+    : snapshot.issueScore
+
 export const isDrcSnapshotCountBetter = (
   candidateSnapshot: DrcSnapshot,
   bestSnapshot: DrcSnapshot,
 ) => {
   const candidateLegacyCount = getNonViaPadDrcIssueCount(candidateSnapshot)
   const bestLegacyCount = getNonViaPadDrcIssueCount(bestSnapshot)
-  return candidateLegacyCount !== bestLegacyCount
-    ? candidateLegacyCount < bestLegacyCount
-    : candidateSnapshot.count < bestSnapshot.count
+  if (candidateLegacyCount !== bestLegacyCount) {
+    return candidateLegacyCount < bestLegacyCount
+  }
+  if (candidateLegacyCount > 0) return false
+  return candidateSnapshot.count < bestSnapshot.count
 }
 
 /**
@@ -4012,22 +4026,22 @@ export const isBetterDrcSnapshot = (
   bestViaIssueCount: number,
   bestSnapshot?: DrcSnapshot,
 ) => {
-  if (
-    bestSnapshot &&
-    getNonViaPadDrcIssueCount(candidateSnapshot) !==
-      getNonViaPadDrcIssueCount(bestSnapshot)
-  ) {
-    return (
-      getNonViaPadDrcIssueCount(candidateSnapshot) <
-      getNonViaPadDrcIssueCount(bestSnapshot)
-    )
+  if (bestSnapshot) {
+    const candidateLegacyCount = getNonViaPadDrcIssueCount(candidateSnapshot)
+    const bestLegacyCount = getNonViaPadDrcIssueCount(bestSnapshot)
+    if (candidateLegacyCount !== bestLegacyCount) {
+      return candidateLegacyCount < bestLegacyCount
+    }
   }
 
+  const candidateIssueCount = getRepairDrcIssueCount(candidateSnapshot)
+  const candidateIssueScore = getRepairDrcIssueScore(candidateSnapshot)
+
   return (
-    candidateSnapshot.count < bestIssueCount ||
-    (candidateSnapshot.count === bestIssueCount &&
-      candidateSnapshot.issueScore < bestIssueScore) ||
-    (candidateSnapshot.count === bestIssueCount &&
+    candidateIssueCount < bestIssueCount ||
+    (candidateIssueCount === bestIssueCount &&
+      candidateIssueScore < bestIssueScore) ||
+    (candidateIssueCount === bestIssueCount &&
       candidateViaIssueCount < bestViaIssueCount)
   )
 }
