@@ -22,8 +22,8 @@ type PortfolioPhase =
 export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
   readonly params: GlobalDrcBranchPortfolioSolverParams
   readonly inputHdRoutes: HighDensityRoute[]
-  readonly broadMaxIterations: number
-  readonly broadPassMultiplier: number
+  readonly broadMaxIterations?: number
+  readonly broadPassMultiplier?: number
   readonly autoroutingDrcEngine?: AutoroutingDrcEngine
   outputHdRoutes: HighDensityRoute[]
   private phase: PortfolioPhase = "start"
@@ -43,17 +43,25 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
 
   constructor(params: GlobalDrcBranchPortfolioSolverParams) {
     super()
-    if (!Number.isFinite(params.broadPassMultiplier)) {
-      throw new Error("broadPassMultiplier must be a finite number")
-    }
-    if (params.broadPassMultiplier <= 0) {
-      throw new Error("broadPassMultiplier must be greater than zero")
-    }
-    if (!Number.isInteger(params.broadMaxIterations)) {
-      throw new Error("broadMaxIterations must be an integer")
-    }
-    if (params.broadMaxIterations <= 0) {
-      throw new Error("broadMaxIterations must be greater than zero")
+    if (params.enableBroadFallback !== false) {
+      if (
+        typeof params.broadPassMultiplier !== "number" ||
+        !Number.isFinite(params.broadPassMultiplier)
+      ) {
+        throw new Error("broadPassMultiplier must be a finite number")
+      }
+      if (params.broadPassMultiplier <= 0) {
+        throw new Error("broadPassMultiplier must be greater than zero")
+      }
+      if (
+        typeof params.broadMaxIterations !== "number" ||
+        !Number.isInteger(params.broadMaxIterations)
+      ) {
+        throw new Error("broadMaxIterations must be an integer")
+      }
+      if (params.broadMaxIterations <= 0) {
+        throw new Error("broadMaxIterations must be greater than zero")
+      }
     }
     if (
       params.viaInPadMaxIterations !== undefined &&
@@ -85,8 +93,14 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       autoroutingDrcEngine: this.autoroutingDrcEngine,
     }
     this.inputHdRoutes = params.hdRoutes
-    this.broadMaxIterations = params.broadMaxIterations
-    this.broadPassMultiplier = params.broadPassMultiplier
+    this.broadMaxIterations =
+      params.enableBroadFallback === false
+        ? undefined
+        : params.broadMaxIterations
+    this.broadPassMultiplier =
+      params.enableBroadFallback === false
+        ? undefined
+        : params.broadPassMultiplier
     this.outputHdRoutes = params.hdRoutes
   }
 
@@ -213,11 +227,20 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
   }
 
   private startBroadBranch() {
+    if (this.params.enableBroadFallback === false) {
+      this.startSafeTraceLayerPhase(
+        this.baselineSolver!.getOutput(),
+        this.baselineSnapshot!,
+        this.baselineSolver,
+      )
+      return
+    }
+
     const broadInputRoutes = applyBroadRepulsionForces(
       this.params.srj,
       this.inputHdRoutes,
       this.params.effort ?? 1,
-      this.broadPassMultiplier,
+      this.broadPassMultiplier!,
       this.params.connMap,
     )
     this.broadInputSnapshot = getDrcSnapshot(
@@ -238,7 +261,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
     this.broadSolver = new GlobalDrcForceImproveSolver({
       ...this.params,
       hdRoutes: broadInputRoutes,
-      maxIterations: this.broadMaxIterations,
+      maxIterations: this.broadMaxIterations!,
       enableSafeTraceLayerMoves: false,
       enableViaInPadLayerMoves: false,
     })

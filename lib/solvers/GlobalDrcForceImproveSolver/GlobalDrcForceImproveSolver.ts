@@ -23,9 +23,11 @@ import {
   applySafeTraceLayerMoveForError,
   applyTerminalViaRelocationForError,
   applyTraceDetourForError,
+  applyTracePairSegmentDisplacementForError,
   applyTraceSpanDetourForError,
   applyTraceWaypointDetourForError,
   applyTracePairLayerMoveForError,
+  applyViaOnlyDisplacementForTraceError,
   applyViaInPadLayerMoveForError,
   cloneRoutes,
   cloneRoutesForIndexes,
@@ -85,6 +87,10 @@ const TRACE_PAIR_DETOUR_VARIANTS = TRACE_PAIR_DETOUR_GEOMETRY_VARIANTS.flatMap(
 )
 
 const LOW_COUNT_TRACE_TOPOLOGY_VARIANTS = [
+  ...([0, 1] as const).map((routeSide) => ({
+    kind: "displacementChain" as const,
+    routeSide,
+  })),
   ...([-1, 1] as const).flatMap((directionSign) =>
     ([0, 1] as const).map((routeSide) => ({
       kind: "segment" as const,
@@ -303,10 +309,18 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     const relaxedSnapshot =
       relaxedRoutes === routes ? snapshot : this.getSnapshot(relaxedRoutes)
 
-    this.outputHdRoutes = relaxedRoutes
-    this.outputSnapshot = relaxedSnapshot
+    const relaxedSnapshotIsNoWorse =
+      relaxedSnapshot.count < snapshot.count ||
+      (relaxedSnapshot.count === snapshot.count &&
+        relaxedSnapshot.issueScore <= snapshot.issueScore)
+    const acceptedRoutes = relaxedSnapshotIsNoWorse ? relaxedRoutes : routes
+    const acceptedSnapshot = relaxedSnapshotIsNoWorse
+      ? relaxedSnapshot
+      : snapshot
+    this.outputHdRoutes = acceptedRoutes
+    this.outputSnapshot = acceptedSnapshot
     this.stalledIterations = 0
-    this.updateStats(relaxedSnapshot)
+    this.updateStats(acceptedSnapshot)
     this.solved = true
   }
 
@@ -641,6 +655,94 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
                     error.worst_actual_clearance ?? error.actual_clearance,
                 }
               : error
+          if (variant.kind === "displacementChain") {
+            const chainCandidateRoutes = cloneRoutes(bestRoutes)
+            const displacement = applyTracePairSegmentDisplacementForError(
+              this.srj,
+              chainCandidateRoutes,
+              topologyError,
+              bestSnapshot.traceRouteIndexById,
+              variant.routeSide,
+            )
+            if (!displacement) continue
+
+            tracePairDetourAttemptedThisStep = true
+            candidateAttemptsThisStep += 1
+            this.candidateAttempts += 1
+            let materializedChainRoutes =
+              materializeRoutes(chainCandidateRoutes)
+            let chainSnapshot = this.getSnapshot(materializedChainRoutes)
+            let chainViaIssueCount = getViaDrcIssueCount(chainSnapshot)
+
+            if (
+              chainSnapshot.count > 0 &&
+              chainSnapshot.count <= 3 &&
+              candidateAttemptsThisStep < maxCandidateAttemptsThisStep
+            ) {
+              const propagatedRoutes = cloneRoutes(materializedChainRoutes)
+              let propagated = false
+              for (const chainError of chainSnapshot.errors) {
+                propagated =
+                  applyViaOnlyDisplacementForTraceError(
+                    this.srj,
+                    propagatedRoutes,
+                    chainError,
+                    chainSnapshot.traceRouteIndexById,
+                    displacement.movedRouteIndex,
+                    this.connMap,
+                  ) || propagated
+              }
+              if (propagated) {
+                candidateAttemptsThisStep += 1
+                this.candidateAttempts += 1
+                const materializedPropagatedRoutes =
+                  materializeRoutes(propagatedRoutes)
+                const propagatedSnapshot = this.getSnapshot(
+                  materializedPropagatedRoutes,
+                )
+                const propagatedViaIssueCount =
+                  getViaDrcIssueCount(propagatedSnapshot)
+                if (
+                  isBetterDrcSnapshot(
+                    propagatedSnapshot,
+                    propagatedViaIssueCount,
+                    chainSnapshot.count,
+                    chainSnapshot.issueScore,
+                    chainViaIssueCount,
+                  )
+                ) {
+                  materializedChainRoutes = materializedPropagatedRoutes
+                  chainSnapshot = propagatedSnapshot
+                  chainViaIssueCount = propagatedViaIssueCount
+                }
+              }
+            }
+
+            const comparisonCount =
+              bestTopologyCandidate?.snapshot.count ?? bestIssueCount
+            const comparisonScore =
+              bestTopologyCandidate?.snapshot.issueScore ?? bestIssueScore
+            const comparisonViaIssueCount =
+              bestTopologyCandidate?.viaIssueCount ?? bestViaIssueCount
+            if (
+              isBetterDrcSnapshot(
+                chainSnapshot,
+                chainViaIssueCount,
+                comparisonCount,
+                comparisonScore,
+                comparisonViaIssueCount,
+              )
+            ) {
+              bestTopologyCandidate = {
+                routes: materializedChainRoutes,
+                snapshot: chainSnapshot,
+                viaIssueCount: chainViaIssueCount,
+                usesViaInPad: false,
+              }
+            }
+            if (chainSnapshot.count === 0) break
+            continue
+          }
           const candidateRoutes = cloneRoutesForIndexes(bestRoutes, [
             changedRouteIndex,
           ])

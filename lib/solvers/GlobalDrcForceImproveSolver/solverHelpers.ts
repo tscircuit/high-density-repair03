@@ -3666,6 +3666,192 @@ export const getTraceRoutePairForError = (
     : undefined
 }
 
+export type TracePairSegmentDisplacement = {
+  movedRouteIndex: number
+}
+
+/**
+ * Resolves one trace-pair constraint by moving only one of the two segments.
+ * The endpoint motion is contact-weighted, and the requested displacement is
+ * derived from the exact centerline clearance deficit at that contact.
+ */
+export const applyTracePairSegmentDisplacementForError = (
+  srj: SimpleRouteJson,
+  routes: MutableRoute[],
+  error: Record<string, unknown>,
+  traceRouteIndexById: Map<string, number>,
+  routeSide: 0 | 1,
+): TracePairSegmentDisplacement | undefined => {
+  if (getDrcErrorType(error) !== "pcb_trace_error") return undefined
+  const routePair = getTraceRoutePairForError(error, traceRouteIndexById)
+  if (!routePair) return undefined
+
+  const centerCandidate = error.worst_contact_center ?? error.center
+  if (!centerCandidate || typeof centerCandidate !== "object") return undefined
+  const centerRecord = centerCandidate as Record<string, unknown>
+  if (
+    typeof centerRecord.x !== "number" ||
+    typeof centerRecord.y !== "number"
+  ) {
+    return undefined
+  }
+  const center = { x: centerRecord.x, y: centerRecord.y }
+  const segments = collectSegments(routes)
+  const leftSegment = getNearestSegment(segments, center, routePair[0])
+  const rightSegment = getNearestSegment(segments, center, routePair[1])
+  if (!leftSegment || !rightSegment || leftSegment.z !== rightSegment.z) {
+    return undefined
+  }
+
+  const [contact] = getSegmentDistanceCandidates(leftSegment, rightSegment)
+  if (!contact) return undefined
+  const separationX = contact.leftPoint.x - contact.rightPoint.x
+  const separationY = contact.leftPoint.y - contact.rightPoint.y
+  const distance = Math.hypot(separationX, separationY)
+  const minimumClearance = Number(error.minimum_clearance)
+  const requiredClearance = Number.isFinite(minimumClearance)
+    ? minimumClearance
+    : (RELAXED_DRC_OPTIONS.traceClearance ?? 0.1)
+  const penetration =
+    leftSegment.radius + rightSegment.radius + requiredClearance - distance
+  if (penetration <= POSITION_EPSILON) return undefined
+
+  const movedSegment = routeSide === 0 ? leftSegment : rightSegment
+  const contactT = routeSide === 0 ? contact.leftT : contact.rightT
+  const distributionFactor = (1 - contactT) ** 2 + contactT ** 2
+  if (distributionFactor <= POSITION_EPSILON) return undefined
+  const displacement = penetration / distributionFactor
+  const movedPoint = routeSide === 0 ? contact.leftPoint : contact.rightPoint
+  const stationaryPoint =
+    routeSide === 0 ? contact.rightPoint : contact.leftPoint
+  const directionSign = routeSide === 0 ? 1 : -1
+  const segmentX = movedSegment.end.x - movedSegment.start.x
+  const segmentY = movedSegment.end.y - movedSegment.start.y
+  const segmentLength = Math.hypot(segmentX, segmentY)
+  const fallbackSign =
+    (movedSegment.routeIndex +
+      (routeSide === 0 ? rightSegment.routeIndex : leftSegment.routeIndex)) %
+      2 ===
+    0
+      ? 1
+      : -1
+  const directionX =
+    distance > POSITION_EPSILON
+      ? (movedPoint.x - stationaryPoint.x) / distance
+      : segmentLength > POSITION_EPSILON
+        ? (-segmentY / segmentLength) * fallbackSign * directionSign
+        : directionSign
+  const directionY =
+    distance > POSITION_EPSILON
+      ? (movedPoint.y - stationaryPoint.y) / distance
+      : segmentLength > POSITION_EPSILON
+        ? (segmentX / segmentLength) * fallbackSign * directionSign
+        : 0
+  const changed = moveSegmentByDistribution(
+    routes,
+    movedSegment,
+    directionX * displacement,
+    directionY * displacement,
+    srj,
+    contactT,
+  )
+  return changed
+    ? {
+        movedRouteIndex: movedSegment.routeIndex,
+      }
+    : undefined
+}
+
+/**
+ * Propagates a trace displacement into a newly constrained movable via while
+ * keeping the already-repaired trace fixed. The caller evaluates the complete
+ * board before accepting the composite candidate.
+ */
+export const applyViaOnlyDisplacementForTraceError = (
+  srj: SimpleRouteJson,
+  routes: MutableRoute[],
+  error: Record<string, unknown>,
+  traceRouteIndexById: Map<string, number>,
+  expectedTraceRouteIndex: number,
+  connMap?: ConnectivityMap,
+) => {
+  if (getDrcErrorType(error) !== "pcb_trace_error") return false
+  const errorId =
+    typeof error.pcb_trace_error_id === "string"
+      ? error.pcb_trace_error_id.toLowerCase()
+      : ""
+  const message =
+    typeof error.message === "string" ? error.message.toLowerCase() : ""
+  const identifiesVia =
+    typeof error.pcb_via_id === "string" ||
+    Array.isArray(error.pcb_via_ids) ||
+    errorId.includes("_via_") ||
+    message.includes("via")
+  if (!identifiesVia) return false
+  const routeIndex = getTraceRouteIndexForError(error, traceRouteIndexById)
+  if (routeIndex !== expectedTraceRouteIndex) return false
+  if (getTraceRoutePairForError(error, traceRouteIndexById)) return false
+
+  const centerCandidate = error.worst_contact_center ?? error.center
+  if (!centerCandidate || typeof centerCandidate !== "object") return false
+  const centerRecord = centerCandidate as Record<string, unknown>
+  if (
+    typeof centerRecord.x !== "number" ||
+    typeof centerRecord.y !== "number"
+  ) {
+    return false
+  }
+  const center = { x: centerRecord.x, y: centerRecord.y }
+  const segment = getNearestSegment(
+    collectSegments(routes),
+    center,
+    expectedTraceRouteIndex,
+  )
+  const via = getNearestVia(collectViaNodes(routes), center)
+  if (
+    !segment ||
+    !via ||
+    !via.movable ||
+    sharesNet(via.rootConnectionName, segment.rootConnectionName, connMap)
+  ) {
+    return false
+  }
+  const projection = pointToSegmentProjection(via, segment)
+  const separationX = via.x - projection.x
+  const separationY = via.y - projection.y
+  const distance = Math.hypot(separationX, separationY)
+  const minimumClearance = Number(error.minimum_clearance)
+  const requiredClearance = Number.isFinite(minimumClearance)
+    ? minimumClearance
+    : (RELAXED_DRC_OPTIONS.traceClearance ?? 0.1)
+  const penetration = via.radius + segment.radius + requiredClearance - distance
+  if (penetration <= POSITION_EPSILON) return false
+
+  const segmentX = segment.end.x - segment.start.x
+  const segmentY = segment.end.y - segment.start.y
+  const segmentLength = Math.hypot(segmentX, segmentY)
+  const fallbackSign = via.routeIndex % 2 === 0 ? 1 : -1
+  const directionX =
+    distance > POSITION_EPSILON
+      ? separationX / distance
+      : segmentLength > POSITION_EPSILON
+        ? (-segmentY / segmentLength) * fallbackSign
+        : 1
+  const directionY =
+    distance > POSITION_EPSILON
+      ? separationY / distance
+      : segmentLength > POSITION_EPSILON
+        ? (segmentX / segmentLength) * fallbackSign
+        : 0
+  return moveVia(
+    routes,
+    via,
+    directionX * (penetration + POSITION_EPSILON),
+    directionY * (penetration + POSITION_EPSILON),
+    srj,
+  )
+}
+
 const getTraceSegmentForError = (
   routes: MutableRoute[],
   error: Record<string, unknown>,
