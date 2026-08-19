@@ -231,3 +231,47 @@ test("keeps complete snapshots while prioritizing legacy DRC repairs", () => {
     }),
   ).toBe(true)
 })
+
+test("preserves worst-contact scoring during the legacy-only repair phase", () => {
+  const srj: SimpleRouteJson = {
+    bounds: { minX: -1, minY: -1, maxX: 2, maxY: 1 },
+    connections: [{ name: "net", pointsToConnect: [] }],
+    obstacles: [],
+    layerCount: 2,
+    minTraceWidth: 0.1,
+    minViaDiameter: 0.3,
+  }
+  const routes = [
+    {
+      connectionName: "net",
+      route: [
+        { x: 0, y: 0, z: 0 },
+        { x: 1, y: 0, z: 0 },
+      ],
+      vias: [],
+      traceThickness: 0.1,
+      viaDiameter: 0.3,
+    },
+  ]
+  const snapshot = getDrcSnapshot(
+    srj,
+    routes,
+    () => ({
+      errors: [
+        {
+          type: "pcb_trace_error",
+          minimum_clearance: 0.1,
+          actual_clearance: 0.05,
+          worst_actual_clearance: -0.075,
+          center: { x: 0.5, y: 0 },
+        },
+      ],
+    }),
+    undefined,
+    undefined,
+    true,
+  )
+
+  expect(snapshot.legacyIssueScore).toBeCloseTo(0.175)
+  expect(getRepairDrcIssueScore(snapshot)).toBeCloseTo(0.175)
+})

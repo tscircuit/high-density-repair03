@@ -234,6 +234,10 @@ export const getDrcSnapshot = (
       issueScore: getDrcIssueScore(errorsWithCenters, {
         preferWorstClearance: preferWorstTraceContact,
       }),
+      legacyIssueScore: getDrcIssueScore(
+        errorsWithCenters.filter((error) => !isViaPadDrcError(error)),
+        { preferWorstClearance: preferWorstTraceContact },
+      ),
       traceRouteIndexById,
     }
   }
@@ -269,6 +273,10 @@ export const getDrcSnapshot = (
     issueScore: getDrcIssueScore(rawErrorsWithCenters, {
       preferWorstClearance: preferWorstTraceContact,
     }),
+    legacyIssueScore: getDrcIssueScore(
+      rawErrorsWithCenters.filter((error) => !isViaPadDrcError(error)),
+      { preferWorstClearance: preferWorstTraceContact },
+    ),
     traceRouteIndexById,
   }
 }
@@ -3066,12 +3074,16 @@ export const getRepairDrcIssueCount = (snapshot: DrcSnapshot) => {
   return legacyIssueCount > 0 ? legacyIssueCount : snapshot.count
 }
 
-export const getRepairDrcIssueScore = (snapshot: DrcSnapshot) =>
-  getNonViaPadDrcIssueCount(snapshot) > 0
-    ? getDrcIssueScore(
-        snapshot.errors.filter((error) => !isViaPadDrcError(error)),
-      )
-    : snapshot.issueScore
+export const getRepairDrcIssueScore = (snapshot: DrcSnapshot) => {
+  if (getNonViaPadDrcIssueCount(snapshot) === 0) return snapshot.issueScore
+  const legacyErrors = snapshot.errors.filter(
+    (error) => !isViaPadDrcError(error),
+  )
+  if (snapshot.errors.some(isViaPadDrcError)) {
+    return getDrcIssueScore(legacyErrors)
+  }
+  return snapshot.legacyIssueScore ?? getDrcIssueScore(legacyErrors)
+}
 
 export const isDrcSnapshotCountBetter = (
   candidateSnapshot: DrcSnapshot,

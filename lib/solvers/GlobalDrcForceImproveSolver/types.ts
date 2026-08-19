@@ -16,6 +16,7 @@ export type DrcSnapshot = {
   errors: DrcError[]
   count: number
   issueScore: number
+  legacyIssueScore?: number
   traceRouteIndexById: Map<string, number>
 }
 
