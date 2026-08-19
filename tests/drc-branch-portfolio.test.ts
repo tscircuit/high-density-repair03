@@ -7,7 +7,7 @@ import {
   type SimpleRouteJson,
 } from "../lib"
 
-test("zero-DRC completion is opt-in for the branch portfolio", () => {
+test("force improvement and its branch portfolio are best effort", () => {
   const srj: SimpleRouteJson = {
     bounds: { minX: 0, minY: 0, maxX: 10, maxY: 10 },
     connections: [],
@@ -52,27 +52,11 @@ test("zero-DRC completion is opt-in for the branch portfolio", () => {
   expect(bestEffortPortfolioSolver.failed).toBe(false)
   expect(bestEffortPortfolioSolver.stats.finalDrcIssueCount).toBe(1)
   expect(
-    bestEffortPortfolioSolver.stats.drcBranchPortfolioFinalDrcIssueCount,
-  ).toBeUndefined()
-
-  const exactPortfolioSolver = new GlobalDrcBranchPortfolioSolver({
-    ...sharedParams,
-    requireZeroDrcForSolved: true,
-  })
-  exactPortfolioSolver.solve()
-
-  expect(exactPortfolioSolver.solved).toBe(false)
-  expect(exactPortfolioSolver.failed).toBe(true)
-  expect(exactPortfolioSolver.stats.finalDrcIssueCount).toBe(1)
-  expect(exactPortfolioSolver.stats.drcBranchPortfolioFinalDrcIssueCount).toBe(
-    1,
-  )
-  expect(
-    exactPortfolioSolver.stats.drcBranchPortfolioBroadBranchAttempted,
+    bestEffortPortfolioSolver.stats.drcBranchPortfolioBroadBranchAttempted,
   ).toBe(false)
-  expect(exactPortfolioSolver.stats.drcBranchPortfolioBroadBranchAccepted).toBe(
-    false,
-  )
+  expect(
+    bestEffortPortfolioSolver.stats.drcBranchPortfolioBroadBranchAccepted,
+  ).toBe(false)
 })
 
 test("uses a broad branch only when it lowers the exact DRC count", () => {
