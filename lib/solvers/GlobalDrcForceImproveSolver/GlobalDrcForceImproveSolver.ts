@@ -137,6 +137,9 @@ const LOW_COUNT_TRACE_TOPOLOGY_VARIANTS = [
 ]
 
 const SAFE_TRACE_LAYER_LOCAL_EXPANSIONS = [0, 1, 2] as const
+// Reserve occasional targeted slots for different-net via pairs without
+// letting them preempt the cheaper trace-topology search every iteration.
+const DIFFERENT_NET_VIA_PRIORITY_INTERVAL = 8
 
 export class GlobalDrcForceImproveSolver extends BaseSolver {
   readonly srj: SimpleRouteJson
@@ -411,16 +414,23 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     let tracePairDetourAttemptedThisStep = false
     let acceptedCandidate = false
     let attemptedPeriodicLargeBoardBroadFallback = false
-    const prioritizedViaError = this.enableTargetedErrorSweep
-      ? (centeredErrors.find(
+    const sameNetViaError = this.enableTargetedErrorSweep
+      ? centeredErrors.find(
           (error) =>
             error.type === "pcb_via_clearance_error" &&
             error.pcb_via_pair_net_relation === "same_net",
-        ) ??
-        centeredErrors.find(
-          (error) => error.type === "pcb_via_clearance_error",
-        ))
+        )
       : undefined
+    const shouldPrioritizeDifferentNetVia =
+      this.enableTargetedErrorSweep &&
+      (this.iterations - 1) % DIFFERENT_NET_VIA_PRIORITY_INTERVAL === 0
+    const prioritizedViaError =
+      sameNetViaError ??
+      (shouldPrioritizeDifferentNetVia
+        ? centeredErrors.find(
+            (error) => error.type === "pcb_via_clearance_error",
+          )
+        : undefined)
     const prioritizedErrors = prioritizedViaError
       ? [
           prioritizedViaError,
