@@ -22,19 +22,39 @@ test("force improvement and its branch portfolio are best effort", () => {
     center: { x: 5, y: 5 },
   }
   const drcEvaluator: DrcEvaluator = () => [residualError]
-  const sharedParams = {
+  const commonParams = {
     srj,
     hdRoutes: [],
     drcEvaluator,
     maxIterations: 1,
-    enableBroadFallback: false,
     enableLargeBoardBroadFallback: false,
     enablePostSolveClearanceRelaxation: false,
     enableSafeTraceLayerMoves: false,
     enableViaInPadLayerMoves: false,
-    broadMaxIterations: 1,
-    broadPassMultiplier: 1,
   }
+  const sharedParams = {
+    ...commonParams,
+    enableBroadFallback: false,
+  }
+
+  expect(() => new GlobalDrcBranchPortfolioSolver(commonParams)).toThrow(
+    "broadPassMultiplier must be a finite number",
+  )
+  expect(
+    () =>
+      new GlobalDrcBranchPortfolioSolver({
+        ...commonParams,
+        enableBroadFallback: true,
+      }),
+  ).toThrow("broadPassMultiplier must be a finite number")
+  expect(
+    () =>
+      new GlobalDrcBranchPortfolioSolver({
+        ...sharedParams,
+        broadMaxIterations: 0,
+        broadPassMultiplier: Number.NaN,
+      }),
+  ).not.toThrow()
 
   const bestEffortSolver = new GlobalDrcForceImproveSolver(sharedParams)
   bestEffortSolver.solve()
@@ -51,6 +71,15 @@ test("force improvement and its branch portfolio are best effort", () => {
   expect(bestEffortPortfolioSolver.solved).toBe(true)
   expect(bestEffortPortfolioSolver.failed).toBe(false)
   expect(bestEffortPortfolioSolver.stats.finalDrcIssueCount).toBe(1)
+  expect(
+    bestEffortPortfolioSolver.stats.drcBranchPortfolioBroadInitialDrcIssueCount,
+  ).toBeUndefined()
+  expect(
+    bestEffortPortfolioSolver.stats.drcBranchPortfolioBroadFinalDrcIssueCount,
+  ).toBeUndefined()
+  expect(
+    bestEffortPortfolioSolver.stats.drcBranchPortfolioBroadMaxIterations,
+  ).toBeUndefined()
   expect(
     bestEffortPortfolioSolver.stats.drcBranchPortfolioBroadBranchAttempted,
   ).toBe(false)
