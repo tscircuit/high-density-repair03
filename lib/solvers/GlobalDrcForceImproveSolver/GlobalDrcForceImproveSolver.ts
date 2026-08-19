@@ -172,6 +172,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   private drcCountPlateauChecks = 0
   private largeBoardBroadFallbackMisses = 0
   private outputSnapshot: DrcSnapshot | undefined
+  residualDrcIssueCount: number | undefined
 
   constructor(params: GlobalDrcForceImproveSolverParams) {
     super()
@@ -287,6 +288,13 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     routes: HighDensityRoute[],
     snapshot: DrcSnapshot,
   ) {
+    if (snapshot.count !== 0) {
+      this.outputHdRoutes = routes
+      this.outputSnapshot = snapshot
+      this.failWithResidualDrc(snapshot)
+      return
+    }
+
     const traceRelaxedRoutes = this.enablePostSolveClearanceRelaxation
       ? applyTraceToPadClearanceRelaxation(this.srj, routes, this.connMap)
       : routes
@@ -300,11 +308,21 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     const relaxedSnapshot =
       relaxedRoutes === routes ? snapshot : this.getSnapshot(relaxedRoutes)
 
-    this.outputHdRoutes = relaxedRoutes
-    this.outputSnapshot = relaxedSnapshot
+    const acceptedRoutes = relaxedSnapshot.count === 0 ? relaxedRoutes : routes
+    const acceptedSnapshot =
+      relaxedSnapshot.count === 0 ? relaxedSnapshot : snapshot
+    this.outputHdRoutes = acceptedRoutes
+    this.outputSnapshot = acceptedSnapshot
     this.stalledIterations = 0
-    this.updateStats(relaxedSnapshot)
+    this.updateStats(acceptedSnapshot)
     this.solved = true
+  }
+
+  private failWithResidualDrc(snapshot: DrcSnapshot) {
+    this.residualDrcIssueCount = snapshot.count
+    this.updateStats(snapshot)
+    this.error = `${this.getSolverName()} exhausted exact repair with ${snapshot.count} residual DRC issue${snapshot.count === 1 ? "" : "s"}`
+    this.failed = true
   }
 
   private updateDrcCountPlateauState(snapshot: DrcSnapshot) {
@@ -334,7 +352,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         this.largeBoardBroadFallbackMisses >=
           MAX_LARGE_BOARD_BROAD_FALLBACK_MISSES
       ) {
-        this.solved = true
+        this.failWithResidualDrc(snapshot)
       }
       return
     }
@@ -363,7 +381,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
 
     this.drcCountPlateauChecks += 1
     if (this.drcCountPlateauChecks >= MAX_DRC_COUNT_PLATEAU_CHECKS) {
-      this.solved = true
+      this.failWithResidualDrc(snapshot)
     }
   }
 
@@ -1092,7 +1110,11 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   override tryFinalAcceptance() {
     const snapshot =
       this.outputSnapshot ?? this.getSnapshot(this.outputHdRoutes)
-    this.acceptSolvedRoutes(this.outputHdRoutes, snapshot)
+    if (snapshot.count === 0) {
+      this.acceptSolvedRoutes(this.outputHdRoutes, snapshot)
+    } else {
+      this.failWithResidualDrc(snapshot)
+    }
   }
 
   override getOutput() {
