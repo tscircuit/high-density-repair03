@@ -85,6 +85,8 @@ const getDrcErrorType = (error: Record<string, unknown>) =>
       : undefined
 
 export const isTraceObstacleDrcError = (error: Record<string, unknown>) => {
+  if (getDrcErrorType(error) === "pcb_pad_trace_clearance_error") return true
+
   const message =
     typeof error.message === "string" ? error.message.toLowerCase() : ""
   return (
@@ -2593,11 +2595,44 @@ const pushSegmentSegmentPair = (
 const obstacleAppliesToSegment = (
   obstacle: SimpleRouteJson["obstacles"][number],
   segment: Segment,
+  layerCount: number,
+) => getObstacleZLayers(obstacle, layerCount).includes(segment.z)
+
+const getNearestTraceObstacleSegmentPair = (
+  srj: SimpleRouteJson,
+  routes: MutableRoute[],
+  routeIndex: number,
+  center: Point,
+  connMap?: ConnectivityMap,
 ) => {
-  if (obstacle.zLayers?.includes(segment.z)) return true
-  if (segment.z === 0 && obstacle.layers.includes("top")) return true
-  if (segment.z === 1 && obstacle.layers.includes("bottom")) return true
-  return obstacle.layers.length === 0
+  const route = routes[routeIndex]
+  if (!route) return undefined
+
+  const routeSegments = collectSegmentsForRoute(route, routeIndex)
+  if (routeSegments.length === 0) return undefined
+
+  const rootConnectionName = getRootConnectionName(route)
+  const obstacle = getNearestObstacleNearPoint(
+    srj,
+    center,
+    0.6,
+    (candidate) =>
+      !obstacleSharesNet(rootConnectionName, candidate, connMap) &&
+      routeSegments.some((segment) =>
+        obstacleAppliesToSegment(candidate, segment, srj.layerCount),
+      ),
+  )
+  if (!obstacle) return undefined
+
+  const segment = getNearestSegment(
+    routeSegments.filter((candidate) =>
+      obstacleAppliesToSegment(obstacle, candidate, srj.layerCount),
+    ),
+    center,
+  )
+  if (!segment) return undefined
+
+  return { obstacle, segment }
 }
 
 const getSegmentRectRepulsion = (
@@ -2747,7 +2782,7 @@ const pushMovablesAwayFromObstacles = (
       if (!segment) continue
       if (
         obstacleSharesNet(segment.rootConnectionName, obstacle, connMap) ||
-        !obstacleAppliesToSegment(obstacle, segment)
+        !obstacleAppliesToSegment(obstacle, segment, srj.layerCount)
       ) {
         continue
       }
@@ -3263,10 +3298,19 @@ export const applySafeTraceLayerMoveForError = (
 
   const center = getErrorCenter(error)
   if (!center) return false
-  const segment = getNearestSegment(
-    collectSegmentsForRoute(route, routeIndex),
-    center,
-  )
+  const isObstacleError = isTraceObstacleDrcError(error)
+  const traceObstaclePair = isObstacleError
+    ? getNearestTraceObstacleSegmentPair(
+        srj,
+        routes,
+        routeIndex,
+        center,
+        connMap,
+      )
+    : undefined
+  const segment = isObstacleError
+    ? traceObstaclePair?.segment
+    : getNearestSegment(collectSegmentsForRoute(route, routeIndex), center)
   if (!segment || segment.z === targetZ) return false
 
   let spanStartIndex = segment.startIndex
@@ -4232,21 +4276,23 @@ export const applyDrcErrorForces = (
         continue
       }
     }
-    const nearestSegment = getNearestSegment(segments, center, routeIndex)
-    if (nearestSegment) {
-      const isObstacleError = isTraceObstacleDrcError(error)
-      const nearestObstacle = isObstacleError
-        ? getNearestObstacleNearPoint(
+    const isObstacleError = isTraceObstacleDrcError(error)
+    const traceObstaclePair =
+      isObstacleError && routeIndex !== undefined
+        ? getNearestTraceObstacleSegmentPair(
             srj,
+            routes,
+            routeIndex,
             center,
-            0.6,
-            (obstacle) =>
-              !obstacleSharesNet(
-                nearestSegment.rootConnectionName,
-                obstacle,
-                connMap,
-              ) && obstacleAppliesToSegment(obstacle, nearestSegment),
+            connMap,
           )
+        : undefined
+    const nearestSegment = isObstacleError
+      ? traceObstaclePair?.segment
+      : getNearestSegment(segments, center, routeIndex)
+    if (nearestSegment) {
+      const nearestObstacle = isObstacleError
+        ? traceObstaclePair?.obstacle
         : getNearestObstacleNearPoint(srj, center)
       if (isObstacleError && !nearestObstacle) {
         continue
@@ -4288,7 +4334,11 @@ export const applyDrcErrorForces = (
             nearestObstacle,
             connMap,
           ) &&
-            obstacleAppliesToSegment(nearestObstacle, nearestSegment)))
+            obstacleAppliesToSegment(
+              nearestObstacle,
+              nearestSegment,
+              srj.layerCount,
+            )))
       const movedSegment = shouldUseObstacleMove
         ? moveSegmentAwayFromObstacle(
             routes,
