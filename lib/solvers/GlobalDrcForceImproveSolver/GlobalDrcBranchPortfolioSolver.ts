@@ -20,6 +20,8 @@ type PortfolioPhase =
   | "viaInPad"
   | "done"
 
+const LOW_COUNT_SAFE_TRACE_LAYER_MAX_DRC_ISSUES = 3
+
 export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
   readonly params: GlobalDrcBranchPortfolioSolverParams
   readonly inputHdRoutes: HighDensityRoute[]
@@ -283,7 +285,10 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         )
         return
       }
-      if (this.params.enableSafeTraceLayerMoves) {
+      if (
+        this.params.enableSafeTraceLayerMoves &&
+        this.baselineSnapshot.count <= LOW_COUNT_SAFE_TRACE_LAYER_MAX_DRC_ISSUES
+      ) {
         this.startSafeTraceLayerPhase(
           baselineRoutes,
           this.baselineSnapshot,
