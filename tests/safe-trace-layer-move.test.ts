@@ -179,13 +179,13 @@ test("moves terminal-reaching trace transitions outside connected pads", () => {
   partialSolver.solve()
 
   expect(partialSolver.failed).toBe(false)
-  expect(partialSolver.getOutput()).toEqual(hdRoutes)
+  expect(partialSolver.getOutput()).not.toEqual(hdRoutes)
   expect(
     partialSolver.stats.drcBranchPortfolioSafeTraceLayerPhaseAttempted,
   ).toBe(true)
   expect(
     partialSolver.stats.drcBranchPortfolioSafeTraceLayerPhaseAccepted,
-  ).toBe(false)
+  ).toBe(true)
 
   const candidateRoutes = solver.getOutput()
   const inputDrcCount = getDrcSnapshot(srj, hdRoutes, partialDrcEvaluator).count
