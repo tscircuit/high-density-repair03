@@ -7,7 +7,8 @@ import { RELAXED_DRC_OPTIONS } from "./drcPresets"
 import { getDrcSnapshot } from "./drc-snapshot"
 import {
   applyBroadRepulsionForces,
-  getSafeTraceLayerDrcIssueCount,
+  getViaDrcIssueCount,
+  isBetterDrcSnapshot,
 } from "./solverHelpers"
 import type { DrcSnapshot, GlobalDrcBranchPortfolioSolverParams } from "./types"
 
@@ -332,8 +333,21 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         this.params.connMap,
         this.autoroutingDrcEngine,
       )
+      const inputViaIssueCount = getViaDrcIssueCount(
+        this.safeTraceLayerInputSnapshot!,
+      )
+      const safeTraceLayerViaIssueCount = getViaDrcIssueCount(
+        safeTraceLayerSnapshot,
+      )
       this.safeTraceLayerPhaseAccepted =
-        getSafeTraceLayerDrcIssueCount(safeTraceLayerSnapshot) === 0
+        safeTraceLayerViaIssueCount <= inputViaIssueCount &&
+        isBetterDrcSnapshot(
+          safeTraceLayerSnapshot,
+          safeTraceLayerViaIssueCount,
+          this.safeTraceLayerInputSnapshot!.count,
+          this.safeTraceLayerInputSnapshot!.issueScore,
+          inputViaIssueCount,
+        )
       const acceptedRoutes = this.safeTraceLayerPhaseAccepted
         ? safeTraceLayerRoutes
         : this.safeTraceLayerInputRoutes!

@@ -173,13 +173,16 @@ test("moves terminal-reaching trace transitions outside connected pads", () => {
 
   expect(partialSolver.solved).toBe(true)
   expect(partialSolver.failed).toBe(false)
-  expect(partialSolver.getOutput()).toEqual(hdRoutes)
+  expect(partialSolver.getOutput()).not.toEqual(hdRoutes)
+  expect(
+    getDrcSnapshot(srj, partialSolver.getOutput(), partialDrcEvaluator).count,
+  ).toBe(1)
   expect(
     partialSolver.stats.drcBranchPortfolioSafeTraceLayerPhaseAttempted,
   ).toBe(true)
   expect(
     partialSolver.stats.drcBranchPortfolioSafeTraceLayerPhaseAccepted,
-  ).toBe(false)
+  ).toBe(true)
 
   const unrelatedViaError = {
     type: "pcb_via_trace_clearance_error",
