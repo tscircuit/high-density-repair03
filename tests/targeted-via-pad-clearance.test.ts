@@ -269,7 +269,6 @@ test("preserves worst-contact scoring during the legacy-only repair phase", () =
     }),
     undefined,
     undefined,
-    true,
   )
 
   expect(snapshot.legacyIssueScore).toBeCloseTo(0.175)

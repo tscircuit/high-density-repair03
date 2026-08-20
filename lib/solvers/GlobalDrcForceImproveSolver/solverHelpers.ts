@@ -153,19 +153,14 @@ const createSimplifiedTraces = (
   return { traces, traceRouteIndexById }
 }
 
-const getDrcErrorSeverity = (
-  error: Record<string, unknown>,
-  options: { preferWorstClearance?: boolean } = {},
-) => {
-  if (options.preferWorstClearance) {
-    const minimumClearance = Number(error.minimum_clearance)
-    const worstActualClearance = Number(error.worst_actual_clearance)
-    if (
-      Number.isFinite(minimumClearance) &&
-      Number.isFinite(worstActualClearance)
-    ) {
-      return Math.max(0, minimumClearance - worstActualClearance)
-    }
+const getDrcErrorSeverity = (error: Record<string, unknown>) => {
+  const minimumClearance = Number(error.minimum_clearance)
+  const worstActualClearance = Number(error.worst_actual_clearance)
+  if (
+    Number.isFinite(minimumClearance) &&
+    Number.isFinite(worstActualClearance)
+  ) {
+    return Math.max(0, minimumClearance - worstActualClearance)
   }
 
   const message = typeof error.message === "string" ? error.message : ""
@@ -190,14 +185,8 @@ const getDrcErrorSeverity = (
   return 1
 }
 
-const getDrcIssueScore = (
-  errors: Array<Record<string, unknown>>,
-  options: { preferWorstClearance?: boolean } = {},
-) =>
-  errors.reduce(
-    (score, error) => score + getDrcErrorSeverity(error, options),
-    0,
-  )
+const getDrcIssueScore = (errors: Array<Record<string, unknown>>) =>
+  errors.reduce((score, error) => score + getDrcErrorSeverity(error), 0)
 
 export const getDrcSnapshot = (
   srj: SimpleRouteJson,
@@ -205,7 +194,6 @@ export const getDrcSnapshot = (
   drcEvaluator?: DrcEvaluator,
   connMap?: ConnectivityMap,
   autoroutingDrcEngine?: AutoroutingDrcEngine,
-  preferWorstTraceContact = false,
 ): DrcSnapshot => {
   const drcSrj =
     autoroutingDrcEngine && !drcEvaluator
@@ -231,21 +219,16 @@ export const getDrcSnapshot = (
     return {
       errors: errorsWithCenters,
       count: errors.length,
-      issueScore: getDrcIssueScore(errorsWithCenters, {
-        preferWorstClearance: preferWorstTraceContact,
-      }),
+      issueScore: getDrcIssueScore(errorsWithCenters),
       legacyIssueScore: getDrcIssueScore(
         errorsWithCenters.filter((error) => !isViaPadDrcError(error)),
-        { preferWorstClearance: preferWorstTraceContact },
       ),
       traceRouteIndexById,
     }
   }
 
   const drc =
-    autoroutingDrcEngine?.evaluate(traces, {
-      preferWorstTraceContact,
-    }) ??
+    autoroutingDrcEngine?.evaluate(traces) ??
     getDrcErrors(
       convertToCircuitJson(
         drcSrj,
@@ -270,12 +253,9 @@ export const getDrcSnapshot = (
   return {
     errors: rawErrorsWithCenters,
     count: rawErrors.length,
-    issueScore: getDrcIssueScore(rawErrorsWithCenters, {
-      preferWorstClearance: preferWorstTraceContact,
-    }),
+    issueScore: getDrcIssueScore(rawErrorsWithCenters),
     legacyIssueScore: getDrcIssueScore(
       rawErrorsWithCenters.filter((error) => !isViaPadDrcError(error)),
-      { preferWorstClearance: preferWorstTraceContact },
     ),
     traceRouteIndexById,
   }

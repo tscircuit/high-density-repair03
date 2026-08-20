@@ -179,7 +179,6 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       this.params.referenceDrcEvaluator,
       this.params.connMap,
       this.autoroutingDrcEngine,
-      false,
     )
   }
 
@@ -373,7 +372,6 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       this.params.drcEvaluator,
       this.params.connMap,
       this.autoroutingDrcEngine,
-      false,
     )
     if (
       !isDrcSnapshotCountBetter(this.broadInputSnapshot, this.baselineSnapshot!)
@@ -406,7 +404,6 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         this.params.drcEvaluator,
         this.params.connMap,
         this.autoroutingDrcEngine,
-        false,
       )
       if (getNonViaPadDrcIssueCount(this.inputSnapshot) === 0) {
         this.startViaInPadPhase(this.inputHdRoutes, this.inputSnapshot)
@@ -426,7 +423,6 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         this.params.drcEvaluator,
         this.params.connMap,
         this.autoroutingDrcEngine,
-        false,
       )
       if (getNonViaPadDrcIssueCount(this.baselineSnapshot) === 0) {
         this.startViaInPadPhase(
@@ -450,7 +446,6 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         this.params.drcEvaluator,
         this.params.connMap,
         this.autoroutingDrcEngine,
-        false,
       )
       if (
         isDrcSnapshotCountBetter(this.broadSnapshot, this.baselineSnapshot!)
@@ -480,7 +475,6 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         this.params.drcEvaluator,
         this.params.connMap,
         this.autoroutingDrcEngine,
-        false,
       )
       const finalSafeTraceLayerIssueCount = getSafeTraceLayerDrcIssueCount(
         safeTraceLayerSnapshot,
@@ -520,7 +514,6 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         this.params.drcEvaluator,
         this.params.connMap,
         this.autoroutingDrcEngine,
-        false,
       )
       const doesNotRegressLegacyDrc =
         getNonViaPadDrcIssueCount(mixedSnapshot) <=
@@ -564,7 +557,6 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         this.params.viaInPadDrcEvaluator ?? this.params.drcEvaluator,
         this.params.connMap,
         this.autoroutingDrcEngine,
-        false,
       )
       this.finishWithOutput(
         viaInPadRoutes,

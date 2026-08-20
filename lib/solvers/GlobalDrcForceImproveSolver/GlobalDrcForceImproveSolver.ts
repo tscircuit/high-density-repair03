@@ -326,7 +326,6 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       this.drcEvaluator,
       this.connMap,
       this.autoroutingDrcEngine,
-      this.initialLowCountErrorsHaveMovableTraces,
     )
   }
 
@@ -351,7 +350,6 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       this.referenceDrcEvaluator,
       this.connMap,
       this.autoroutingDrcEngine,
-      false,
     )
   }
 

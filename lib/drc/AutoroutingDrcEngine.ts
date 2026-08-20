@@ -113,10 +113,6 @@ export interface AutoroutingDrcEngineOptions {
   connMap?: ConnectivityMap
 }
 
-export interface AutoroutingDrcEngineRunOptions {
-  preferWorstTraceContact?: boolean
-}
-
 export interface AutoroutingDrcEngineRunStats {
   traceCount: number
   segmentCount: number
@@ -855,11 +851,8 @@ export class AutoroutingDrcEngine {
     return errors
   }
 
-  evaluate(
-    traces: SimplifiedPcbTraces,
-    options: AutoroutingDrcEngineRunOptions = {},
-  ): AutoroutingDrcResult {
-    return this.evaluateInternal(traces, options, true)
+  evaluate(traces: SimplifiedPcbTraces): AutoroutingDrcResult {
+    return this.evaluateInternal(traces, true)
   }
 
   /**
@@ -867,16 +860,12 @@ export class AutoroutingDrcEngine {
    * stage. Via-to-pad errors remain part of the normal complete evaluation and
    * are handled by the subsequent staged repair pass.
    */
-  evaluateLegacy(
-    traces: SimplifiedPcbTraces,
-    options: AutoroutingDrcEngineRunOptions = {},
-  ): AutoroutingDrcResult {
-    return this.evaluateInternal(traces, options, false)
+  evaluateLegacy(traces: SimplifiedPcbTraces): AutoroutingDrcResult {
+    return this.evaluateInternal(traces, false)
   }
 
   private evaluateInternal(
     traces: SimplifiedPcbTraces,
-    options: AutoroutingDrcEngineRunOptions,
     includeViaPadErrors: boolean,
   ): AutoroutingDrcResult {
     const { segments, vias } = this.collectDynamicGeometry(traces)
@@ -968,24 +957,21 @@ export class AutoroutingDrcEngine {
       }
     }
     const errors: AutoroutingDrcError[] = [...firstTraceErrorById.values()].map(
-      (error) =>
-        options.preferWorstTraceContact
-          ? {
-              ...error,
-              center:
-                typeof error.worst_contact_center === "object"
-                  ? (error.worst_contact_center as Point)
-                  : error.center,
-              message:
-                typeof error.worst_contact_message === "string"
-                  ? error.worst_contact_message
-                  : error.message,
-              actual_clearance:
-                typeof error.worst_actual_clearance === "number"
-                  ? error.worst_actual_clearance
-                  : error.actual_clearance,
-            }
-          : error,
+      (error) => ({
+        ...error,
+        center:
+          typeof error.worst_contact_center === "object"
+            ? (error.worst_contact_center as Point)
+            : error.center,
+        message:
+          typeof error.worst_contact_message === "string"
+            ? error.worst_contact_message
+            : error.message,
+        actual_clearance:
+          typeof error.worst_actual_clearance === "number"
+            ? error.worst_actual_clearance
+            : error.actual_clearance,
+      }),
     )
     errors.push(...detectedViaPadErrors)
     errors.push(...detectedViaErrors)
