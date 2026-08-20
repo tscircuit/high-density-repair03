@@ -31,6 +31,7 @@ import {
   cloneRoutesForIndexes,
   getCenteredErrors,
   getDrcSnapshot,
+  getTopologyRepairDrcSnapshot,
   getLegacyFirstRepairErrors,
   getNonViaPadDrcIssueCount,
   getRepairDrcIssueCount,
@@ -320,7 +321,10 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   }
 
   private getSnapshot(routes: HighDensityRoute[]) {
-    return getDrcSnapshot(
+    const createSnapshot = this.initialLowCountErrorsHaveMovableTraces
+      ? getTopologyRepairDrcSnapshot
+      : getDrcSnapshot
+    return createSnapshot(
       this.srj,
       routes,
       this.drcEvaluator,

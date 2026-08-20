@@ -154,15 +154,6 @@ const createSimplifiedTraces = (
 }
 
 const getDrcErrorSeverity = (error: Record<string, unknown>) => {
-  const minimumClearance = Number(error.minimum_clearance)
-  const worstActualClearance = Number(error.worst_actual_clearance)
-  if (
-    Number.isFinite(minimumClearance) &&
-    Number.isFinite(worstActualClearance)
-  ) {
-    return Math.max(0, minimumClearance - worstActualClearance)
-  }
-
   const message = typeof error.message === "string" ? error.message : ""
   const gapMatch = message.match(/gap: (-?\d+(?:\.\d+)?)mm/)
   const requiredMatch = message.match(/required: (-?\d+(?:\.\d+)?)mm/)
@@ -185,15 +176,63 @@ const getDrcErrorSeverity = (error: Record<string, unknown>) => {
   return 1
 }
 
-const getDrcIssueScore = (errors: Array<Record<string, unknown>>) =>
-  errors.reduce((score, error) => score + getDrcErrorSeverity(error), 0)
+const getTopologyRepairDrcErrorSeverity = (error: Record<string, unknown>) => {
+  const minimumClearance = Number(error.minimum_clearance)
+  const worstActualClearance = Number(error.worst_actual_clearance)
+  if (
+    Number.isFinite(minimumClearance) &&
+    Number.isFinite(worstActualClearance)
+  ) {
+    return Math.max(0, minimumClearance - worstActualClearance)
+  }
+  return getDrcErrorSeverity(error)
+}
 
-export const getDrcSnapshot = (
+const restoreFirstTraceContact = (error: Record<string, unknown>) => ({
+  ...error,
+  center:
+    typeof error.first_contact_center === "object"
+      ? error.first_contact_center
+      : error.center,
+  message:
+    typeof error.first_contact_message === "string"
+      ? error.first_contact_message
+      : error.message,
+  actual_clearance:
+    typeof error.first_actual_clearance === "number"
+      ? error.first_actual_clearance
+      : error.actual_clearance,
+})
+
+type DrcSnapshotPolicy = {
+  projectEngineError: (
+    error: Record<string, unknown>,
+  ) => Record<string, unknown>
+  getErrorSeverity: (error: Record<string, unknown>) => number
+}
+
+const STANDARD_DRC_SNAPSHOT_POLICY: DrcSnapshotPolicy = {
+  projectEngineError: restoreFirstTraceContact,
+  getErrorSeverity: getDrcErrorSeverity,
+}
+
+const TOPOLOGY_REPAIR_DRC_SNAPSHOT_POLICY: DrcSnapshotPolicy = {
+  projectEngineError: (error) => error,
+  getErrorSeverity: getTopologyRepairDrcErrorSeverity,
+}
+
+const getDrcIssueScore = (
+  errors: Array<Record<string, unknown>>,
+  getErrorSeverity: DrcSnapshotPolicy["getErrorSeverity"] = getDrcErrorSeverity,
+) => errors.reduce((score, error) => score + getErrorSeverity(error), 0)
+
+const createDrcSnapshot = (
   srj: SimpleRouteJson,
   routes: HighDensityRoute[],
   drcEvaluator?: DrcEvaluator,
   connMap?: ConnectivityMap,
   autoroutingDrcEngine?: AutoroutingDrcEngine,
+  policy: DrcSnapshotPolicy = STANDARD_DRC_SNAPSHOT_POLICY,
 ): DrcSnapshot => {
   const drcSrj =
     autoroutingDrcEngine && !drcEvaluator
@@ -219,9 +258,10 @@ export const getDrcSnapshot = (
     return {
       errors: errorsWithCenters,
       count: errors.length,
-      issueScore: getDrcIssueScore(errorsWithCenters),
+      issueScore: getDrcIssueScore(errorsWithCenters, policy.getErrorSeverity),
       legacyIssueScore: getDrcIssueScore(
         errorsWithCenters.filter((error) => !isViaPadDrcError(error)),
+        policy.getErrorSeverity,
       ),
       traceRouteIndexById,
     }
@@ -247,19 +287,54 @@ export const getDrcSnapshot = (
     )
 
   const rawErrors = drc.errors as unknown as Array<Record<string, unknown>>
-  const rawErrorsWithCenters = (drc.errorsWithCenters.length > 0
-    ? drc.errorsWithCenters
-    : drc.errors) as unknown as Array<Record<string, unknown>>
+  const rawErrorsWithCenters = (
+    drc.errorsWithCenters.length > 0 ? drc.errorsWithCenters : drc.errors
+  ).map((error) =>
+    policy.projectEngineError(error as unknown as Record<string, unknown>),
+  )
   return {
     errors: rawErrorsWithCenters,
     count: rawErrors.length,
-    issueScore: getDrcIssueScore(rawErrorsWithCenters),
+    issueScore: getDrcIssueScore(rawErrorsWithCenters, policy.getErrorSeverity),
     legacyIssueScore: getDrcIssueScore(
       rawErrorsWithCenters.filter((error) => !isViaPadDrcError(error)),
+      policy.getErrorSeverity,
     ),
     traceRouteIndexById,
   }
 }
+
+export const getDrcSnapshot = (
+  srj: SimpleRouteJson,
+  routes: HighDensityRoute[],
+  drcEvaluator?: DrcEvaluator,
+  connMap?: ConnectivityMap,
+  autoroutingDrcEngine?: AutoroutingDrcEngine,
+) =>
+  createDrcSnapshot(
+    srj,
+    routes,
+    drcEvaluator,
+    connMap,
+    autoroutingDrcEngine,
+    STANDARD_DRC_SNAPSHOT_POLICY,
+  )
+
+export const getTopologyRepairDrcSnapshot = (
+  srj: SimpleRouteJson,
+  routes: HighDensityRoute[],
+  drcEvaluator?: DrcEvaluator,
+  connMap?: ConnectivityMap,
+  autoroutingDrcEngine?: AutoroutingDrcEngine,
+) =>
+  createDrcSnapshot(
+    srj,
+    routes,
+    drcEvaluator,
+    connMap,
+    autoroutingDrcEngine,
+    TOPOLOGY_REPAIR_DRC_SNAPSHOT_POLICY,
+  )
 
 export const collectViaNodes = (
   routes: HighDensityRoute[],

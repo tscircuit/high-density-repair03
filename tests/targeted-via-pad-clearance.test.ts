@@ -4,6 +4,7 @@ import {
   cloneRoutes,
   getLegacyFirstRepairErrors,
   getDrcSnapshot,
+  getTopologyRepairDrcSnapshot,
   getRepairDrcIssueCount,
   getRepairDrcIssueScore,
   isBetterDrcSnapshot,
@@ -253,7 +254,7 @@ test("preserves worst-contact scoring during the legacy-only repair phase", () =
       viaDiameter: 0.3,
     },
   ]
-  const snapshot = getDrcSnapshot(
+  const snapshot = getTopologyRepairDrcSnapshot(
     srj,
     routes,
     () => ({

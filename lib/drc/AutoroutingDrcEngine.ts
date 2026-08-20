@@ -940,6 +940,9 @@ export class AutoroutingDrcEngine {
       if (!existing) {
         firstTraceErrorById.set(errorId, {
           ...error,
+          first_contact_center: error.center,
+          first_contact_message: error.message,
+          first_actual_clearance: actualClearance,
           worst_contact_center: error.center,
           worst_contact_message: error.message,
           worst_actual_clearance: actualClearance,
