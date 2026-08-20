@@ -161,6 +161,8 @@ test("repairs the obstacle-layer segment when a wrong-layer segment is nearer", 
     enableSafeTraceLayerMoves: true,
     enableViaInPadLayerMoves: false,
     viaInPadMaxIterations: 4,
+    broadMaxIterations: 4,
+    broadPassMultiplier: 1,
   })
 
   solver.solve()

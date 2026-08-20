@@ -46,10 +46,8 @@ export type GlobalDrcForceImproveSolverParams = {
 
 export type GlobalDrcBranchPortfolioSolverParams =
   GlobalDrcForceImproveSolverParams & {
-    /** Required unless broad fallback is explicitly disabled. */
-    broadMaxIterations?: number
-    /** Required unless broad fallback is explicitly disabled. */
-    broadPassMultiplier?: number
+    broadMaxIterations: number
+    broadPassMultiplier: number
     viaInPadDrcEvaluator?: DrcEvaluator
     viaInPadMaxIterations?: number
   }

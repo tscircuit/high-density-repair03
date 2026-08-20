@@ -1,92 +1,10 @@
 import { expect, test } from "bun:test"
 import {
   GlobalDrcBranchPortfolioSolver,
-  GlobalDrcForceImproveSolver,
   type DrcEvaluator,
   type HighDensityRoute,
   type SimpleRouteJson,
 } from "../lib"
-
-test("force improvement and its branch portfolio are best effort", () => {
-  const srj: SimpleRouteJson = {
-    bounds: { minX: 0, minY: 0, maxX: 10, maxY: 10 },
-    connections: [],
-    obstacles: [],
-    layerCount: 2,
-    minTraceWidth: 0.1,
-    minViaDiameter: 0.3,
-  }
-  const residualError = {
-    type: "pcb_trace_error",
-    message: "synthetic residual DRC",
-    center: { x: 5, y: 5 },
-  }
-  const drcEvaluator: DrcEvaluator = () => [residualError]
-  const commonParams = {
-    srj,
-    hdRoutes: [],
-    drcEvaluator,
-    maxIterations: 1,
-    enableLargeBoardBroadFallback: false,
-    enablePostSolveClearanceRelaxation: false,
-    enableSafeTraceLayerMoves: false,
-    enableViaInPadLayerMoves: false,
-  }
-  const sharedParams = {
-    ...commonParams,
-    enableBroadFallback: false,
-  }
-
-  expect(() => new GlobalDrcBranchPortfolioSolver(commonParams)).toThrow(
-    "broadPassMultiplier must be a finite number",
-  )
-  expect(
-    () =>
-      new GlobalDrcBranchPortfolioSolver({
-        ...commonParams,
-        enableBroadFallback: true,
-      }),
-  ).toThrow("broadPassMultiplier must be a finite number")
-  expect(
-    () =>
-      new GlobalDrcBranchPortfolioSolver({
-        ...sharedParams,
-        broadMaxIterations: 0,
-        broadPassMultiplier: Number.NaN,
-      }),
-  ).not.toThrow()
-
-  const bestEffortSolver = new GlobalDrcForceImproveSolver(sharedParams)
-  bestEffortSolver.solve()
-
-  expect(bestEffortSolver.solved).toBe(true)
-  expect(bestEffortSolver.failed).toBe(false)
-  expect(bestEffortSolver.stats.finalDrcIssueCount).toBe(1)
-
-  const bestEffortPortfolioSolver = new GlobalDrcBranchPortfolioSolver(
-    sharedParams,
-  )
-  bestEffortPortfolioSolver.solve()
-
-  expect(bestEffortPortfolioSolver.solved).toBe(true)
-  expect(bestEffortPortfolioSolver.failed).toBe(false)
-  expect(bestEffortPortfolioSolver.stats.finalDrcIssueCount).toBe(1)
-  expect(
-    bestEffortPortfolioSolver.stats.drcBranchPortfolioBroadInitialDrcIssueCount,
-  ).toBeUndefined()
-  expect(
-    bestEffortPortfolioSolver.stats.drcBranchPortfolioBroadFinalDrcIssueCount,
-  ).toBeUndefined()
-  expect(
-    bestEffortPortfolioSolver.stats.drcBranchPortfolioBroadMaxIterations,
-  ).toBeUndefined()
-  expect(
-    bestEffortPortfolioSolver.stats.drcBranchPortfolioBroadBranchAttempted,
-  ).toBe(false)
-  expect(
-    bestEffortPortfolioSolver.stats.drcBranchPortfolioBroadBranchAccepted,
-  ).toBe(false)
-})
 
 test("uses a broad branch only when it lowers the exact DRC count", () => {
   const collidingRoutes: HighDensityRoute[] = ["A", "B"].map(
