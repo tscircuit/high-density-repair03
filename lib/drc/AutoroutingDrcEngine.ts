@@ -679,6 +679,9 @@ export class AutoroutingDrcEngine {
         gap,
       ),
       pcb_trace_id: segment.traceId,
+      pcb_trace_ids: [segment.traceId, via.traceId],
+      pcb_via_id: via.viaId,
+      pcb_via_ids: [via.viaId],
       source_trace_id: "",
       pcb_trace_error_id: errorId,
       minimum_clearance: this.traceClearance,
@@ -772,6 +775,7 @@ export class AutoroutingDrcEngine {
             sameNet ? "" : " from different nets"
           } are too close together (gap: ${gap.toFixed(3)}mm)`,
           pcb_via_ids: [viaA.viaId, viaB.viaId],
+          pcb_trace_ids: [viaA.traceId, viaB.traceId],
           pcb_via_pair_net_relation: sameNet ? "same_net" : "different_net",
           minimum_clearance: this.viaClearance,
           actual_clearance: gap,

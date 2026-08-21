@@ -113,6 +113,16 @@ test("matches the relaxed reference checks for autorouting collision types", () 
   expect(engineResult.locationAwareErrors.length).toBe(
     engineResult.errors.length,
   )
+  expect(
+    engineResult.errors.find(
+      (error) =>
+        error.pcb_trace_id === "trace_a" && error.pcb_via_id === "via_0",
+    ),
+  ).toMatchObject({
+    pcb_trace_ids: ["trace_a", "trace_c"],
+    pcb_via_id: "via_0",
+    pcb_via_ids: ["via_0"],
+  })
 })
 
 test("classifies close via pairs by canonical SRJ net", () => {
@@ -177,9 +187,19 @@ test("classifies close via pairs by canonical SRJ net", () => {
   ).toBe("same_net")
   expect(
     result.errors.find(
+      (error) => error.pcb_error_id === "same_net_vias_close_via_0_via_1",
+    )?.pcb_trace_ids,
+  ).toEqual(["trace_0", "trace_1"])
+  expect(
+    result.errors.find(
       (error) => error.pcb_error_id === "different_net_vias_close_via_1_via_2",
     )?.pcb_via_pair_net_relation,
   ).toBe("different_net")
+  expect(
+    result.errors.find(
+      (error) => error.pcb_error_id === "different_net_vias_close_via_1_via_2",
+    )?.pcb_trace_ids,
+  ).toEqual(["trace_1", "trace_2"])
 })
 
 test("uses an injected connectivity map for equivalent net identifiers", () => {

@@ -1,9 +1,10 @@
 import { expect, test } from "bun:test"
+import { AutoroutingDrcEngine } from "../lib"
 import {
   applyDrcErrorForces,
   cloneRoutes,
 } from "../lib/solvers/GlobalDrcForceImproveSolver/solverHelpers"
-import type { SimpleRouteJson } from "../lib/types"
+import type { SimpleRouteJson, SimplifiedPcbTraces } from "../lib/types"
 
 test("repairs an exact via-trace pair when its reported center is distant", () => {
   const srj: SimpleRouteJson = {
@@ -60,4 +61,198 @@ test("repairs an exact via-trace pair when its reported center is distant", () =
 
   expect(changed).toBe(true)
   expect(routes[1]?.route[1]?.y).not.toBe(0.8)
+})
+
+test("moves only the promoted via-owner route for enriched trace-via errors", () => {
+  const srj: SimpleRouteJson = {
+    bounds: { minX: -2, minY: -2, maxX: 2, maxY: 2 },
+    connections: [
+      { name: "owner", pointsToConnect: [] },
+      { name: "unrelated", pointsToConnect: [] },
+    ],
+    obstacles: [],
+    layerCount: 2,
+    minTraceWidth: 0.1,
+    minViaDiameter: 0.3,
+  }
+  const routes = cloneRoutes([
+    {
+      connectionName: "owner",
+      route: [
+        { x: -1, y: 0, z: 0 },
+        { x: 0.3, y: 0, z: 0 },
+        { x: 0.3, y: 0, z: 1 },
+        { x: 1, y: 0, z: 1 },
+      ],
+      vias: [{ x: 0.3, y: 0 }],
+      traceThickness: 0.1,
+      viaDiameter: 0.3,
+    },
+    {
+      connectionName: "unrelated",
+      route: [
+        { x: -1, y: 1, z: 0 },
+        { x: 0.05, y: 0, z: 0 },
+        { x: 0.05, y: 0, z: 1 },
+        { x: 1, y: 1, z: 1 },
+      ],
+      vias: [{ x: 0.05, y: 0 }],
+      traceThickness: 0.1,
+      viaDiameter: 0.3,
+    },
+  ])
+  const originalOwnerRoute = structuredClone(routes[0]!.route)
+  const originalUnrelatedRoute = structuredClone(routes[1]!.route)
+
+  const changed = applyDrcErrorForces(
+    srj,
+    routes,
+    [
+      {
+        type: "pcb_trace_error",
+        error_type: "pcb_trace_error",
+        pcb_trace_id: "owner_0",
+        pcb_trace_ids: ["fixed_trace", "owner_0"],
+        pcb_via_id: "offending_owner_via",
+        pcb_via_ids: ["offending_owner_via"],
+        center: { x: 0, y: 0 },
+      },
+    ],
+    new Map([
+      ["owner_0", 0],
+      ["unrelated_0", 1],
+    ]),
+    1,
+  )
+
+  expect(changed).toBe(true)
+  expect(routes[0]?.route).not.toEqual(originalOwnerRoute)
+  expect(routes[0]?.route[1]?.x).toBeGreaterThan(0.3)
+  expect(routes[1]?.route).toEqual(originalUnrelatedRoute)
+})
+
+test("keeps raw engine trace-via errors on the primary segment route", () => {
+  const srj: SimpleRouteJson = {
+    bounds: { minX: -2, minY: -2, maxX: 2, maxY: 2 },
+    connections: [
+      { name: "segment", pointsToConnect: [] },
+      { name: "via_owner", pointsToConnect: [] },
+    ],
+    obstacles: [],
+    layerCount: 2,
+    minTraceWidth: 0.1,
+    minViaDiameter: 0.3,
+  }
+  const routes = cloneRoutes([
+    {
+      connectionName: "segment",
+      route: [
+        { x: -1, y: 0, z: 1 },
+        { x: 1, y: 0, z: 1 },
+        { x: 1, y: 1, z: 1 },
+        { x: 0.01, y: 0.1, z: 1 },
+        { x: 0.01, y: 0.1, z: 0 },
+        { x: -1, y: 1, z: 0 },
+      ],
+      vias: [{ x: 0.01, y: 0.1 }],
+      traceThickness: 0.1,
+      viaDiameter: 0.3,
+    },
+    {
+      connectionName: "via_owner",
+      route: [
+        { x: 0, y: 1, z: 0 },
+        { x: 0, y: 0.25, z: 0 },
+        { x: 0, y: 0.25, z: 1 },
+        { x: 0.5, y: 1, z: 1 },
+      ],
+      vias: [{ x: 0, y: 0.25 }],
+      traceThickness: 0.1,
+      viaDiameter: 0.3,
+    },
+  ])
+  const traces: SimplifiedPcbTraces = [
+    {
+      type: "pcb_trace",
+      pcb_trace_id: "segment_0",
+      connection_name: "segment",
+      route: [
+        { route_type: "wire", x: -1, y: 0, width: 0.1, layer: "bottom" },
+        { route_type: "wire", x: 1, y: 0, width: 0.1, layer: "bottom" },
+        { route_type: "wire", x: 1, y: 1, width: 0.1, layer: "bottom" },
+        {
+          route_type: "wire",
+          x: 0.01,
+          y: 0.1,
+          width: 0.1,
+          layer: "bottom",
+        },
+        {
+          route_type: "via",
+          x: 0.01,
+          y: 0.1,
+          from_layer: "bottom",
+          to_layer: "top",
+          via_diameter: 0.3,
+        },
+        {
+          route_type: "wire",
+          x: 0.01,
+          y: 0.1,
+          width: 0.1,
+          layer: "top",
+        },
+        { route_type: "wire", x: -1, y: 1, width: 0.1, layer: "top" },
+      ],
+    },
+    {
+      type: "pcb_trace",
+      pcb_trace_id: "via_owner_0",
+      connection_name: "via_owner",
+      route: [
+        { route_type: "wire", x: 0, y: 1, width: 0.1, layer: "top" },
+        { route_type: "wire", x: 0, y: 0.25, width: 0.1, layer: "top" },
+        {
+          route_type: "via",
+          x: 0,
+          y: 0.25,
+          from_layer: "top",
+          to_layer: "bottom",
+          via_diameter: 0.3,
+        },
+        {
+          route_type: "wire",
+          x: 0,
+          y: 0.25,
+          width: 0.1,
+          layer: "bottom",
+        },
+        { route_type: "wire", x: 0.5, y: 1, width: 0.1, layer: "bottom" },
+      ],
+    },
+  ]
+  const rawError = new AutoroutingDrcEngine(srj)
+    .evaluate(traces)
+    .errors.find(
+      (error) =>
+        error.pcb_trace_id === "segment_0" && Array.isArray(error.pcb_via_ids),
+    )
+  expect(rawError).toBeDefined()
+  const originalSegmentRoute = structuredClone(routes[0]!.route)
+  const originalViaOwnerRoute = structuredClone(routes[1]!.route)
+
+  const changed = applyDrcErrorForces(
+    srj,
+    routes,
+    [rawError!],
+    new Map([
+      ["segment_0", 0],
+      ["via_owner_0", 1],
+    ]),
+    1,
+  )
+
+  expect(changed).toBe(true)
+  expect(routes[0]?.route).not.toEqual(originalSegmentRoute)
+  expect(routes[1]?.route).toEqual(originalViaOwnerRoute)
 })
