@@ -251,7 +251,9 @@ test("keeps raw engine trace-via errors on the primary segment route", () => {
       ],
     },
   ]
-  const rawError = new AutoroutingDrcEngine(srj)
+  const rawError = new AutoroutingDrcEngine(srj, {
+    includeTraceViaOwnerMetadata: true,
+  })
     .evaluate(traces)
     .errors.find(
       (error) =>

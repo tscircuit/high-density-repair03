@@ -103,6 +103,11 @@ export interface AutoroutingDrcEngineOptions {
    * are not fully represented by the SRJ connection metadata.
    */
   connMap?: ConnectivityMap
+  /**
+   * Include explicit trace/via owner ids for preload-aware repair targeting.
+   * Defaults to false so legacy callers receive the original error shape.
+   */
+  includeTraceViaOwnerMetadata?: boolean
 }
 
 export interface AutoroutingDrcEngineRunStats {
@@ -344,6 +349,7 @@ export class AutoroutingDrcEngine {
   private readonly viaClearance: number
   private readonly cellSize: number
   private readonly connMap?: ConnectivityMap
+  private readonly includeTraceViaOwnerMetadata: boolean
   private readonly canonicalNetByAlias = new Map<string, string>()
   private readonly obstacles: StaticObstacle[]
   private readonly obstacleIndexesByLayer = new Map<
@@ -370,6 +376,8 @@ export class AutoroutingDrcEngine {
       MIN_VIA_CLEARANCE,
     )
     this.connMap = options.connMap
+    this.includeTraceViaOwnerMetadata =
+      options.includeTraceViaOwnerMetadata ?? false
     this.cellSize = options.spatialCellSize ?? this.getDefaultSpatialCellSize()
 
     if (!Number.isFinite(this.traceClearance) || this.traceClearance < 0) {
@@ -679,9 +687,13 @@ export class AutoroutingDrcEngine {
         gap,
       ),
       pcb_trace_id: segment.traceId,
-      pcb_trace_ids: [segment.traceId, via.traceId],
-      pcb_via_id: via.viaId,
-      pcb_via_ids: [via.viaId],
+      ...(this.includeTraceViaOwnerMetadata
+        ? {
+            pcb_trace_ids: [segment.traceId, via.traceId],
+            pcb_via_id: via.viaId,
+            pcb_via_ids: [via.viaId],
+          }
+        : {}),
       source_trace_id: "",
       pcb_trace_error_id: errorId,
       minimum_clearance: this.traceClearance,
@@ -775,7 +787,9 @@ export class AutoroutingDrcEngine {
             sameNet ? "" : " from different nets"
           } are too close together (gap: ${gap.toFixed(3)}mm)`,
           pcb_via_ids: [viaA.viaId, viaB.viaId],
-          pcb_trace_ids: [viaA.traceId, viaB.traceId],
+          ...(this.includeTraceViaOwnerMetadata
+            ? { pcb_trace_ids: [viaA.traceId, viaB.traceId] }
+            : {}),
           pcb_via_pair_net_relation: sameNet ? "same_net" : "different_net",
           minimum_clearance: this.viaClearance,
           actual_clearance: gap,

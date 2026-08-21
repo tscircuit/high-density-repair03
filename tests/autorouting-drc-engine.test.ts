@@ -97,7 +97,10 @@ test("matches the relaxed reference checks for autorouting collision types", () 
     },
   ]
 
-  const engineResult = new AutoroutingDrcEngine(srj).evaluate(traces)
+  const legacyEngineResult = new AutoroutingDrcEngine(srj).evaluate(traces)
+  const engineResult = new AutoroutingDrcEngine(srj, {
+    includeTraceViaOwnerMetadata: true,
+  }).evaluate(traces)
   const referenceResult = getDrcErrors(
     convertToCircuitJson(srj, traces, 0.1, 0.3),
     { traceClearance: 0.1, viaClearance: 0.1 },
@@ -113,6 +116,11 @@ test("matches the relaxed reference checks for autorouting collision types", () 
   expect(engineResult.locationAwareErrors.length).toBe(
     engineResult.errors.length,
   )
+  expect(
+    legacyEngineResult.errors.find(
+      (error) => error.pcb_trace_error_id === "overlap_trace_a_via_0",
+    ),
+  ).not.toHaveProperty("pcb_via_ids")
   expect(
     engineResult.errors.find(
       (error) =>
@@ -169,7 +177,9 @@ test("classifies close via pairs by canonical SRJ net", () => {
       { route_type: "wire", x, y: 0.5, width: 0.1, layer: "bottom" },
     ],
   })
-  const result = new AutoroutingDrcEngine(srj).evaluate([
+  const result = new AutoroutingDrcEngine(srj, {
+    includeTraceViaOwnerMetadata: true,
+  }).evaluate([
     createViaTrace("trace_0", "shared_mst0", 0),
     createViaTrace("trace_1", "shared_mst1", 0.2),
     createViaTrace("trace_2", "foreign", 0.4),

@@ -196,6 +196,8 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
             viaClearance:
               params.srj.minTraceToPadEdgeClearance ??
               RELAXED_DRC_OPTIONS.viaClearance,
+            includeTraceViaOwnerMetadata:
+              params.enableTraceViaOwnerTargeting ?? false,
           }))
     if (
       params.viaHoleDiameter !== undefined &&
