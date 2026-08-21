@@ -3,6 +3,7 @@ import { AutoroutingDrcEngine } from "../lib"
 import {
   applyDrcErrorForces,
   cloneRoutes,
+  getTraceRoutePairForError,
 } from "../lib/solvers/GlobalDrcForceImproveSolver/solverHelpers"
 import type { SimpleRouteJson, SimplifiedPcbTraces } from "../lib/types"
 
@@ -257,6 +258,15 @@ test("keeps raw engine trace-via errors on the primary segment route", () => {
         error.pcb_trace_id === "segment_0" && Array.isArray(error.pcb_via_ids),
     )
   expect(rawError).toBeDefined()
+  expect(
+    getTraceRoutePairForError(
+      rawError!,
+      new Map([
+        ["segment_0", 0],
+        ["via_owner_0", 1],
+      ]),
+    ),
+  ).toBeUndefined()
   const originalSegmentRoute = structuredClone(routes[0]!.route)
   const originalViaOwnerRoute = structuredClone(routes[1]!.route)
 

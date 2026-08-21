@@ -3637,6 +3637,9 @@ export const getTraceRoutePairForError = (
 ): [number, number] | undefined => {
   const primaryTraceId = error.pcb_trace_id
   if (typeof primaryTraceId !== "string") return undefined
+  if (Array.isArray(error.pcb_via_ids) && error.pcb_via_ids.length > 0) {
+    return undefined
+  }
 
   const explicitTraceIds = Array.isArray(error.pcb_trace_ids)
     ? error.pcb_trace_ids.filter(
