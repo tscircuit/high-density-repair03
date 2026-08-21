@@ -59,5 +59,6 @@ test("repairs an exact via-trace pair when its reported center is distant", () =
   )
 
   expect(changed).toBe(true)
-  expect(routes[1]?.route[1]?.y).not.toBe(0.8)
+  expect(routes[0]?.route[1]?.y).toBeCloseTo(1.0575)
+  expect(routes[1]?.route[1]?.y).toBeCloseTo(0.7425)
 })
