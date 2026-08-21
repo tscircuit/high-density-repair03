@@ -42,6 +42,12 @@ export type GlobalDrcForceImproveSolverParams = {
   enablePostSolveClearanceRelaxation?: boolean
   enableSafeTraceLayerMoves?: boolean
   enableViaInPadLayerMoves?: boolean
+  /**
+   * Use enriched trace/via ownership metadata to target only a movable via
+   * owner when the opposing trace is fixed. Defaults to false so callers keep
+   * the legacy paired trace/via force behavior unless they explicitly opt in.
+   */
+  enableTraceViaOwnerTargeting?: boolean
 }
 
 export type GlobalDrcBranchPortfolioSolverParams =

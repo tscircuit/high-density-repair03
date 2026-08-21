@@ -63,7 +63,7 @@ test("repairs an exact via-trace pair when its reported center is distant", () =
   expect(routes[1]?.route[1]?.y).not.toBe(0.8)
 })
 
-test("moves only the promoted via-owner route for enriched trace-via errors", () => {
+test("opts into promoted via-owner targeting while retaining the legacy default", () => {
   const srj: SimpleRouteJson = {
     bounds: { minX: -2, minY: -2, maxX: 2, maxY: 2 },
     connections: [
@@ -75,7 +75,7 @@ test("moves only the promoted via-owner route for enriched trace-via errors", ()
     minTraceWidth: 0.1,
     minViaDiameter: 0.3,
   }
-  const routes = cloneRoutes([
+  const initialRoutes = cloneRoutes([
     {
       connectionName: "owner",
       route: [
@@ -101,34 +101,53 @@ test("moves only the promoted via-owner route for enriched trace-via errors", ()
       viaDiameter: 0.3,
     },
   ])
-  const originalOwnerRoute = structuredClone(routes[0]!.route)
-  const originalUnrelatedRoute = structuredClone(routes[1]!.route)
+  const originalOwnerRoute = structuredClone(initialRoutes[0]!.route)
+  const originalUnrelatedRoute = structuredClone(initialRoutes[1]!.route)
+  const error = {
+    type: "pcb_trace_error",
+    error_type: "pcb_trace_error",
+    pcb_trace_id: "owner_0",
+    pcb_trace_ids: ["fixed_trace", "owner_0"],
+    pcb_via_id: "offending_owner_via",
+    pcb_via_ids: ["offending_owner_via"],
+    center: { x: 0, y: 0 },
+  }
+  const traceRouteIndexById = new Map([
+    ["owner_0", 0],
+    ["unrelated_0", 1],
+  ])
+  const legacyRoutes = cloneRoutes(initialRoutes)
 
-  const changed = applyDrcErrorForces(
+  const legacyChanged = applyDrcErrorForces(
     srj,
-    routes,
-    [
-      {
-        type: "pcb_trace_error",
-        error_type: "pcb_trace_error",
-        pcb_trace_id: "owner_0",
-        pcb_trace_ids: ["fixed_trace", "owner_0"],
-        pcb_via_id: "offending_owner_via",
-        pcb_via_ids: ["offending_owner_via"],
-        center: { x: 0, y: 0 },
-      },
-    ],
-    new Map([
-      ["owner_0", 0],
-      ["unrelated_0", 1],
-    ]),
+    legacyRoutes,
+    [error],
+    traceRouteIndexById,
     1,
   )
 
-  expect(changed).toBe(true)
-  expect(routes[0]?.route).not.toEqual(originalOwnerRoute)
-  expect(routes[0]?.route[1]?.x).toBeGreaterThan(0.3)
-  expect(routes[1]?.route).toEqual(originalUnrelatedRoute)
+  expect(legacyChanged).toBe(true)
+  expect(legacyRoutes[0]?.route).not.toEqual(originalOwnerRoute)
+  expect(legacyRoutes[1]?.route).not.toEqual(originalUnrelatedRoute)
+
+  const targetedRoutes = cloneRoutes(initialRoutes)
+  const targetedChanged = applyDrcErrorForces(
+    srj,
+    targetedRoutes,
+    [error],
+    traceRouteIndexById,
+    1,
+    undefined,
+    true,
+    false,
+    true,
+    true,
+  )
+
+  expect(targetedChanged).toBe(true)
+  expect(targetedRoutes[0]?.route).not.toEqual(originalOwnerRoute)
+  expect(targetedRoutes[0]?.route[1]?.x).toBeGreaterThan(0.3)
+  expect(targetedRoutes[1]?.route).toEqual(originalUnrelatedRoute)
 })
 
 test("keeps raw engine trace-via errors on the primary segment route", () => {
@@ -250,6 +269,11 @@ test("keeps raw engine trace-via errors on the primary segment route", () => {
       ["via_owner_0", 1],
     ]),
     1,
+    undefined,
+    true,
+    false,
+    true,
+    true,
   )
 
   expect(changed).toBe(true)

@@ -3975,6 +3975,7 @@ export const applyDrcErrorForces = (
   enableCanonicalPairRepairs = true,
   enableSameNetViaCanonicalization = false,
   allowSharedViaSiteMove = true,
+  enableTraceViaOwnerTargeting = false,
 ) => {
   let changed = false
   const vias = collectViaNodes(routes)
@@ -3987,9 +3988,15 @@ export const applyDrcErrorForces = (
 
     const viaIds = error.pcb_via_ids
     const isViaPairError = getDrcErrorType(error) === "pcb_via_clearance_error"
+    const hasReportedViaIds = Array.isArray(viaIds) && viaIds.length > 0
     const hasTraceViaMetadata =
-      !isViaPairError && Array.isArray(viaIds) && viaIds.length > 0
-    if (isViaPairError && Array.isArray(viaIds) && viaIds.length > 0) {
+      !isViaPairError &&
+      hasReportedViaIds &&
+      (typeof error.pcb_trace_id === "string" ||
+        Array.isArray(error.pcb_trace_ids))
+    const hasTargetedTraceViaMetadata =
+      enableTraceViaOwnerTargeting && hasTraceViaMetadata
+    if (hasReportedViaIds && !hasTraceViaMetadata) {
       repulsionPoint = getRepulsionPointForError(srj, error, center)
       const nearestViaPair = getNearestViaPair(vias, center)
       if (nearestViaPair) {
@@ -4031,7 +4038,7 @@ export const applyDrcErrorForces = (
 
     const traceId = error.pcb_trace_id
     const routeIndex = getTraceRouteIndexForError(error, traceRouteIndexById)
-    if (hasTraceViaMetadata && routeIndex === undefined) continue
+    if (hasTargetedTraceViaMetadata && routeIndex === undefined) continue
     const explicitTraceIds = Array.isArray(error.pcb_trace_ids)
       ? error.pcb_trace_ids.filter(
           (explicitTraceId): explicitTraceId is string =>
@@ -4041,7 +4048,7 @@ export const applyDrcErrorForces = (
     // A promoted trace-via error maps its movable via owner as the primary
     // route while retaining the fixed, unmapped segment owner in the metadata.
     const hasPromotedViaOwner =
-      hasTraceViaMetadata &&
+      hasTargetedTraceViaMetadata &&
       typeof traceId === "string" &&
       routeIndex !== undefined &&
       explicitTraceIds.includes(traceId) &&
@@ -4100,7 +4107,7 @@ export const applyDrcErrorForces = (
       repulsionPoint = isObstacleError
         ? (nearestObstacle?.center ?? center)
         : getRepulsionPointForError(srj, error, center)
-      const nearestVia = hasTraceViaMetadata
+      const nearestVia = hasTargetedTraceViaMetadata
         ? undefined
         : getNearestVia(vias, center)
       const isExactViaTraceError =
@@ -4156,7 +4163,7 @@ export const applyDrcErrorForces = (
       changed = movedSegment || changed
     }
 
-    const nearestVia = hasTraceViaMetadata
+    const nearestVia = hasTargetedTraceViaMetadata
       ? undefined
       : getNearestVia(vias, center)
     if (
