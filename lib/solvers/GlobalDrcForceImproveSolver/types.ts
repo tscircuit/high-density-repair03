@@ -5,17 +5,33 @@ import type { HighDensityRoute } from "../../types/high-density-types"
 
 export type DrcError = Record<string, unknown>
 
-export type DrcEvaluator = (input: {
+export type DrcEvaluatorInput = {
   traces: SimplifiedPcbTraces
   srj?: SimpleRouteJson
   hdRoutes?: HighDensityRoute[]
   routes?: HighDensityRoute[]
-}) => { errors: DrcError[]; errorsWithCenters?: DrcError[] } | DrcError[]
+}
+
+export type DrcEvaluatorResult =
+  | { errors: DrcError[]; errorsWithCenters?: DrcError[] }
+  | DrcError[]
+
+export type DrcEvaluatorFunction = (
+  input: DrcEvaluatorInput,
+) => DrcEvaluatorResult
+
+export type DrcEvaluator = DrcEvaluatorFunction & {
+  /** Staged evaluator for the established DRC set before via-to-pad repair. */
+  evaluateLegacy?: DrcEvaluatorFunction
+  /** Returns a previously computed result for the exact route geometry. */
+  getCachedResult?: (input: DrcEvaluatorInput) => DrcEvaluatorResult | undefined
+}
 
 export type DrcSnapshot = {
   errors: DrcError[]
   count: number
   issueScore: number
+  legacyIssueScore?: number
   traceRouteIndexById: Map<string, number>
 }
 
@@ -25,6 +41,11 @@ export type GlobalDrcForceImproveSolverParams = {
   connMap?: ConnectivityMap
   effort?: number
   drcEvaluator?: DrcEvaluator
+  /**
+   * Optional independent DRC evaluator used to reject an output that is worse
+   * than the solver input under the caller's final acceptance criteria.
+   */
+  referenceDrcEvaluator?: DrcEvaluator
   /**
    * Reusable optimized evaluator for the autorouting hot path. A new engine is
    * created automatically when neither this nor `drcEvaluator` is provided.
