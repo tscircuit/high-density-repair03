@@ -155,21 +155,7 @@ const createSimplifiedTraces = (
   return { traces, traceRouteIndexById }
 }
 
-const getDrcErrorSeverity = (
-  error: Record<string, unknown>,
-  options: { preferWorstClearance?: boolean } = {},
-) => {
-  if (options.preferWorstClearance) {
-    const minimumClearance = Number(error.minimum_clearance)
-    const worstActualClearance = Number(error.worst_actual_clearance)
-    if (
-      Number.isFinite(minimumClearance) &&
-      Number.isFinite(worstActualClearance)
-    ) {
-      return Math.max(0, minimumClearance - worstActualClearance)
-    }
-  }
-
+const getDrcErrorSeverity = (error: Record<string, unknown>) => {
   const message = typeof error.message === "string" ? error.message : ""
   const gapMatch = message.match(/gap: (-?\d+(?:\.\d+)?)mm/)
   const requiredMatch = message.match(/required: (-?\d+(?:\.\d+)?)mm/)
@@ -192,22 +178,63 @@ const getDrcErrorSeverity = (
   return 1
 }
 
+const getTopologyRepairDrcErrorSeverity = (error: Record<string, unknown>) => {
+  const minimumClearance = Number(error.minimum_clearance)
+  const worstActualClearance = Number(error.worst_actual_clearance)
+  if (
+    Number.isFinite(minimumClearance) &&
+    Number.isFinite(worstActualClearance)
+  ) {
+    return Math.max(0, minimumClearance - worstActualClearance)
+  }
+  return getDrcErrorSeverity(error)
+}
+
+const restoreFirstTraceContact = (error: Record<string, unknown>) => ({
+  ...error,
+  center:
+    typeof error.first_contact_center === "object"
+      ? error.first_contact_center
+      : error.center,
+  message:
+    typeof error.first_contact_message === "string"
+      ? error.first_contact_message
+      : error.message,
+  actual_clearance:
+    typeof error.first_actual_clearance === "number"
+      ? error.first_actual_clearance
+      : error.actual_clearance,
+})
+
+type DrcSnapshotPolicy = {
+  projectEngineError: (
+    error: Record<string, unknown>,
+  ) => Record<string, unknown>
+  getErrorSeverity: (error: Record<string, unknown>) => number
+}
+
+const STANDARD_DRC_SNAPSHOT_POLICY: DrcSnapshotPolicy = {
+  projectEngineError: restoreFirstTraceContact,
+  getErrorSeverity: getDrcErrorSeverity,
+}
+
+const TOPOLOGY_REPAIR_DRC_SNAPSHOT_POLICY: DrcSnapshotPolicy = {
+  projectEngineError: (error) => error,
+  getErrorSeverity: getTopologyRepairDrcErrorSeverity,
+}
+
 const getDrcIssueScore = (
   errors: Array<Record<string, unknown>>,
-  options: { preferWorstClearance?: boolean } = {},
-) =>
-  errors.reduce(
-    (score, error) => score + getDrcErrorSeverity(error, options),
-    0,
-  )
+  getErrorSeverity: DrcSnapshotPolicy["getErrorSeverity"] = getDrcErrorSeverity,
+) => errors.reduce((score, error) => score + getErrorSeverity(error), 0)
 
-export const getDrcSnapshot = (
+const createDrcSnapshot = (
   srj: SimpleRouteJson,
   routes: HighDensityRoute[],
   drcEvaluator?: DrcEvaluator,
   connMap?: ConnectivityMap,
   autoroutingDrcEngine?: AutoroutingDrcEngine,
-  preferWorstTraceContact = false,
+  policy: DrcSnapshotPolicy = STANDARD_DRC_SNAPSHOT_POLICY,
 ): DrcSnapshot => {
   const drcSrj =
     autoroutingDrcEngine && !drcEvaluator
@@ -221,24 +248,29 @@ export const getDrcSnapshot = (
   })
 
   if (drcResult) {
-    const errors = Array.isArray(drcResult) ? drcResult : drcResult.errors
-    const errorsWithCenters = Array.isArray(drcResult)
+    const rawErrors = Array.isArray(drcResult) ? drcResult : drcResult.errors
+    const rawErrorsWithCenters = Array.isArray(drcResult)
       ? drcResult
       : (drcResult.errorsWithCenters ?? drcResult.errors)
+    const errors = rawErrors as Array<Record<string, unknown>>
+    const errorsWithCenters = rawErrorsWithCenters as Array<
+      Record<string, unknown>
+    >
 
     return {
-      errors: errorsWithCenters as Array<Record<string, unknown>>,
+      errors: errorsWithCenters,
       count: errors.length,
-      issueScore: getDrcIssueScore(
-        errorsWithCenters as Array<Record<string, unknown>>,
-        { preferWorstClearance: preferWorstTraceContact },
+      issueScore: getDrcIssueScore(errorsWithCenters, policy.getErrorSeverity),
+      legacyIssueScore: getDrcIssueScore(
+        errorsWithCenters.filter((error) => !isViaPadDrcError(error)),
+        policy.getErrorSeverity,
       ),
       traceRouteIndexById,
     }
   }
 
   const drc =
-    autoroutingDrcEngine?.evaluate(traces, { preferWorstTraceContact }) ??
+    autoroutingDrcEngine?.evaluate(traces) ??
     getDrcErrors(
       convertToCircuitJson(
         drcSrj,
@@ -256,21 +288,55 @@ export const getDrcSnapshot = (
       },
     )
 
+  const rawErrors = drc.errors as unknown as Array<Record<string, unknown>>
+  const rawErrorsWithCenters = (
+    drc.errorsWithCenters.length > 0 ? drc.errorsWithCenters : drc.errors
+  ).map((error) =>
+    policy.projectEngineError(error as unknown as Record<string, unknown>),
+  )
   return {
-    errors:
-      drc.errorsWithCenters.length > 0
-        ? (drc.errorsWithCenters as unknown as Array<Record<string, unknown>>)
-        : (drc.errors as unknown as Array<Record<string, unknown>>),
-    count: drc.errors.length,
-    issueScore: getDrcIssueScore(
-      (drc.errorsWithCenters.length > 0
-        ? drc.errorsWithCenters
-        : drc.errors) as unknown as Array<Record<string, unknown>>,
-      { preferWorstClearance: preferWorstTraceContact },
+    errors: rawErrorsWithCenters,
+    count: rawErrors.length,
+    issueScore: getDrcIssueScore(rawErrorsWithCenters, policy.getErrorSeverity),
+    legacyIssueScore: getDrcIssueScore(
+      rawErrorsWithCenters.filter((error) => !isViaPadDrcError(error)),
+      policy.getErrorSeverity,
     ),
     traceRouteIndexById,
   }
 }
+
+export const getDrcSnapshot = (
+  srj: SimpleRouteJson,
+  routes: HighDensityRoute[],
+  drcEvaluator?: DrcEvaluator,
+  connMap?: ConnectivityMap,
+  autoroutingDrcEngine?: AutoroutingDrcEngine,
+) =>
+  createDrcSnapshot(
+    srj,
+    routes,
+    drcEvaluator,
+    connMap,
+    autoroutingDrcEngine,
+    STANDARD_DRC_SNAPSHOT_POLICY,
+  )
+
+export const getTopologyRepairDrcSnapshot = (
+  srj: SimpleRouteJson,
+  routes: HighDensityRoute[],
+  drcEvaluator?: DrcEvaluator,
+  connMap?: ConnectivityMap,
+  autoroutingDrcEngine?: AutoroutingDrcEngine,
+) =>
+  createDrcSnapshot(
+    srj,
+    routes,
+    drcEvaluator,
+    connMap,
+    autoroutingDrcEngine,
+    TOPOLOGY_REPAIR_DRC_SNAPSHOT_POLICY,
+  )
 
 export const collectViaNodes = (
   routes: HighDensityRoute[],
@@ -581,6 +647,16 @@ const getRepulsionPointForError = (
   if (typeof message !== "string" || !message.includes("pcb_")) {
     return center
   }
+
+  const referencedPadIds = Array.isArray(error.pcb_pad_ids)
+    ? error.pcb_pad_ids.filter((id): id is string => typeof id === "string")
+    : []
+  const referencedObstacle = srj.obstacles.find(
+    (obstacle) =>
+      referencedPadIds.some((id) => obstacle.connectedTo.includes(id)) &&
+      (obstacleFilter?.(obstacle) ?? true),
+  )
+  if (referencedObstacle) return referencedObstacle.center
 
   return (
     getNearestObstacleNearPoint(srj, center, 0.6, obstacleFilter)?.center ??
@@ -2221,7 +2297,7 @@ const getNearestSegment = (
   return best?.segment
 }
 
-const getNearestVia = (vias: ViaNode[], point: Point) => {
+const getNearestVia = (vias: ViaNode[], point: Point, routeIndex?: number) => {
   let best:
     | {
         via: ViaNode
@@ -2230,6 +2306,7 @@ const getNearestVia = (vias: ViaNode[], point: Point) => {
     | undefined
 
   for (const via of vias) {
+    if (routeIndex !== undefined && via.routeIndex !== routeIndex) continue
     const distance = Math.hypot(via.x - point.x, via.y - point.y)
     if (!best || distance < best.distance) {
       best = { via, distance }
@@ -2612,6 +2689,20 @@ const getNearestTraceObstacleSegmentPair = (
   if (routeSegments.length === 0) return undefined
 
   const rootConnectionName = getRootConnectionName(route)
+  const nearestSegment = getNearestSegment(routeSegments, center)
+  if (!nearestSegment) return undefined
+  const obstacleForNearestSegment = getNearestObstacleNearPoint(
+    srj,
+    center,
+    0.6,
+    (candidate) =>
+      !obstacleSharesNet(rootConnectionName, candidate, connMap) &&
+      obstacleAppliesToSegment(candidate, nearestSegment, srj.layerCount),
+  )
+  if (obstacleForNearestSegment) {
+    return { obstacle: obstacleForNearestSegment, segment: nearestSegment }
+  }
+
   const obstacle = getNearestObstacleNearPoint(
     srj,
     center,
@@ -3062,8 +3153,96 @@ const isViaDrcError = (error: Record<string, unknown>) =>
   getDrcErrorType(error) === "pcb_via_clearance_error" ||
   Array.isArray(error.pcb_via_ids)
 
-export const getViaDrcIssueCount = (snapshot: DrcSnapshot) =>
-  snapshot.errors.filter(isViaDrcError).length
+export const getViaDrcIssueCount = (
+  snapshot: DrcSnapshot,
+  includeViaPadErrors = true,
+) =>
+  snapshot.errors.filter(
+    (error) =>
+      isViaDrcError(error) && (includeViaPadErrors || !isViaPadDrcError(error)),
+  ).length
+
+export const isViaPadDrcError = (error: Record<string, unknown>) =>
+  getDrcErrorType(error) === "pcb_pad_pad_clearance_error" &&
+  Array.isArray(error.pcb_via_ids) &&
+  error.pcb_via_ids.length === 1
+
+const getDrcErrorIdentity = (error: Record<string, unknown>) => {
+  const identifiers = Object.entries(error)
+    .filter(
+      ([key, value]) =>
+        key !== "source_trace_id" &&
+        (key.endsWith("_id") || key.endsWith("_ids")) &&
+        value !== undefined &&
+        value !== "",
+    )
+    .sort(([keyA], [keyB]) => keyA.localeCompare(keyB))
+  const normalizedMessage =
+    typeof error.message === "string"
+      ? error.message.replace(/-?\d+\.\d+/g, "#")
+      : ""
+  return JSON.stringify([
+    getDrcErrorType(error),
+    identifiers,
+    normalizedMessage,
+  ])
+}
+
+export const hasNewDrcErrorIdentities = (
+  candidateErrors: Array<Record<string, unknown>>,
+  inputErrors: Array<Record<string, unknown>>,
+) => {
+  const inputIdentities = new Set(inputErrors.map(getDrcErrorIdentity))
+  return candidateErrors.some(
+    (error) => !inputIdentities.has(getDrcErrorIdentity(error)),
+  )
+}
+
+export const getNonViaPadDrcIssueCount = (snapshot: DrcSnapshot) =>
+  Math.max(
+    snapshot.errors.filter((error) => !isViaPadDrcError(error)).length,
+    snapshot.count - snapshot.errors.filter(isViaPadDrcError).length,
+  )
+
+export const getRepairDrcIssueCount = (snapshot: DrcSnapshot) => {
+  const legacyIssueCount = getNonViaPadDrcIssueCount(snapshot)
+  return legacyIssueCount > 0 ? legacyIssueCount : snapshot.count
+}
+
+export const getRepairDrcIssueScore = (snapshot: DrcSnapshot) => {
+  if (getNonViaPadDrcIssueCount(snapshot) === 0) return snapshot.issueScore
+  const legacyErrors = snapshot.errors.filter(
+    (error) => !isViaPadDrcError(error),
+  )
+  if (snapshot.errors.some(isViaPadDrcError)) {
+    return getDrcIssueScore(legacyErrors)
+  }
+  return snapshot.legacyIssueScore ?? getDrcIssueScore(legacyErrors)
+}
+
+export const isDrcSnapshotCountBetter = (
+  candidateSnapshot: DrcSnapshot,
+  bestSnapshot: DrcSnapshot,
+) => {
+  const candidateLegacyCount = getNonViaPadDrcIssueCount(candidateSnapshot)
+  const bestLegacyCount = getNonViaPadDrcIssueCount(bestSnapshot)
+  if (candidateLegacyCount !== bestLegacyCount) {
+    return candidateLegacyCount < bestLegacyCount
+  }
+  if (candidateLegacyCount > 0) return false
+  return candidateSnapshot.count < bestSnapshot.count
+}
+
+/**
+ * Repair established DRC types before via-to-pad errors. Detection remains
+ * complete; this ordering only controls how the bounded repair budget is used.
+ */
+export const getLegacyFirstRepairErrors = (
+  errors: Array<Record<string, unknown>>,
+) => {
+  const legacyErrors = errors.filter((error) => !isViaPadDrcError(error))
+  return legacyErrors.length > 0 ? legacyErrors : errors
+}
 
 export const getSafeTraceLayerDrcIssueCount = (snapshot: DrcSnapshot) =>
   snapshot.errors.filter((error) => {
@@ -3680,6 +3859,9 @@ export const getTraceRoutePairForError = (
 ): [number, number] | undefined => {
   const primaryTraceId = error.pcb_trace_id
   if (typeof primaryTraceId !== "string") return undefined
+  if (Array.isArray(error.pcb_via_ids) && error.pcb_via_ids.length > 0) {
+    return undefined
+  }
 
   const explicitTraceIds = Array.isArray(error.pcb_trace_ids)
     ? error.pcb_trace_ids.filter(
@@ -3811,6 +3993,111 @@ export const applyTracePairSegmentDisplacementForError = (
  * keeping the already-repaired trace fixed. The caller evaluates the complete
  * board before accepting the composite candidate.
  */
+const getObstacleEscapePoints = (params: {
+  point: Point
+  obstacle: SimpleRouteJson["obstacles"][number]
+  requiredDistance: number
+}) => {
+  const { point, obstacle, requiredDistance } = params
+  const left = obstacle.center.x - obstacle.width / 2
+  const right = obstacle.center.x + obstacle.width / 2
+  const bottom = obstacle.center.y - obstacle.height / 2
+  const top = obstacle.center.y + obstacle.height / 2
+  const dx = Math.max(left - point.x, point.x - right, 0)
+  const dy = Math.max(bottom - point.y, point.y - top, 0)
+  const points: Point[] = []
+
+  if (dx < requiredDistance) {
+    const requiredYDistance = Math.sqrt(
+      requiredDistance * requiredDistance - dx * dx,
+    )
+    points.push(
+      { x: point.x, y: bottom - requiredYDistance - POSITION_EPSILON },
+      { x: point.x, y: top + requiredYDistance + POSITION_EPSILON },
+    )
+  }
+  if (dy < requiredDistance) {
+    const requiredXDistance = Math.sqrt(
+      requiredDistance * requiredDistance - dy * dy,
+    )
+    points.push(
+      { x: left - requiredXDistance - POSITION_EPSILON, y: point.y },
+      { x: right + requiredXDistance + POSITION_EPSILON, y: point.y },
+    )
+  }
+  return points
+}
+
+const getViaDisplacementTarget = (params: {
+  srj: SimpleRouteJson
+  via: ViaNode
+  segment: Segment
+  initialTarget: Point
+  requiredTraceDistance: number
+  requiredObstacleDistance: number
+  connMap?: ConnectivityMap
+}) => {
+  const {
+    srj,
+    via,
+    segment,
+    initialTarget,
+    requiredTraceDistance,
+    requiredObstacleDistance,
+    connMap,
+  } = params
+  const foreignObstacles = srj.obstacles.filter(
+    (obstacle) =>
+      !obstacle.isCopperPour &&
+      !obstacleSharesNet(via.rootConnectionName, obstacle, connMap) &&
+      getObstacleZLayers(obstacle, srj.layerCount).some((z) =>
+        via.zLayers.includes(z),
+      ),
+  )
+  const blockingObstacles = foreignObstacles.filter((obstacle) =>
+    Boolean(
+      getRectRepulsion(initialTarget, obstacle, requiredObstacleDistance),
+    ),
+  )
+  const candidateTargets = [
+    initialTarget,
+    ...blockingObstacles.flatMap((obstacle) =>
+      getObstacleEscapePoints({
+        point: initialTarget,
+        obstacle,
+        requiredDistance: requiredObstacleDistance,
+      }),
+    ),
+  ]
+
+  return candidateTargets
+    .filter((candidateTarget) => {
+      if (!isViaInsideBounds(candidateTarget, via.radius, srj.bounds)) {
+        return false
+      }
+      const projection = pointToSegmentProjection(candidateTarget, segment)
+      if (
+        Math.hypot(
+          candidateTarget.x - projection.x,
+          candidateTarget.y - projection.y,
+        ) <
+        requiredTraceDistance - POSITION_EPSILON
+      ) {
+        return false
+      }
+      return foreignObstacles.every(
+        (obstacle) =>
+          getPointToObstacleDistance(candidateTarget, obstacle) >=
+          requiredObstacleDistance - POSITION_EPSILON,
+      )
+    })
+    .sort(
+      (leftTarget, rightTarget) =>
+        Math.hypot(leftTarget.x - via.x, leftTarget.y - via.y) -
+        Math.hypot(rightTarget.x - via.x, rightTarget.y - via.y),
+    )[0]
+}
+
 export const applyViaOnlyDisplacementForTraceError = (
   srj: SimpleRouteJson,
   routes: MutableRoute[],
@@ -3887,13 +4174,26 @@ export const applyViaOnlyDisplacementForTraceError = (
       : segmentLength > POSITION_EPSILON
         ? (segmentX / segmentLength) * fallbackSign
         : 0
-  return moveVia(
-    routes,
-    via,
-    directionX * (penetration + POSITION_EPSILON),
-    directionY * (penetration + POSITION_EPSILON),
+
+  const requiredTraceDistance =
+    via.radius + segment.radius + requiredClearance + CLEARANCE_SLACK
+  const requiredObstacleDistance =
+    via.radius + getViaEdgeToPadEdgeClearance(srj)! + CLEARANCE_SLACK
+  const initialTarget = {
+    x: via.x + directionX * (penetration + CLEARANCE_SLACK),
+    y: via.y + directionY * (penetration + CLEARANCE_SLACK),
+  }
+  const target = getViaDisplacementTarget({
     srj,
-  )
+    via,
+    segment,
+    initialTarget,
+    requiredTraceDistance,
+    requiredObstacleDistance,
+    connMap,
+  })
+  if (!target) return false
+  return moveVia(routes, via, target.x - via.x, target.y - via.y, srj)
 }
 
 const getTraceSegmentForError = (
@@ -4187,12 +4487,27 @@ export const isBetterDrcSnapshot = (
   bestIssueCount: number,
   bestIssueScore: number,
   bestViaIssueCount: number,
-) =>
-  candidateSnapshot.count < bestIssueCount ||
-  (candidateSnapshot.count === bestIssueCount &&
-    candidateSnapshot.issueScore < bestIssueScore) ||
-  (candidateSnapshot.count === bestIssueCount &&
-    candidateViaIssueCount < bestViaIssueCount)
+  bestSnapshot?: DrcSnapshot,
+) => {
+  if (bestSnapshot) {
+    const candidateLegacyCount = getNonViaPadDrcIssueCount(candidateSnapshot)
+    const bestLegacyCount = getNonViaPadDrcIssueCount(bestSnapshot)
+    if (candidateLegacyCount !== bestLegacyCount) {
+      return candidateLegacyCount < bestLegacyCount
+    }
+  }
+
+  const candidateIssueCount = getRepairDrcIssueCount(candidateSnapshot)
+  const candidateIssueScore = getRepairDrcIssueScore(candidateSnapshot)
+
+  return (
+    candidateIssueCount < bestIssueCount ||
+    (candidateIssueCount === bestIssueCount &&
+      candidateIssueScore < bestIssueScore) ||
+    (candidateIssueCount === bestIssueCount &&
+      candidateViaIssueCount < bestViaIssueCount)
+  )
+}
 
 export const applyDrcErrorForces = (
   srj: SimpleRouteJson,
@@ -4204,6 +4519,7 @@ export const applyDrcErrorForces = (
   enableCanonicalPairRepairs = true,
   enableSameNetViaCanonicalization = false,
   allowSharedViaSiteMove = true,
+  enableTraceViaOwnerTargeting = false,
 ) => {
   let changed = false
   const vias = collectViaNodes(routes)
@@ -4215,9 +4531,25 @@ export const applyDrcErrorForces = (
     let repulsionPoint = center
 
     const viaIds = error.pcb_via_ids
-    if (Array.isArray(viaIds) && viaIds.length > 0) {
+    const isViaPairError = getDrcErrorType(error) === "pcb_via_clearance_error"
+    const isViaPadError = isViaPadDrcError(error)
+    const hasReportedViaIds = Array.isArray(viaIds) && viaIds.length > 0
+    const hasTraceViaMetadata =
+      !isViaPairError &&
+      !isViaPadError &&
+      hasReportedViaIds &&
+      (typeof error.pcb_trace_id === "string" ||
+        Array.isArray(error.pcb_trace_ids))
+    const hasTargetedTraceViaMetadata =
+      enableTraceViaOwnerTargeting && hasTraceViaMetadata
+    if (hasReportedViaIds && !hasTraceViaMetadata) {
       repulsionPoint = getRepulsionPointForError(srj, error, center)
-      const nearestViaPair = getNearestViaPair(vias, center)
+      const targetRouteIndex = getTraceRouteIndexForError(
+        error,
+        traceRouteIndexById,
+      )
+      const nearestViaPair =
+        viaIds.length > 1 ? getNearestViaPair(vias, center) : undefined
       if (nearestViaPair) {
         const shouldCanonicalizeSameNetViaPair =
           enableSameNetViaCanonicalization &&
@@ -4245,7 +4577,7 @@ export const applyDrcErrorForces = (
                 isCanonicalViaPairError,
               )) || changed
       } else {
-        const nearestVia = getNearestVia(vias, center)
+        const nearestVia = getNearestVia(vias, center, targetRouteIndex)
         if (nearestVia) {
           changed =
             moveViaAwayFromPoint(routes, nearestVia, repulsionPoint, srj) ||
@@ -4257,9 +4589,37 @@ export const applyDrcErrorForces = (
 
     const traceId = error.pcb_trace_id
     const routeIndex = getTraceRouteIndexForError(error, traceRouteIndexById)
-    const traceRoutePair = enableCanonicalPairRepairs
-      ? getTraceRoutePairForError(error, traceRouteIndexById)
-      : undefined
+    if (hasTargetedTraceViaMetadata && routeIndex === undefined) continue
+    const explicitTraceIds = Array.isArray(error.pcb_trace_ids)
+      ? error.pcb_trace_ids.filter(
+          (explicitTraceId): explicitTraceId is string =>
+            typeof explicitTraceId === "string",
+        )
+      : []
+    // A promoted trace-via error maps its movable via owner as the primary
+    // route while retaining the fixed, unmapped segment owner in the metadata.
+    const hasPromotedViaOwner =
+      hasTargetedTraceViaMetadata &&
+      typeof traceId === "string" &&
+      routeIndex !== undefined &&
+      explicitTraceIds.includes(traceId) &&
+      explicitTraceIds.some(
+        (explicitTraceId) =>
+          explicitTraceId !== traceId &&
+          !traceRouteIndexById.has(explicitTraceId),
+      )
+    if (hasPromotedViaOwner) {
+      const nearestOwnerVia = getNearestVia(vias, center, routeIndex)
+      if (nearestOwnerVia) {
+        changed =
+          moveViaAwayFromPoint(routes, nearestOwnerVia, center, srj) || changed
+        continue
+      }
+    }
+    const traceRoutePair =
+      enableCanonicalPairRepairs && !hasTraceViaMetadata
+        ? getTraceRoutePairForError(error, traceRouteIndexById)
+        : undefined
     if (traceRoutePair) {
       const leftSegment = getNearestSegment(segments, center, traceRoutePair[0])
       const rightSegment = getNearestSegment(
@@ -4300,7 +4660,9 @@ export const applyDrcErrorForces = (
       repulsionPoint = isObstacleError
         ? (nearestObstacle?.center ?? center)
         : getRepulsionPointForError(srj, error, center)
-      const nearestVia = getNearestVia(vias, center)
+      const nearestVia = hasTargetedTraceViaMetadata
+        ? undefined
+        : getNearestVia(vias, center)
       const isExactViaTraceError =
         getDrcErrorType(error) === "pcb_via_trace_clearance_error"
       if (
@@ -4358,7 +4720,9 @@ export const applyDrcErrorForces = (
       changed = movedSegment || changed
     }
 
-    const nearestVia = getNearestVia(vias, center)
+    const nearestVia = hasTargetedTraceViaMetadata
+      ? undefined
+      : getNearestVia(vias, center)
     if (
       nearestVia &&
       Math.hypot(nearestVia.x - center.x, nearestVia.y - center.y) < 0.35

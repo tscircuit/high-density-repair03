@@ -135,7 +135,7 @@ test("applies the reference DRC tolerance at the clearance boundary", () => {
   expect(evaluateAtSeparation(0.196).errors).toHaveLength(0)
 })
 
-test("reports clearance metadata when a trace pair contacts more than once", () => {
+test("reports the worst contact when a trace pair contacts more than once", () => {
   const srj = createSrj(["net_a", "net_b"])
   const result = new AutoroutingDrcEngine(srj).evaluate([
     {
@@ -159,7 +159,7 @@ test("reports clearance metadata when a trace pair contacts more than once", () 
 
   expect(result.errors).toHaveLength(1)
   expect(result.errors[0]!.minimum_clearance).toBe(0.1)
-  expect(result.errors[0]!.actual_clearance).toBeCloseTo(0.08, 6)
+  expect(result.errors[0]!.actual_clearance).toBeCloseTo(-0.07, 6)
   expect(result.errors[0]!.worst_actual_clearance).toBeCloseTo(-0.07, 6)
 })
 
