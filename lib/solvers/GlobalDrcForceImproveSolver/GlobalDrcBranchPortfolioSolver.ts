@@ -10,7 +10,8 @@ import {
   cloneRoutes,
   getNonViaPadDrcIssueCount,
   hasNewDrcErrorIdentities,
-  getSafeTraceLayerDrcIssueCount,
+  getViaDrcIssueCount,
+  isBetterDrcSnapshot,
   isDrcSnapshotCountBetter,
   isViaPadDrcError,
   materializeRoutes,
@@ -476,10 +477,21 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         this.params.connMap,
         this.autoroutingDrcEngine,
       )
-      const finalSafeTraceLayerIssueCount = getSafeTraceLayerDrcIssueCount(
+      const inputViaIssueCount = getViaDrcIssueCount(
+        this.safeTraceLayerInputSnapshot!,
+      )
+      const safeTraceLayerViaIssueCount = getViaDrcIssueCount(
         safeTraceLayerSnapshot,
       )
-      this.safeTraceLayerPhaseAccepted = finalSafeTraceLayerIssueCount === 0
+      this.safeTraceLayerPhaseAccepted =
+        safeTraceLayerViaIssueCount <= inputViaIssueCount &&
+        isBetterDrcSnapshot(
+          safeTraceLayerSnapshot,
+          safeTraceLayerViaIssueCount,
+          this.safeTraceLayerInputSnapshot!.count,
+          this.safeTraceLayerInputSnapshot!.issueScore,
+          inputViaIssueCount,
+        )
       const acceptedRoutes = this.safeTraceLayerPhaseAccepted
         ? safeTraceLayerRoutes
         : this.safeTraceLayerInputRoutes!
