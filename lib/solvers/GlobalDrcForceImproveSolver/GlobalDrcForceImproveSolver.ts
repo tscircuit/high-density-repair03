@@ -165,6 +165,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   readonly enablePostSolveClearanceRelaxation: boolean
   readonly enableSafeTraceLayerMoves: boolean
   readonly enableViaInPadLayerMoves: boolean
+  readonly enableTraceViaOwnerTargeting: boolean
   outputHdRoutes: HighDensityRoute[]
   private initialDrcIssueCount: number | undefined
   private initialRepairDrcIssueCount: number | undefined
@@ -219,6 +220,8 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
             viaClearance:
               params.srj.minTraceToPadEdgeClearance ??
               RELAXED_DRC_OPTIONS.viaClearance,
+            includeTraceViaOwnerMetadata:
+              params.enableTraceViaOwnerTargeting ?? false,
           }))
     if (
       params.viaHoleDiameter !== undefined &&
@@ -236,6 +239,8 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       params.enablePostSolveClearanceRelaxation ?? true
     this.enableSafeTraceLayerMoves = params.enableSafeTraceLayerMoves ?? false
     this.enableViaInPadLayerMoves = params.enableViaInPadLayerMoves ?? false
+    this.enableTraceViaOwnerTargeting =
+      params.enableTraceViaOwnerTargeting ?? false
     this.outputHdRoutes = params.hdRoutes
     if (this.referenceDrcEvaluator) {
       this.referenceInputSnapshot = this.getReferenceDrcSnapshot(
@@ -265,6 +270,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           this.enablePostSolveClearanceRelaxation,
         enableSafeTraceLayerMoves: this.enableSafeTraceLayerMoves,
         enableViaInPadLayerMoves: this.enableViaInPadLayerMoves,
+        enableTraceViaOwnerTargeting: this.enableTraceViaOwnerTargeting,
       },
     ] as const
   }
@@ -1071,6 +1077,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
             true,
             this.enableTargetedErrorSweep,
             false,
+            this.enableTraceViaOwnerTargeting,
           ) || changed
       }
 
@@ -1135,6 +1142,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           true,
           this.enableTargetedErrorSweep,
           canMoveSharedViaSiteWithoutTradingDrcErrors,
+          this.enableTraceViaOwnerTargeting,
         )
         if (!changed) continue
 

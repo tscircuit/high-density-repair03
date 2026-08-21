@@ -107,6 +107,8 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
             viaClearance:
               params.srj.minTraceToPadEdgeClearance ??
               RELAXED_DRC_OPTIONS.viaClearance,
+            includeTraceViaOwnerMetadata:
+              params.enableTraceViaOwnerTargeting ?? false,
           }))
     this.legacyDrcEvaluator = (input) => {
       const stagedLegacyEvaluator =

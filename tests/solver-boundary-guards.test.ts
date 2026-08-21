@@ -165,6 +165,8 @@ test("clips outward via motion and keeps tangential slide near the boundary", ()
     routes,
     [
       {
+        type: "pcb_via_clearance_error",
+        error_type: "pcb_via_clearance_error",
         message: "pcb_via clearance issue",
         pcb_via_ids: ["pcb_via_0"],
         center: { x: 4.5, y: -0.3 },

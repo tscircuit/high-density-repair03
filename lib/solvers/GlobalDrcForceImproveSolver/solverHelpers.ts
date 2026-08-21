@@ -3801,6 +3801,9 @@ export const getTraceRoutePairForError = (
 ): [number, number] | undefined => {
   const primaryTraceId = error.pcb_trace_id
   if (typeof primaryTraceId !== "string") return undefined
+  if (Array.isArray(error.pcb_via_ids) && error.pcb_via_ids.length > 0) {
+    return undefined
+  }
 
   const explicitTraceIds = Array.isArray(error.pcb_trace_ids)
     ? error.pcb_trace_ids.filter(
@@ -4154,6 +4157,7 @@ export const applyDrcErrorForces = (
   enableCanonicalPairRepairs = true,
   enableSameNetViaCanonicalization = false,
   allowSharedViaSiteMove = true,
+  enableTraceViaOwnerTargeting = false,
 ) => {
   let changed = false
   const vias = collectViaNodes(routes)
@@ -4165,7 +4169,16 @@ export const applyDrcErrorForces = (
     let repulsionPoint = center
 
     const viaIds = error.pcb_via_ids
-    if (Array.isArray(viaIds) && viaIds.length > 0) {
+    const isViaPairError = getDrcErrorType(error) === "pcb_via_clearance_error"
+    const hasReportedViaIds = Array.isArray(viaIds) && viaIds.length > 0
+    const hasTraceViaMetadata =
+      !isViaPairError &&
+      hasReportedViaIds &&
+      (typeof error.pcb_trace_id === "string" ||
+        Array.isArray(error.pcb_trace_ids))
+    const hasTargetedTraceViaMetadata =
+      enableTraceViaOwnerTargeting && hasTraceViaMetadata
+    if (hasReportedViaIds && !hasTraceViaMetadata) {
       repulsionPoint = getRepulsionPointForError(srj, error, center)
       const targetRouteIndex = getTraceRouteIndexForError(
         error,
@@ -4212,9 +4225,37 @@ export const applyDrcErrorForces = (
 
     const traceId = error.pcb_trace_id
     const routeIndex = getTraceRouteIndexForError(error, traceRouteIndexById)
-    const traceRoutePair = enableCanonicalPairRepairs
-      ? getTraceRoutePairForError(error, traceRouteIndexById)
-      : undefined
+    if (hasTargetedTraceViaMetadata && routeIndex === undefined) continue
+    const explicitTraceIds = Array.isArray(error.pcb_trace_ids)
+      ? error.pcb_trace_ids.filter(
+          (explicitTraceId): explicitTraceId is string =>
+            typeof explicitTraceId === "string",
+        )
+      : []
+    // A promoted trace-via error maps its movable via owner as the primary
+    // route while retaining the fixed, unmapped segment owner in the metadata.
+    const hasPromotedViaOwner =
+      hasTargetedTraceViaMetadata &&
+      typeof traceId === "string" &&
+      routeIndex !== undefined &&
+      explicitTraceIds.includes(traceId) &&
+      explicitTraceIds.some(
+        (explicitTraceId) =>
+          explicitTraceId !== traceId &&
+          !traceRouteIndexById.has(explicitTraceId),
+      )
+    if (hasPromotedViaOwner) {
+      const nearestOwnerVia = getNearestVia(vias, center, routeIndex)
+      if (nearestOwnerVia) {
+        changed =
+          moveViaAwayFromPoint(routes, nearestOwnerVia, center, srj) || changed
+        continue
+      }
+    }
+    const traceRoutePair =
+      enableCanonicalPairRepairs && !hasTraceViaMetadata
+        ? getTraceRoutePairForError(error, traceRouteIndexById)
+        : undefined
     if (traceRoutePair) {
       const leftSegment = getNearestSegment(segments, center, traceRoutePair[0])
       const rightSegment = getNearestSegment(
@@ -4253,7 +4294,9 @@ export const applyDrcErrorForces = (
       repulsionPoint = isObstacleError
         ? (nearestObstacle?.center ?? center)
         : getRepulsionPointForError(srj, error, center)
-      const nearestVia = getNearestVia(vias, center)
+      const nearestVia = hasTargetedTraceViaMetadata
+        ? undefined
+        : getNearestVia(vias, center)
       const isExactViaTraceError =
         getDrcErrorType(error) === "pcb_via_trace_clearance_error"
       if (
@@ -4307,7 +4350,9 @@ export const applyDrcErrorForces = (
       changed = movedSegment || changed
     }
 
-    const nearestVia = getNearestVia(vias, center)
+    const nearestVia = hasTargetedTraceViaMetadata
+      ? undefined
+      : getNearestVia(vias, center)
     if (
       nearestVia &&
       Math.hypot(nearestVia.x - center.x, nearestVia.y - center.y) < 0.35
