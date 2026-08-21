@@ -4088,7 +4088,7 @@ export const applyDrcErrorForces = (
           srj,
           connMap,
           TRACE_PAD_REPAIR_MAX_MOVE * Math.abs(scale),
-          2,
+          1,
           allowSharedViaSiteMove,
         )
         if (pushedViaSegment) {
