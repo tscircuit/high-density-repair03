@@ -11,6 +11,7 @@ import type {
   SimplifiedPcbTrace,
   SimplifiedPcbTraces,
 } from "../types"
+import { mapZToLayerName } from "../utils/mapZToLayerName"
 
 type Point = { x: number; y: number }
 
@@ -132,6 +133,34 @@ const MIN_VIA_CLEARANCE = 0.1
 const DEFAULT_VIA_TO_PAD_CLEARANCE = 0.1
 const DRC_EPSILON = 5e-3
 const POSITION_EPSILON = 1e-6
+
+const mapLayerNameToZ = (layer: string, layerCount: number): number => {
+  if (layer === "top") return 0
+  if (layer === "bottom") return layerCount - 1
+
+  const innerLayerMatch = /^inner([1-9]\d*)$/.exec(layer)
+  const z = innerLayerMatch ? Number(innerLayerMatch[1]) : Number.NaN
+  if (Number.isInteger(z) && z > 0 && z < layerCount - 1) return z
+
+  throw new Error(
+    `Unsupported via layer "${layer}" for a ${layerCount}-layer board`,
+  )
+}
+
+const getInclusiveViaLayers = (
+  fromLayer: string,
+  toLayer: string,
+  layerCount: number,
+): string[] => {
+  const fromZ = mapLayerNameToZ(fromLayer, layerCount)
+  const toZ = mapLayerNameToZ(toLayer, layerCount)
+  const minZ = Math.min(fromZ, toZ)
+  const maxZ = Math.max(fromZ, toZ)
+
+  return Array.from({ length: maxZ - minZ + 1 }, (_, index) =>
+    mapZToLayerName(minZ + index, layerCount),
+  )
+}
 
 const expandBounds = (bounds: Bounds, amount: number): Bounds => ({
   minX: bounds.minX - amount,
@@ -596,7 +625,11 @@ export class AutoroutingDrcEngine {
           x: routePoint.x,
           y: routePoint.y,
           diameter: routePoint.via_diameter ?? this.srj.minViaDiameter ?? 0.3,
-          layers: [routePoint.from_layer, routePoint.to_layer],
+          layers: getInclusiveViaLayers(
+            routePoint.from_layer,
+            routePoint.to_layer,
+            this.srj.layerCount,
+          ),
         })
       }
     }
