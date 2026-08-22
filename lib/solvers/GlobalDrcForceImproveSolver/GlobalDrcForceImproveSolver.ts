@@ -29,6 +29,7 @@ import {
   applyTracePairLayerMoveForError,
   applyViaOnlyDisplacementForTraceError,
   applyViaInPadLayerMoveForError,
+  applyViaPadClearanceDirectionVariant,
   cloneRoutes,
   cloneRoutesForIndexes,
   getCenteredErrors,
@@ -49,6 +50,7 @@ import {
   materializeRoutes,
   materializeRoutesForIndexes,
   SAFE_TRACE_LAYER_DIRECTION_VARIANT_COUNT,
+  VIA_PAD_CLEARANCE_DIRECTION_VARIANT_COUNT,
 } from "./solverHelpers"
 import { applyTraceToPadClearanceRelaxation } from "./traceToPadClearanceRelaxation"
 import { applyViaToPadClearanceRelaxation } from "./viaToPadClearanceRelaxation"
@@ -184,6 +186,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   private padTopologyErrorCursor = 0
   private safeTraceLayerCursorByErrorId = new Map<string, number>()
   private tracePairDetourCursorByErrorId = new Map<string, number>()
+  private viaPadDirectionCursorByErrorId = new Map<string, number>()
   private errorCursor = 0
   private stalledIterations = 0
   private bestDrcIssueCountSeen: number | undefined
@@ -1231,22 +1234,46 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       this.errorCursor = (errorIndex + 1) % prioritizedErrors.length
       const canMoveSharedViaSiteWithoutTradingDrcErrors = bestIssueCount === 1
 
+      const viaPadErrorKey = isViaPadDrcError(error)
+        ? typeof error.pcb_pad_pad_clearance_error_id === "string"
+          ? error.pcb_pad_pad_clearance_error_id
+          : typeof error.pcb_trace_id === "string"
+            ? error.pcb_trace_id
+            : undefined
+        : undefined
+      let viaPadDirectionCursor = viaPadErrorKey
+        ? (this.viaPadDirectionCursorByErrorId.get(viaPadErrorKey) ?? 0)
+        : 0
+
       for (const scale of getForceScalesForEffort(this.effort)) {
         if (candidateAttemptsThisStep >= maxCandidateAttemptsThisStep) break
 
         const candidateRoutes = cloneRoutes(bestRoutes)
-        const changed = applyDrcErrorForces(
-          this.srj,
-          candidateRoutes,
-          [error],
-          bestSnapshot.traceRouteIndexById,
-          scale,
-          this.connMap,
-          true,
-          this.enableTargetedErrorSweep,
-          canMoveSharedViaSiteWithoutTradingDrcErrors,
-          this.enableTraceViaOwnerTargeting,
-        )
+        const changed = isViaPadDrcError(error)
+          ? applyViaPadClearanceDirectionVariant({
+              srj: this.srj,
+              routes: candidateRoutes,
+              error,
+              traceRouteIndexById: bestSnapshot.traceRouteIndexById,
+              directionVariant: viaPadDirectionCursor,
+            })
+          : applyDrcErrorForces(
+              this.srj,
+              candidateRoutes,
+              [error],
+              bestSnapshot.traceRouteIndexById,
+              scale,
+              this.connMap,
+              true,
+              this.enableTargetedErrorSweep,
+              canMoveSharedViaSiteWithoutTradingDrcErrors,
+              this.enableTraceViaOwnerTargeting,
+            )
+        if (viaPadErrorKey) {
+          viaPadDirectionCursor =
+            (viaPadDirectionCursor + 1) %
+            VIA_PAD_CLEARANCE_DIRECTION_VARIANT_COUNT
+        }
         if (!changed) continue
 
         const materializedCandidateRoutes = materializeRoutes(candidateRoutes)
@@ -1278,6 +1305,13 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           }
           break
         }
+      }
+
+      if (viaPadErrorKey) {
+        this.viaPadDirectionCursorByErrorId.set(
+          viaPadErrorKey,
+          viaPadDirectionCursor,
+        )
       }
 
       if (acceptedCandidate) break
