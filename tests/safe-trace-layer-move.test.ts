@@ -171,6 +171,7 @@ test("moves terminal-reaching trace transitions outside connected pads", () => {
 
   partialSolver.solve()
 
+  expect(partialSolver.solved).toBe(true)
   expect(partialSolver.failed).toBe(false)
   expect(partialSolver.getOutput()).not.toEqual(hdRoutes)
   expect(
@@ -210,6 +211,7 @@ test("moves terminal-reaching trace transitions outside connected pads", () => {
 
   traceCompleteSolver.solve()
 
+  expect(traceCompleteSolver.solved).toBe(true)
   expect(traceCompleteSolver.failed).toBe(false)
   expect(traceCompleteSolver.getOutput()).not.toEqual(hdRoutes)
   expect(

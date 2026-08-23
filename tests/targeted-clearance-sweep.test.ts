@@ -134,3 +134,63 @@ test("can preserve an already clean route without post-solve relaxation", () => 
     solver.getConstructorParams()[0].enablePostSolveClearanceRelaxation,
   ).toBe(false)
 })
+
+test("rejects post-solve relaxation that introduces a DRC error", () => {
+  const srj: SimpleRouteJson = {
+    bounds: { minX: -3, minY: -2, maxX: 3, maxY: 2 },
+    connections: [{ name: "A", pointsToConnect: [] }],
+    obstacles: [
+      {
+        type: "rect",
+        center: { x: 0, y: 0 },
+        width: 0.5,
+        height: 0.5,
+        layers: ["top"],
+        connectedTo: ["foreign_pad"],
+      },
+    ],
+    layerCount: 2,
+    minTraceWidth: 0.1,
+    minViaDiameter: 0.3,
+    minTraceToPadEdgeClearance: 0.1,
+  }
+  const hdRoutes: HighDensityRoute[] = [
+    {
+      connectionName: "A",
+      route: [
+        { x: -2, y: 0, z: 0 },
+        { x: 0, y: 0, z: 0 },
+        { x: 2, y: 0, z: 0 },
+      ],
+      vias: [],
+      traceThickness: 0.1,
+      viaDiameter: 0.3,
+    },
+  ]
+  let sawRelaxedCandidate = false
+  const drcEvaluator: DrcEvaluator = ({ routes }) => {
+    const middleY = routes?.[0]?.route[1]?.y ?? 0
+    if (Math.abs(middleY) < 1e-9) return []
+    sawRelaxedCandidate = true
+    return [
+      {
+        type: "pcb_trace_error",
+        message: "relaxation introduced a synthetic conflict",
+        center: { x: 0, y: middleY },
+      },
+    ]
+  }
+  const solver = new GlobalDrcForceImproveSolver({
+    srj,
+    hdRoutes,
+    drcEvaluator,
+  })
+
+  solver.solve()
+
+  expect(sawRelaxedCandidate).toBe(true)
+  expect(solver.solved).toBe(true)
+  expect(solver.failed).toBe(false)
+  expect(solver.stats.finalDrcIssueCount).toBe(0)
+  expect(solver.getOutput()).toBe(hdRoutes)
+})

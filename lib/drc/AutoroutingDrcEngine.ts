@@ -67,8 +67,14 @@ type StaticObstacle = {
 type DynamicCollidable = TraceSegment | Via
 
 export type AutoroutingDrcError = {
-  type: "pcb_trace_error" | "pcb_via_clearance_error"
-  error_type: "pcb_trace_error" | "pcb_via_clearance_error"
+  type:
+    | "pcb_trace_error"
+    | "pcb_via_clearance_error"
+    | "pcb_pad_pad_clearance_error"
+  error_type:
+    | "pcb_trace_error"
+    | "pcb_via_clearance_error"
+    | "pcb_pad_pad_clearance_error"
   message: string
   center?: Point
   pcb_center?: Point
@@ -93,6 +99,8 @@ export interface AutoroutingDrcEngineOptions {
    * Values below 0.1 mm are clamped to the repair solver's safety minimum.
    */
   viaClearance?: number
+  /** Copper-edge clearance used for via-to-pad checks. */
+  viaToPadClearance?: number
   /**
    * Optional broad-phase cell size. The engine derives one from the board
    * bounds when this is omitted.
@@ -103,6 +111,11 @@ export interface AutoroutingDrcEngineOptions {
    * are not fully represented by the SRJ connection metadata.
    */
   connMap?: ConnectivityMap
+  /**
+   * Include explicit trace/via owner ids for preload-aware repair targeting.
+   * Defaults to false so legacy callers receive the original error shape.
+   */
+  includeTraceViaOwnerMetadata?: boolean
 }
 
 export interface AutoroutingDrcEngineRunStats {
@@ -116,6 +129,7 @@ export interface AutoroutingDrcEngineRunStats {
 
 const DEFAULT_TRACE_CLEARANCE = 0.1
 const MIN_VIA_CLEARANCE = 0.1
+const DEFAULT_VIA_TO_PAD_CLEARANCE = 0.1
 const DRC_EPSILON = 5e-3
 const POSITION_EPSILON = 1e-6
 
@@ -342,8 +356,10 @@ const createTraceErrorMessage = (
 export class AutoroutingDrcEngine {
   private readonly traceClearance: number
   private readonly viaClearance: number
+  private readonly viaToPadClearance: number
   private readonly cellSize: number
   private readonly connMap?: ConnectivityMap
+  private readonly includeTraceViaOwnerMetadata: boolean
   private readonly canonicalNetByAlias = new Map<string, string>()
   private readonly obstacles: StaticObstacle[]
   private readonly obstacleIndexesByLayer = new Map<
@@ -369,7 +385,13 @@ export class AutoroutingDrcEngine {
       options.viaClearance ?? MIN_VIA_CLEARANCE,
       MIN_VIA_CLEARANCE,
     )
+    this.viaToPadClearance =
+      options.viaToPadClearance ??
+      this.srj.minViaEdgeToPadEdgeClearance ??
+      DEFAULT_VIA_TO_PAD_CLEARANCE
     this.connMap = options.connMap
+    this.includeTraceViaOwnerMetadata =
+      options.includeTraceViaOwnerMetadata ?? false
     this.cellSize = options.spatialCellSize ?? this.getDefaultSpatialCellSize()
 
     if (!Number.isFinite(this.traceClearance) || this.traceClearance < 0) {
@@ -377,6 +399,12 @@ export class AutoroutingDrcEngine {
     }
     if (!Number.isFinite(this.viaClearance)) {
       throw new Error("viaClearance must be a finite number")
+    }
+    if (
+      !Number.isFinite(this.viaToPadClearance) ||
+      this.viaToPadClearance < 0
+    ) {
+      throw new Error("viaToPadClearance must be a non-negative finite number")
     }
     if (!Number.isFinite(this.cellSize) || this.cellSize <= 0) {
       throw new Error("spatialCellSize must be a positive finite number")
@@ -393,7 +421,8 @@ export class AutoroutingDrcEngine {
     return Math.max(
       0.25,
       Math.max(boardWidth, boardHeight) / 64,
-      (this.srj.minViaDiameter ?? 0.3) + this.traceClearance,
+      (this.srj.minViaDiameter ?? 0.3) +
+        Math.max(this.traceClearance, this.viaToPadClearance),
     )
   }
 
@@ -500,7 +529,7 @@ export class AutoroutingDrcEngine {
     for (const obstacle of this.obstacles) {
       const bounds = expandBounds(
         getObstacleBounds(obstacle),
-        this.traceClearance,
+        Math.max(this.traceClearance, this.viaToPadClearance),
       )
       for (const layer of obstacle.layers) {
         let index = this.obstacleIndexesByLayer.get(layer)
@@ -605,9 +634,9 @@ export class AutoroutingDrcEngine {
     return indexes
   }
 
-  private obstacleSharesNet(segment: TraceSegment, obstacle: StaticObstacle) {
+  private obstacleSharesNet(netId: string, obstacle: StaticObstacle) {
     return obstacle.connectedTo.some((connectedId) =>
-      this.areConnected(segment.netId, connectedId),
+      this.areConnected(netId, connectedId),
     )
   }
 
@@ -679,6 +708,13 @@ export class AutoroutingDrcEngine {
         gap,
       ),
       pcb_trace_id: segment.traceId,
+      ...(this.includeTraceViaOwnerMetadata
+        ? {
+            pcb_trace_ids: [segment.traceId, via.traceId],
+            pcb_via_id: via.viaId,
+            pcb_via_ids: [via.viaId],
+          }
+        : {}),
       source_trace_id: "",
       pcb_trace_error_id: errorId,
       minimum_clearance: this.traceClearance,
@@ -693,7 +729,7 @@ export class AutoroutingDrcEngine {
     segment: TraceSegment,
     obstacle: StaticObstacle,
   ): AutoroutingDrcError | undefined {
-    if (this.obstacleSharesNet(segment, obstacle)) return undefined
+    if (this.obstacleSharesNet(segment.netId, obstacle)) return undefined
     this.lastRunStats.exactCheckCount += 1
 
     const obstacleBounds = getObstacleBounds(obstacle)
@@ -737,6 +773,52 @@ export class AutoroutingDrcEngine {
     }
   }
 
+  private checkViaObstacle(
+    via: Via,
+    obstacle: StaticObstacle,
+  ): AutoroutingDrcError | undefined {
+    if (this.obstacleSharesNet(via.netId, obstacle)) return undefined
+    this.lastRunStats.exactCheckCount += 1
+
+    const obstacleBounds = getObstacleBounds(obstacle)
+    const pointToObstacleDistance =
+      obstacle.radius === undefined
+        ? Math.hypot(
+            Math.max(
+              obstacleBounds.minX - via.x,
+              0,
+              via.x - obstacleBounds.maxX,
+            ),
+            Math.max(
+              obstacleBounds.minY - via.y,
+              0,
+              via.y - obstacleBounds.maxY,
+            ),
+          )
+        : Math.hypot(via.x - obstacle.x, via.y - obstacle.y) - obstacle.radius
+    const gap = pointToObstacleDistance - via.diameter / 2
+    if (gap + DRC_EPSILON >= this.viaToPadClearance) return undefined
+
+    const errorId = `via_pad_clearance_${via.viaId}_${obstacle.obstacleId}`
+    const center = {
+      x: (via.x + obstacle.x) / 2,
+      y: (via.y + obstacle.y) / 2,
+    }
+
+    return {
+      type: "pcb_pad_pad_clearance_error",
+      error_type: "pcb_pad_pad_clearance_error",
+      pcb_pad_pad_clearance_error_id: errorId,
+      message: `pcb_via "${via.viaId}" and ${obstacle.obstacleType} "${obstacle.obstacleId}" are too close (gap: ${gap.toFixed(3)}mm)`,
+      pcb_trace_id: via.traceId,
+      pcb_pad_ids: [via.viaId, obstacle.obstacleId],
+      pcb_via_ids: [via.viaId],
+      minimum_clearance: this.viaToPadClearance,
+      actual_clearance: gap,
+      center,
+    }
+  }
+
   private checkViaPairs(vias: Via[]): AutoroutingDrcError[] {
     if (vias.length < 2) return []
     const errors: AutoroutingDrcError[] = []
@@ -772,6 +854,9 @@ export class AutoroutingDrcEngine {
             sameNet ? "" : " from different nets"
           } are too close together (gap: ${gap.toFixed(3)}mm)`,
           pcb_via_ids: [viaA.viaId, viaB.viaId],
+          ...(this.includeTraceViaOwnerMetadata
+            ? { pcb_trace_ids: [viaA.traceId, viaB.traceId] }
+            : {}),
           pcb_via_pair_net_relation: sameNet ? "same_net" : "different_net",
           minimum_clearance: this.viaClearance,
           actual_clearance: gap,
@@ -784,13 +869,27 @@ export class AutoroutingDrcEngine {
     return errors
   }
 
-  evaluate(
+  evaluate(traces: SimplifiedPcbTraces): AutoroutingDrcResult {
+    return this.evaluateInternal(traces, true)
+  }
+
+  /**
+   * Evaluates the established trace/via DRC set used by the first repair
+   * stage. Via-to-pad errors remain part of the normal complete evaluation and
+   * are handled by the subsequent staged repair pass.
+   */
+  evaluateLegacy(traces: SimplifiedPcbTraces): AutoroutingDrcResult {
+    return this.evaluateInternal(traces, false)
+  }
+
+  private evaluateInternal(
     traces: SimplifiedPcbTraces,
-    options: { preferWorstTraceContact?: boolean } = {},
+    includeViaPadErrors: boolean,
   ): AutoroutingDrcResult {
     const { segments, vias } = this.collectDynamicGeometry(traces)
     const dynamicIndexesByLayer = this.buildDynamicIndexes(segments, vias)
     const detectedTraceErrors: AutoroutingDrcError[] = []
+    const detectedViaPadErrors: AutoroutingDrcError[] = []
 
     this.lastRunStats = {
       traceCount: traces.length,
@@ -831,6 +930,26 @@ export class AutoroutingDrcEngine {
       }
     }
 
+    const detectedViaErrors = this.checkViaPairs(vias)
+
+    if (includeViaPadErrors) {
+      for (const via of vias) {
+        const checkedObstacles = new Set<StaticObstacle>()
+        for (const layer of via.layers) {
+          const obstacleCandidates =
+            this.obstacleIndexesByLayer.get(layer)?.query(getViaBounds(via)) ??
+            []
+          for (const obstacle of obstacleCandidates) {
+            if (checkedObstacles.has(obstacle)) continue
+            checkedObstacles.add(obstacle)
+            this.lastRunStats.broadPhaseCandidateCount += 1
+            const error = this.checkViaObstacle(via, obstacle)
+            if (error) detectedViaPadErrors.push(error)
+          }
+        }
+      }
+    }
+
     const firstTraceErrorById = new Map<string, AutoroutingDrcError>()
     for (const error of detectedTraceErrors) {
       const errorId = String(error.pcb_trace_error_id)
@@ -839,6 +958,9 @@ export class AutoroutingDrcEngine {
       if (!existing) {
         firstTraceErrorById.set(errorId, {
           ...error,
+          first_contact_center: error.center,
+          first_contact_message: error.message,
+          first_actual_clearance: actualClearance,
           worst_contact_center: error.center,
           worst_contact_message: error.message,
           worst_actual_clearance: actualClearance,
@@ -856,26 +978,24 @@ export class AutoroutingDrcEngine {
       }
     }
     const errors: AutoroutingDrcError[] = [...firstTraceErrorById.values()].map(
-      (error) =>
-        options.preferWorstTraceContact
-          ? {
-              ...error,
-              center:
-                typeof error.worst_contact_center === "object"
-                  ? (error.worst_contact_center as Point)
-                  : error.center,
-              message:
-                typeof error.worst_contact_message === "string"
-                  ? error.worst_contact_message
-                  : error.message,
-              actual_clearance:
-                typeof error.worst_actual_clearance === "number"
-                  ? error.worst_actual_clearance
-                  : error.actual_clearance,
-            }
-          : error,
+      (error) => ({
+        ...error,
+        center:
+          typeof error.worst_contact_center === "object"
+            ? (error.worst_contact_center as Point)
+            : error.center,
+        message:
+          typeof error.worst_contact_message === "string"
+            ? error.worst_contact_message
+            : error.message,
+        actual_clearance:
+          typeof error.worst_actual_clearance === "number"
+            ? error.worst_actual_clearance
+            : error.actual_clearance,
+      }),
     )
-    errors.push(...this.checkViaPairs(vias))
+    errors.push(...detectedViaPadErrors)
+    errors.push(...detectedViaErrors)
     const errorsWithCenters = errors.filter((error) => error.center)
     const locationAwareErrors = errorsWithCenters as Array<
       AutoroutingDrcError & { center: Point }
