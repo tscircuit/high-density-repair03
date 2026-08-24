@@ -61,7 +61,8 @@ test("repairs an exact via-trace pair when its reported center is distant", () =
   )
 
   expect(changed).toBe(true)
-  expect(routes[1]?.route[1]?.y).not.toBe(0.8)
+  expect(routes[0]?.route[1]?.y).toBeCloseTo(1.115)
+  expect(routes[1]?.route[1]?.y).toBeCloseTo(0.685)
 })
 
 test("opts into promoted via-owner targeting while retaining the legacy default", () => {

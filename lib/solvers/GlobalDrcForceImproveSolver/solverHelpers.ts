@@ -4675,17 +4675,20 @@ export const applyDrcErrorForces = (
         (isExactViaTraceError ||
           Math.hypot(nearestVia.x - center.x, nearestVia.y - center.y) < 0.45)
       ) {
-        changed =
-          pushViaSegmentPair(
-            routes,
-            nearestVia,
-            nearestSegment,
-            srj,
-            connMap,
-            TRACE_PAD_REPAIR_MAX_MOVE * Math.abs(scale),
-            1,
-            allowSharedViaSiteMove,
-          ) || changed
+        const pushedViaSegment = pushViaSegmentPair(
+          routes,
+          nearestVia,
+          nearestSegment,
+          srj,
+          connMap,
+          TRACE_PAD_REPAIR_MAX_MOVE * Math.abs(scale),
+          1,
+          allowSharedViaSiteMove,
+        )
+        if (pushedViaSegment) {
+          changed = true
+          continue
+        }
       }
 
       const shouldUseObstacleMove =
