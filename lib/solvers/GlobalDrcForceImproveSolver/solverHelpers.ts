@@ -4665,6 +4665,20 @@ export const applyDrcErrorForces = (
         : getNearestVia(vias, center)
       const isExactViaTraceError =
         getDrcErrorType(error) === "pcb_via_trace_clearance_error"
+      const traceErrorId =
+        typeof error.pcb_trace_error_id === "string"
+          ? error.pcb_trace_error_id.toLowerCase()
+          : ""
+      const traceErrorMessage =
+        typeof error.message === "string" ? error.message.toLowerCase() : ""
+      const identifiesVia =
+        isExactViaTraceError ||
+        typeof error.pcb_via_id === "string" ||
+        Array.isArray(error.pcb_via_ids) ||
+        traceErrorId.includes("_via_") ||
+        traceErrorMessage.includes("via")
+      const involvesPort =
+        Array.isArray(error.pcb_port_ids) && error.pcb_port_ids.length > 0
       if (
         nearestVia &&
         !sharesNet(
@@ -4687,7 +4701,7 @@ export const applyDrcErrorForces = (
         )
         if (pushedViaSegment) {
           changed = true
-          continue
+          if (identifiesVia && !involvesPort) continue
         }
       }
 
