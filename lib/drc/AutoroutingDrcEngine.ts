@@ -452,13 +452,7 @@ export class AutoroutingDrcEngine {
 
   private resolveNetId(id: string) {
     const connMapNetId = this.connMap?.getNetConnectedToId(id)
-    if (connMapNetId) {
-      return (
-        this.canonicalNetByAlias.get(connMapNetId) ??
-        this.canonicalNetByAlias.get(id) ??
-        connMapNetId
-      )
-    }
+    if (connMapNetId) return connMapNetId
     return this.canonicalNetByAlias.get(id) ?? id
   }
 
