@@ -101,7 +101,7 @@ const trace: SimplifiedPcbTraces[number] = {
   ],
 }
 
-test("connMap net ids override point-pair canonical aliases", () => {
+test("connMap net ids canonicalize full and partial SRJ alias groups", () => {
   const sameNetPortId = "pcb_port_same"
   const sameNetConnMap = new ConnectivityMap({})
   sameNetConnMap.addConnections([["root_net", sameNetPortId]])
@@ -113,6 +113,17 @@ test("connMap net ids override point-pair canonical aliases", () => {
     { connMap: sameNetConnMap },
   ).evaluate([trace])
 
+  const partialMapPortId = "pcb_port_partial"
+  const partialConnMap = new ConnectivityMap({})
+  partialConnMap.addConnections([["root_net", "source_trace_partial"]])
+  const partialMapResult = new AutoroutingDrcEngine(
+    createSrj({
+      padConnectionName: "root_net",
+      pcbPortId: partialMapPortId,
+    }),
+    { connMap: partialConnMap },
+  ).evaluate([trace])
+
   const foreignResult = new AutoroutingDrcEngine(
     createSrj({
       padConnectionName: "foreign_split_pair",
@@ -122,6 +133,7 @@ test("connMap net ids override point-pair canonical aliases", () => {
   ).evaluate([trace])
 
   expect(sameNetResult.errors).toHaveLength(0)
+  expect(partialMapResult.errors).toHaveLength(0)
   expect(foreignResult.errors).toHaveLength(1)
   expect(foreignResult.errors[0]?.pcb_trace_error_id).toBe(
     "overlap_trace_0_pcb_smtpad_pcb_port_foreign",
@@ -138,6 +150,13 @@ test("connMap net ids override point-pair canonical aliases", () => {
           ),
         }),
         createPanel({
+          title: "partial-map pad",
+          padColor: "rgba(14, 165, 233, 0.4)",
+          errorCenters: partialMapResult.locationAwareErrors.map(
+            (error) => error.center,
+          ),
+        }),
+        createPanel({
           title: "foreign-net pad",
           padColor: "rgba(220, 38, 38, 0.35)",
           errorCenters: foreignResult.locationAwareErrors.map(
@@ -146,10 +165,10 @@ test("connMap net ids override point-pair canonical aliases", () => {
         }),
       ],
       {
-        titles: ["SAME NET · NO DRC", "FOREIGN · DRC"],
+        titles: ["FULL MAP · NO DRC", "PARTIAL MAP · NO DRC", "FOREIGN · DRC"],
       },
     ),
-    { backgroundColor: "white", svgWidth: 900, svgHeight: 360 },
+    { backgroundColor: "white", svgWidth: 1200, svgHeight: 360 },
   ).replace(/[ \t]+$/gm, "")
   const snapshotPath = new URL(
     "./__snapshots__/autorouting-drc-engine-connmap-canonical-alias.snap.svg",

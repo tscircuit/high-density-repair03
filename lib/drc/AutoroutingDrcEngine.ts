@@ -361,6 +361,7 @@ export class AutoroutingDrcEngine {
   private readonly connMap?: ConnectivityMap
   private readonly includeTraceViaOwnerMetadata: boolean
   private readonly canonicalNetByAlias = new Map<string, string>()
+  private readonly connMapNetByCanonicalNet = new Map<string, string>()
   private readonly obstacles: StaticObstacle[]
   private readonly obstacleIndexesByLayer = new Map<
     string,
@@ -427,6 +428,8 @@ export class AutoroutingDrcEngine {
   }
 
   private compileConnectionAliases() {
+    const connMapNetsByCanonicalNet = new Map<string, Set<string>>()
+
     for (const connection of this.srj.connections) {
       const canonicalNet =
         connection.netConnectionName ??
@@ -444,16 +447,38 @@ export class AutoroutingDrcEngine {
       ]
 
       for (const alias of aliases) {
-        if (alias) this.canonicalNetByAlias.set(alias, canonicalNet)
+        if (!alias) continue
+        this.canonicalNetByAlias.set(alias, canonicalNet)
+
+        const connMapNetId = this.connMap?.getNetConnectedToId(alias)
+        if (!connMapNetId) continue
+        let connMapNets = connMapNetsByCanonicalNet.get(canonicalNet)
+        if (!connMapNets) {
+          connMapNets = new Set<string>()
+          connMapNetsByCanonicalNet.set(canonicalNet, connMapNets)
+        }
+        connMapNets.add(connMapNetId)
       }
       this.canonicalNetByAlias.set(canonicalNet, canonicalNet)
+    }
+
+    // A sparse connectivity map may recognize only one alias in an SRJ net.
+    // Promote only unambiguous map nets across the rest of that alias group.
+    for (const [canonicalNet, connMapNets] of connMapNetsByCanonicalNet) {
+      if (connMapNets.size !== 1) continue
+      this.connMapNetByCanonicalNet.set(
+        canonicalNet,
+        connMapNets.values().next().value!,
+      )
     }
   }
 
   private resolveNetId(id: string) {
     const connMapNetId = this.connMap?.getNetConnectedToId(id)
     if (connMapNetId) return connMapNetId
-    return this.canonicalNetByAlias.get(id) ?? id
+    const canonicalNet = this.canonicalNetByAlias.get(id)
+    if (!canonicalNet) return id
+    return this.connMapNetByCanonicalNet.get(canonicalNet) ?? canonicalNet
   }
 
   private areConnected(left: string, right: string) {
