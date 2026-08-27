@@ -23,6 +23,7 @@ import {
   applySafeTraceLayerMoveForError,
   applyTerminalViaRelocationForError,
   applyTraceDetourForError,
+  applyTraceLayerCorridorForError,
   applyTracePairSegmentDisplacementForError,
   applyTraceSpanDetourForError,
   applyTraceWaypointDetourForError,
@@ -92,6 +93,22 @@ const TRACE_PAIR_DETOUR_VARIANTS = TRACE_PAIR_DETOUR_GEOMETRY_VARIANTS.flatMap(
       ...variant,
     })),
 )
+
+const TRACE_LAYER_CORRIDOR_VARIANTS = ([1, -1] as const).flatMap(
+  (normalDirectionSign) =>
+    ([1, -1] as const).flatMap((tangentDirectionSign) =>
+      ([false, true] as const).flatMap((reverseEndpointOffsets) =>
+        ([0, 1] as const).map((routeSide) => ({
+          routeSide,
+          normalDirectionSign,
+          tangentDirectionSign,
+          reverseEndpointOffsets,
+        })),
+      ),
+    ),
+)
+
+const TRACE_LAYER_CORRIDOR_MAX_DRC_COUNT = 8
 
 const LOW_COUNT_TRACE_TOPOLOGY_VARIANTS = [
   ...([0, 1] as const).map((routeSide) => ({
@@ -183,6 +200,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   private viaInPadCandidatesAccepted = 0
   private padTopologyErrorCursor = 0
   private safeTraceLayerCursorByErrorId = new Map<string, number>()
+  private traceLayerCorridorCursorByErrorId = new Map<string, number>()
   private tracePairDetourCursorByErrorId = new Map<string, number>()
   private errorCursor = 0
   private stalledIterations = 0
@@ -596,12 +614,18 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       : []
     const shouldTryTracePairTopology =
       bestIssueCount <= 1 || this.initialLowCountErrorsHaveMovableTraces
+    const shouldTryTraceLayerCorridor =
+      !this.initialLowCountErrorsHaveMovableTraces &&
+      bestIssueCount <= TRACE_LAYER_CORRIDOR_MAX_DRC_COUNT &&
+      this.srj.layerCount > 1
     const padTraceErrors = prioritizedViaError
       ? []
       : centeredErrors.filter(
           (error) =>
             error.type === "pcb_pad_trace_clearance_error" ||
-            ((this.enableSafeTraceLayerMoves || shouldTryTracePairTopology) &&
+            ((this.enableSafeTraceLayerMoves ||
+              shouldTryTracePairTopology ||
+              shouldTryTraceLayerCorridor) &&
               error.type === "pcb_trace_error"),
         )
     const orderedPadTopologyErrors = padTraceErrors.map(
@@ -752,6 +776,79 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
             safeTraceLayerCursor,
           )
         }
+      }
+      if (
+        this.enableSafeTraceLayerMoves &&
+        shouldTryTraceLayerCorridor &&
+        traceErrorKey &&
+        traceRoutePair
+      ) {
+        let corridorCursor =
+          this.traceLayerCorridorCursorByErrorId.get(traceErrorKey) ?? 0
+        let corridorVariantsChecked = 0
+        while (
+          candidateAttemptsThisStep < maxCandidateAttemptsThisStep &&
+          corridorVariantsChecked < TRACE_LAYER_CORRIDOR_VARIANTS.length
+        ) {
+          const variant =
+            TRACE_LAYER_CORRIDOR_VARIANTS[
+              corridorCursor % TRACE_LAYER_CORRIDOR_VARIANTS.length
+            ]!
+          corridorCursor += 1
+          corridorVariantsChecked += 1
+          const changedRouteIndex = traceRoutePair[variant.routeSide]
+          const originalZ = bestRoutes[changedRouteIndex]?.route[0]?.z
+          if (originalZ === undefined) continue
+          const targetZ = (originalZ + 1) % this.srj.layerCount
+          const candidateRoutes = cloneRoutesForIndexes(bestRoutes, [
+            changedRouteIndex,
+          ])
+          const changed = applyTraceLayerCorridorForError(
+            this.srj,
+            candidateRoutes,
+            error,
+            changedRouteIndex,
+            targetZ,
+            variant.normalDirectionSign,
+            variant.tangentDirectionSign,
+            variant.reverseEndpointOffsets,
+          )
+          if (!changed) continue
+
+          const materializedCandidateRoutes = materializeRoutesForIndexes(
+            candidateRoutes,
+            [changedRouteIndex],
+          )
+          candidateAttemptsThisStep += 1
+          this.candidateAttempts += 1
+          const candidateSnapshot = this.getSnapshot(
+            materializedCandidateRoutes,
+          )
+          const candidateViaIssueCount =
+            this.getViaIssueCount(candidateSnapshot)
+          const comparisonSnapshot =
+            bestTopologyCandidate?.snapshot ?? bestSnapshot
+          const comparisonViaIssueCount =
+            bestTopologyCandidate?.viaIssueCount ?? bestViaIssueCount
+          if (
+            candidateViaIssueCount <= comparisonViaIssueCount &&
+            isDrcSnapshotCountBetter(
+              candidateSnapshot,
+              comparisonSnapshot,
+            )
+          ) {
+            bestTopologyCandidate = {
+              routes: materializedCandidateRoutes,
+              snapshot: candidateSnapshot,
+              viaIssueCount: candidateViaIssueCount,
+              usesViaInPad: false,
+            }
+          }
+        }
+        this.traceLayerCorridorCursorByErrorId.set(
+          traceErrorKey,
+          corridorCursor,
+        )
       }
       if (
         this.enableSafeTraceLayerMoves &&
