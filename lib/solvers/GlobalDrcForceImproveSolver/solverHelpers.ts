@@ -4426,35 +4426,25 @@ export const applyTraceLayerCorridorForError = (
     normalPosition: number,
     z: number,
   ) => ({
-    x:
-      center.x +
-      tangent.x * tangentPosition +
-      normal.x * normalPosition,
-    y:
-      center.y +
-      tangent.y * tangentPosition +
-      normal.y * normalPosition,
+    x: center.x + tangent.x * tangentPosition + normal.x * normalPosition,
+    y: center.y + tangent.y * tangentPosition + normal.y * normalPosition,
     z,
   })
 
   const corridorPitch =
     (route.viaDiameter ?? srj.minViaDiameter ?? 0.3) +
-    (srj.minTraceToPadEdgeClearance ?? RELAXED_DRC_OPTIONS.traceClearance ??
+    (srj.minTraceToPadEdgeClearance ??
+      RELAXED_DRC_OPTIONS.traceClearance ??
       0.1)
   const startNormalOffset =
     (reverseEndpointOffsets ? 1.25 : -0.75) * corridorPitch
   const endNormalOffset =
     (reverseEndpointOffsets ? -0.75 : 1.25) * corridorPitch
   const startTangentPosition =
-    projectOntoTangent(start) +
-    corridorPitch * 0.5 * tangentDirectionSign
+    projectOntoTangent(start) + corridorPitch * 0.5 * tangentDirectionSign
   const endTangentPosition =
     projectOntoTangent(end) + corridorPitch * tangentDirectionSign
-  const startVia = pointOnAxes(
-    startTangentPosition,
-    startNormalOffset,
-    start.z,
-  )
+  const startVia = pointOnAxes(startTangentPosition, startNormalOffset, start.z)
   const endVia = pointOnAxes(endTangentPosition, endNormalOffset, start.z)
   const corridorStart = pointOnAxes(
     startTangentPosition,

@@ -832,10 +832,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
             bestTopologyCandidate?.viaIssueCount ?? bestViaIssueCount
           if (
             candidateViaIssueCount <= comparisonViaIssueCount &&
-            isDrcSnapshotCountBetter(
-              candidateSnapshot,
-              comparisonSnapshot,
-            )
+            isDrcSnapshotCountBetter(candidateSnapshot, comparisonSnapshot)
           ) {
             bestTopologyCandidate = {
               routes: materializedCandidateRoutes,
