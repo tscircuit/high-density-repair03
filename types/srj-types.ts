@@ -43,6 +43,11 @@ export type JumperType = "1206x4" | "0603"
 
 export interface SimpleRouteJson {
   layerCount: number
+  /**
+   * When false, every routed layer transition is manufactured as a through
+   * via whose copper barrel spans every board layer.
+   */
+  allowBlindAndBuriedVias?: boolean
   minTraceWidth: number
   nominalTraceWidth?: number
   minViaDiameter?: number

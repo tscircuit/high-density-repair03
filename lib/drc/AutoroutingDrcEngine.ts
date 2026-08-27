@@ -11,6 +11,7 @@ import type {
   SimplifiedPcbTrace,
   SimplifiedPcbTraces,
 } from "../types"
+import { getPhysicalViaLayers } from "../utils/getPhysicalViaLayers"
 
 type Point = { x: number; y: number }
 
@@ -615,7 +616,12 @@ export class AutoroutingDrcEngine {
           x: routePoint.x,
           y: routePoint.y,
           diameter: routePoint.via_diameter ?? this.srj.minViaDiameter ?? 0.3,
-          layers: [routePoint.from_layer, routePoint.to_layer],
+          layers: getPhysicalViaLayers({
+            fromLayer: routePoint.from_layer,
+            toLayer: routePoint.to_layer,
+            layerCount: this.srj.layerCount,
+            allowBlindAndBuriedVias: this.srj.allowBlindAndBuriedVias,
+          }),
         })
       }
     }
