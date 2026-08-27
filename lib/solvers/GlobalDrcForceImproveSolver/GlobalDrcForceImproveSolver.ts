@@ -165,6 +165,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   readonly autoroutingDrcEngine?: AutoroutingDrcEngine
   readonly viaHoleDiameter?: number
   readonly configuredMaxIterations?: number
+  readonly maxCandidateAttemptsPerStep?: number
   readonly enableBroadFallback: boolean
   readonly enableLargeBoardBroadFallback: boolean
   readonly enableTargetedErrorSweep: boolean
@@ -237,6 +238,14 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     }
     this.viaHoleDiameter = params.viaHoleDiameter
     this.configuredMaxIterations = params.maxIterations
+    if (
+      params.maxCandidateAttemptsPerStep !== undefined &&
+      (!Number.isInteger(params.maxCandidateAttemptsPerStep) ||
+        params.maxCandidateAttemptsPerStep <= 0)
+    ) {
+      throw new Error("maxCandidateAttemptsPerStep must be a positive integer")
+    }
+    this.maxCandidateAttemptsPerStep = params.maxCandidateAttemptsPerStep
     this.enableBroadFallback = params.enableBroadFallback ?? true
     this.enableLargeBoardBroadFallback =
       params.enableLargeBoardBroadFallback ?? true
@@ -269,6 +278,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         autoroutingDrcEngine: this.autoroutingDrcEngine,
         viaHoleDiameter: this.viaHoleDiameter,
         maxIterations: this.configuredMaxIterations,
+        maxCandidateAttemptsPerStep: this.maxCandidateAttemptsPerStep,
         enableBroadFallback: this.enableBroadFallback,
         enableLargeBoardBroadFallback: this.enableLargeBoardBroadFallback,
         enableTargetedErrorSweep: this.enableTargetedErrorSweep,
@@ -286,6 +296,8 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       initialDrcIssueCount: this.initialDrcIssueCount ?? snapshot.count,
       finalDrcIssueCount: snapshot.count,
       globalDrcForceImproveMaxIterations: this.MAX_ITERATIONS,
+      globalDrcForceImproveMaxCandidateAttemptsPerStep:
+        this.maxCandidateAttemptsPerStep,
       globalDrcForceImproveBroadForceAccepted: this.broadForceAccepted,
       globalDrcForceImproveTargetedForceAccepted: this.targetedForceAccepted,
       globalDrcForceImproveCandidateAttempts: this.candidateAttempts,
@@ -550,8 +562,12 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       return
     }
 
-    const maxCandidateAttemptsThisStep =
-      getMaxTargetedCandidateAttemptsForEffort(this.effort)
+    let maxCandidateAttemptsThisStep = getMaxTargetedCandidateAttemptsForEffort(
+      this.effort,
+    )
+    if (this.maxCandidateAttemptsPerStep !== undefined) {
+      maxCandidateAttemptsThisStep = this.maxCandidateAttemptsPerStep
+    }
     let candidateAttemptsThisStep = 0
     let safeTraceLayerCandidateAttemptsThisStep = 0
     let tracePairDetourAttemptedThisStep = false

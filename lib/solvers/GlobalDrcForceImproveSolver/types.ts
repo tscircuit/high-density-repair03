@@ -53,6 +53,7 @@ export type GlobalDrcForceImproveSolverParams = {
   autoroutingDrcEngine?: AutoroutingDrcEngine
   viaHoleDiameter?: number
   maxIterations?: number
+  maxCandidateAttemptsPerStep?: number
   /**
    * Whether each targeted solver iteration may try a speculative broad-force
    * candidate after targeted candidates fail. Defaults to true.
