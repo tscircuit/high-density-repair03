@@ -9,8 +9,7 @@ test("connectivity memoization preserves ordered alias semantics per engine", ()
     trace_alias: ["pad_alias"],
     resolved_net: ["resolve_alias"],
   })
-  const originalGetNetConnectedToId =
-    connMap.getNetConnectedToId.bind(connMap)
+  const originalGetNetConnectedToId = connMap.getNetConnectedToId.bind(connMap)
   const originalAreIdsConnected = connMap.areIdsConnected.bind(connMap)
   let getNetConnectedToIdCalls = 0
   let areIdsConnectedCalls = 0
