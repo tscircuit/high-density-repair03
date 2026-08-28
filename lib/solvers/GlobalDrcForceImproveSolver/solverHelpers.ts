@@ -95,15 +95,17 @@ export const isTraceObstacleDrcError = (error: Record<string, unknown>) => {
   )
 }
 
-const createSimplifiedTraces = (
+type IndexedTraceRoute = {
+  connection: SimpleRouteJson["connections"][number]
+  hdRoute: HighDensityRoute
+  routeIndex: number
+  traceId: string
+}
+
+const createIndexedTraceRoutes = (
   srj: SimpleRouteJson,
   routes: HighDensityRoute[],
-): {
-  traces: SimplifiedPcbTraces
-  traceRouteIndexById: Map<string, number>
-} => {
-  const traces: SimplifiedPcbTraces = []
-  const traceRouteIndexById = new Map<string, number>()
+): IndexedTraceRoute[] => {
   const routesByConnectionName = new Map<
     string,
     Array<{ route: HighDensityRoute; routeIndex: number }>
@@ -119,6 +121,7 @@ const createSimplifiedTraces = (
     }
   }
 
+  const indexedTraceRoutes: IndexedTraceRoute[] = []
   for (const connection of srj.connections) {
     const hdRoutes = routesByConnectionName.get(connection.name) ?? []
 
@@ -127,32 +130,57 @@ const createSimplifiedTraces = (
       if (!hdRoute) continue
       const traceId = `${connection.name}_${i}`
 
-      traces.push({
-        type: "pcb_trace",
-        pcb_trace_id: traceId,
-        connection_name:
-          connection.netConnectionName ??
-          connection.rootConnectionName ??
-          connection.name,
-        route: convertHdRouteToSimplifiedRoute(
-          hdRoute.route.route,
-          srj.layerCount,
-          {
-            traceThickness:
-              hdRoute.route.traceThickness ??
-              connection.nominalTraceWidth ??
-              srj.nominalTraceWidth ??
-              srj.minTraceWidth,
-            viaDiameter: hdRoute.route.viaDiameter ?? srj.minViaDiameter,
-            connectionPoints: connection.pointsToConnect,
-          },
-        ),
+      indexedTraceRoutes.push({
+        connection,
+        hdRoute: hdRoute.route,
+        routeIndex: hdRoute.routeIndex,
+        traceId,
       })
-      traceRouteIndexById.set(traceId, hdRoute.routeIndex)
     }
   }
 
-  return { traces, traceRouteIndexById }
+  return indexedTraceRoutes
+}
+
+const createTraceRouteIndexById = (
+  indexedTraceRoutes: IndexedTraceRoute[],
+): Map<string, number> => {
+  const traceRouteIndexById = new Map<string, number>()
+  for (const indexedTraceRoute of indexedTraceRoutes) {
+    traceRouteIndexById.set(
+      indexedTraceRoute.traceId,
+      indexedTraceRoute.routeIndex,
+    )
+  }
+  return traceRouteIndexById
+}
+
+const createSimplifiedTraces = (
+  srj: SimpleRouteJson,
+  indexedTraceRoutes: IndexedTraceRoute[],
+): SimplifiedPcbTraces => {
+  const traces: SimplifiedPcbTraces = []
+  for (const { connection, hdRoute, traceId } of indexedTraceRoutes) {
+    traces.push({
+      type: "pcb_trace",
+      pcb_trace_id: traceId,
+      connection_name:
+        connection.netConnectionName ??
+        connection.rootConnectionName ??
+        connection.name,
+      route: convertHdRouteToSimplifiedRoute(hdRoute.route, srj.layerCount, {
+        traceThickness:
+          hdRoute.traceThickness ??
+          connection.nominalTraceWidth ??
+          srj.nominalTraceWidth ??
+          srj.minTraceWidth,
+        viaDiameter: hdRoute.viaDiameter ?? srj.minViaDiameter,
+        connectionPoints: connection.pointsToConnect,
+      }),
+    })
+  }
+
+  return traces
 }
 
 const getDrcErrorSeverity = (error: Record<string, unknown>) => {
@@ -240,7 +268,12 @@ const createDrcSnapshot = (
     autoroutingDrcEngine && !drcEvaluator
       ? srj
       : getConnMapAwareSrj(srj, connMap)
-  const { traces, traceRouteIndexById } = createSimplifiedTraces(drcSrj, routes)
+  const indexedTraceRoutes = createIndexedTraceRoutes(drcSrj, routes)
+  const traceRouteIndexById = createTraceRouteIndexById(indexedTraceRoutes)
+  const traces: SimplifiedPcbTraces =
+    drcEvaluator?.consumesHdRoutesDirectly === true
+      ? []
+      : createSimplifiedTraces(drcSrj, indexedTraceRoutes)
   const drcResult = drcEvaluator?.({
     srj: drcSrj,
     routes,

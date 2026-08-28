@@ -16,9 +16,12 @@ export type DrcEvaluatorResult =
   | { errors: DrcError[]; errorsWithCenters?: DrcError[] }
   | DrcError[]
 
-export type DrcEvaluatorFunction = (
+export type DrcEvaluatorFunction = ((
   input: DrcEvaluatorInput,
-) => DrcEvaluatorResult
+) => DrcEvaluatorResult) & {
+  /** The evaluator reads HD routes directly and does not require traces. */
+  consumesHdRoutesDirectly?: boolean
+}
 
 export type DrcEvaluator = DrcEvaluatorFunction & {
   /** Staged evaluator for the established DRC set before via-to-pad repair. */
