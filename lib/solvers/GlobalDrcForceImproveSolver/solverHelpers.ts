@@ -4399,6 +4399,136 @@ export const applyTraceDetourForError = (
   return true
 }
 
+const MAX_TRACE_LAYER_CORRIDOR_ROUTE_LENGTH = 8
+
+/**
+ * Reroutes a short same-layer trace through a corridor on another layer.
+ * The caller must score the resulting route against full-board DRC.
+ */
+export const applyTraceLayerCorridorForError = (
+  srj: SimpleRouteJson,
+  routes: MutableRoute[],
+  error: Record<string, unknown>,
+  routeIndex: number,
+  targetZ: number,
+  normalDirectionSign: -1 | 1,
+  tangentDirectionSign: -1 | 1,
+  reverseEndpointOffsets = false,
+) => {
+  if (!Number.isInteger(targetZ) || targetZ < 0 || targetZ >= srj.layerCount) {
+    return false
+  }
+  const center = getErrorCenter(error)
+  const route = routes[routeIndex]
+  const start = route?.route[0]
+  const end = route?.route.at(-1)
+  if (
+    !route ||
+    !center ||
+    !start ||
+    !end ||
+    start.z !== end.z ||
+    start.z === targetZ ||
+    route.jumpers?.length ||
+    route.route.some(
+      (point) =>
+        point.z !== start.z || point.toNextSegmentType === "through_obstacle",
+    )
+  ) {
+    return false
+  }
+
+  const routeX = end.x - start.x
+  const routeY = end.y - start.y
+  const routeLength = Math.hypot(routeX, routeY)
+  if (
+    routeLength <= POSITION_EPSILON ||
+    routeLength > MAX_TRACE_LAYER_CORRIDOR_ROUTE_LENGTH
+  ) {
+    return false
+  }
+  const tangent = { x: routeX / routeLength, y: routeY / routeLength }
+  const normal = {
+    x: tangent.y * normalDirectionSign,
+    y: -tangent.x * normalDirectionSign,
+  }
+  const projectOntoTangent = (point: Point) =>
+    (point.x - center.x) * tangent.x + (point.y - center.y) * tangent.y
+  const pointOnAxes = (
+    tangentPosition: number,
+    normalPosition: number,
+    z: number,
+  ) => ({
+    x: center.x + tangent.x * tangentPosition + normal.x * normalPosition,
+    y: center.y + tangent.y * tangentPosition + normal.y * normalPosition,
+    z,
+  })
+
+  const corridorPitch =
+    (route.viaDiameter ?? srj.minViaDiameter ?? 0.3) +
+    (srj.minTraceToPadEdgeClearance ??
+      RELAXED_DRC_OPTIONS.traceClearance ??
+      0.1)
+  const startNormalOffset =
+    (reverseEndpointOffsets ? 1.25 : -0.75) * corridorPitch
+  const endNormalOffset =
+    (reverseEndpointOffsets ? -0.75 : 1.25) * corridorPitch
+  const startTangentPosition =
+    projectOntoTangent(start) + corridorPitch * 0.5 * tangentDirectionSign
+  const endTangentPosition =
+    projectOntoTangent(end) + corridorPitch * tangentDirectionSign
+  const startVia = pointOnAxes(startTangentPosition, startNormalOffset, start.z)
+  const endVia = pointOnAxes(endTangentPosition, endNormalOffset, start.z)
+  const corridorStart = pointOnAxes(
+    startTangentPosition,
+    corridorPitch * 2,
+    targetZ,
+  )
+  const corridorEnd = pointOnAxes(
+    endTangentPosition,
+    corridorPitch * 2,
+    targetZ,
+  )
+  const candidateRoute = [
+    { ...start },
+    startVia,
+    { ...startVia, z: targetZ },
+    corridorStart,
+    corridorEnd,
+    { ...endVia, z: targetZ },
+    endVia,
+    { ...end },
+  ]
+
+  const boardEdgeClearance = srj.minBoardEdgeClearance ?? 0
+  const viaRadius = (route.viaDiameter ?? srj.minViaDiameter ?? 0.3) / 2
+  const traceRadius = route.traceThickness / 2
+  if (
+    [startVia, endVia].some(
+      (via) =>
+        getPointBoardClearance(srj, via) + COORDINATE_EPSILON <
+        viaRadius + boardEdgeClearance,
+    )
+  ) {
+    return false
+  }
+  for (let index = 0; index < candidateRoute.length - 1; index += 1) {
+    const segmentStart = candidateRoute[index]!
+    const segmentEnd = candidateRoute[index + 1]!
+    if (segmentStart.z !== segmentEnd.z) continue
+    if (
+      getSegmentBoardClearance(srj, segmentStart, segmentEnd) +
+        COORDINATE_EPSILON <
+      traceRadius + boardEdgeClearance
+    ) {
+      return false
+    }
+  }
+
+  route.route.splice(0, route.route.length, ...candidateRoute)
+  return true
+}
+
 /** Replaces a same-layer span around a conflict with a displaced dogleg. */
 export const applyTraceSpanDetourForError = (
   srj: SimpleRouteJson,
