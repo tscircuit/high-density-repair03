@@ -1229,7 +1229,8 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       if (!error) continue
 
       this.errorCursor = (errorIndex + 1) % prioritizedErrors.length
-      const canMoveSharedViaSiteWithoutTradingDrcErrors = bestIssueCount === 1
+      const canMoveSharedViaSiteWithoutTradingDrcErrors =
+        bestIssueCount === 1 || activeRepairErrors.every(isViaPadDrcError)
 
       for (const scale of getForceScalesForEffort(this.effort)) {
         if (candidateAttemptsThisStep >= maxCandidateAttemptsThisStep) break
