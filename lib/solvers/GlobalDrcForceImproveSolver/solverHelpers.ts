@@ -637,6 +637,41 @@ export const getRectRepulsion = (
   }
 }
 
+const getReferencedPadObstacle = (
+  srj: SimpleRouteJson,
+  error: Record<string, unknown>,
+  obstacleFilter?: (obstacle: SimpleRouteJson["obstacles"][number]) => boolean,
+) => {
+  const referencedPadIds = Array.isArray(error.pcb_pad_ids)
+    ? error.pcb_pad_ids.filter((id): id is string => typeof id === "string")
+    : []
+
+  const exactObstacle = srj.obstacles.find((obstacle) => {
+    const metadata = (
+      obstacle as typeof obstacle & {
+        circuitJsonMetadata?: {
+          pcb_smtpad_id?: string
+          pcb_plated_hole_id?: string
+        }
+      }
+    ).circuitJsonMetadata
+    return (
+      referencedPadIds.some(
+        (id) =>
+          metadata?.pcb_smtpad_id === id || metadata?.pcb_plated_hole_id === id,
+      ) &&
+      (obstacleFilter?.(obstacle) ?? true)
+    )
+  })
+  if (exactObstacle) return exactObstacle
+
+  return srj.obstacles.find(
+    (obstacle) =>
+      referencedPadIds.some((id) => obstacle.connectedTo.includes(id)) &&
+      (obstacleFilter?.(obstacle) ?? true),
+  )
+}
+
 const getRepulsionPointForError = (
   srj: SimpleRouteJson,
   error: Record<string, unknown>,
@@ -648,13 +683,10 @@ const getRepulsionPointForError = (
     return center
   }
 
-  const referencedPadIds = Array.isArray(error.pcb_pad_ids)
-    ? error.pcb_pad_ids.filter((id): id is string => typeof id === "string")
-    : []
-  const referencedObstacle = srj.obstacles.find(
-    (obstacle) =>
-      referencedPadIds.some((id) => obstacle.connectedTo.includes(id)) &&
-      (obstacleFilter?.(obstacle) ?? true),
+  const referencedObstacle = getReferencedPadObstacle(
+    srj,
+    error,
+    obstacleFilter,
   )
   if (referencedObstacle) return referencedObstacle.center
 
@@ -2334,6 +2366,7 @@ const moveViaAwayFromPoint = (
   via: ViaNode,
   point: Point,
   srj: SimpleRouteJson,
+  translateSharedViaSite = false,
 ) => {
   const separationX = via.x - point.x
   const separationY = via.y - point.y
@@ -2341,13 +2374,11 @@ const moveViaAwayFromPoint = (
   const directionX = distance > POSITION_EPSILON ? separationX / distance : 1
   const directionY = distance > POSITION_EPSILON ? separationY / distance : 0
 
-  return moveVia(
-    routes,
-    via,
-    directionX * MAX_ERROR_MOVE,
-    directionY * MAX_ERROR_MOVE,
-    srj,
-  )
+  const dx = directionX * MAX_ERROR_MOVE
+  const dy = directionY * MAX_ERROR_MOVE
+  return translateSharedViaSite
+    ? translateSameRootViaSite(routes, via, dx, dy, srj)
+    : moveVia(routes, via, dx, dy, srj)
 }
 
 const getSegmentDistanceCandidates = (left: Segment, right: Segment) => {
@@ -4580,8 +4611,13 @@ export const applyDrcErrorForces = (
         const nearestVia = getNearestVia(vias, center, targetRouteIndex)
         if (nearestVia) {
           changed =
-            moveViaAwayFromPoint(routes, nearestVia, repulsionPoint, srj) ||
-            changed
+            moveViaAwayFromPoint(
+              routes,
+              nearestVia,
+              repulsionPoint,
+              srj,
+              isViaPadError && allowSharedViaSiteMove,
+            ) || changed
         }
       }
       continue
