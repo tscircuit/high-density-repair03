@@ -362,6 +362,11 @@ export class AutoroutingDrcEngine {
   private readonly includeTraceViaOwnerMetadata: boolean
   private readonly canonicalNetByAlias = new Map<string, string>()
   private readonly connMapNetByCanonicalNet = new Map<string, string>()
+  private readonly resolvedNetIdById = new Map<string, string>()
+  private readonly connectivityByOrderedPair = new Map<
+    string,
+    Map<string, boolean>
+  >()
   private readonly obstacles: StaticObstacle[]
   private readonly obstacleIndexesByLayer = new Map<
     string,
@@ -474,17 +479,35 @@ export class AutoroutingDrcEngine {
   }
 
   private resolveNetId(id: string) {
+    const cachedNetId = this.resolvedNetIdById.get(id)
+    if (cachedNetId !== undefined) return cachedNetId
+
     const connMapNetId = this.connMap?.getNetConnectedToId(id)
-    if (connMapNetId) return connMapNetId
     const canonicalNet = this.canonicalNetByAlias.get(id)
-    if (!canonicalNet) return id
-    return this.connMapNetByCanonicalNet.get(canonicalNet) ?? canonicalNet
+    const resolvedNetId =
+      connMapNetId ??
+      (canonicalNet
+        ? (this.connMapNetByCanonicalNet.get(canonicalNet) ?? canonicalNet)
+        : id)
+    this.resolvedNetIdById.set(id, resolvedNetId)
+    return resolvedNetId
   }
 
   private areConnected(left: string, right: string) {
     if (left === right) return true
-    if (this.connMap?.areIdsConnected(left, right)) return true
-    return this.resolveNetId(left) === this.resolveNetId(right)
+    let byRight = this.connectivityByOrderedPair.get(left)
+    const cachedResult = byRight?.get(right)
+    if (cachedResult !== undefined) return cachedResult
+
+    const areConnected =
+      Boolean(this.connMap?.areIdsConnected(left, right)) ||
+      this.resolveNetId(left) === this.resolveNetId(right)
+    if (!byRight) {
+      byRight = new Map()
+      this.connectivityByOrderedPair.set(left, byRight)
+    }
+    byRight.set(right, areConnected)
+    return areConnected
   }
 
   private compileStaticObstacles() {
