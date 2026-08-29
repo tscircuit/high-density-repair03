@@ -45,6 +45,7 @@ import type {
 import type { SimpleRouteJson, SimplifiedPcbTraces } from "../../types"
 import type { HighDensityRoute } from "../../types/high-density-types"
 import { convertHdRouteToSimplifiedRoute } from "../../utils/convertHdRouteToSimplifiedRoute"
+import { getPhysicalViaZLayers } from "../../utils/getPhysicalViaLayers"
 import { mapZToLayerName } from "../../utils/mapZToLayerName"
 
 const cloneRoute = (route: HighDensityRoute): MutableRoute => ({
@@ -341,6 +342,10 @@ export const getTopologyRepairDrcSnapshot = (
 export const collectViaNodes = (
   routes: HighDensityRoute[],
   defaultViaDiameter = 0.3,
+  viaLayerPolicy?: Pick<
+    SimpleRouteJson,
+    "layerCount" | "allowBlindAndBuriedVias"
+  >,
 ): ViaNode[] => {
   const vias: ViaNode[] = []
 
@@ -385,11 +390,22 @@ export const collectViaNodes = (
         Boolean(route.route[pointIndex]?.pcb_port_id),
       )
 
+      const explicitZLayers = [
+        ...new Set(uniquePointIndexes.map((i) => route.route[i]!.z)),
+      ]
+      const zLayers = viaLayerPolicy
+        ? getPhysicalViaZLayers({
+            fromZ: Math.min(...explicitZLayers),
+            toZ: Math.max(...explicitZLayers),
+            ...viaLayerPolicy,
+          })
+        : explicitZLayers
+
       vias.push({
         routeIndex,
         rootConnectionName: getRootConnectionName(route),
         pointIndexes: uniquePointIndexes,
-        zLayers: [...new Set(uniquePointIndexes.map((i) => route.route[i]!.z))],
+        zLayers,
         x: current.x,
         y: current.y,
         radius: (route.viaDiameter ?? defaultViaDiameter) / 2,
@@ -4138,7 +4154,10 @@ export const applyViaOnlyDisplacementForTraceError = (
     center,
     expectedTraceRouteIndex,
   )
-  const via = getNearestVia(collectViaNodes(routes), center)
+  const via = getNearestVia(
+    collectViaNodes(routes, srj.minViaDiameter, srj),
+    center,
+  )
   if (
     !segment ||
     !via ||
@@ -4652,7 +4671,7 @@ export const applyDrcErrorForces = (
   enableTraceViaOwnerTargeting = false,
 ) => {
   let changed = false
-  const vias = collectViaNodes(routes)
+  const vias = collectViaNodes(routes, srj.minViaDiameter, srj)
   const segments = collectSegments(routes)
 
   for (const error of errors) {
