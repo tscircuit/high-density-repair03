@@ -1,11 +1,81 @@
 import { expect, test } from "bun:test"
-import { AutoroutingDrcEngine } from "../lib"
+import {
+  AutoroutingDrcEngine,
+  GlobalDrcForceImproveSolver,
+  type DrcEvaluator,
+  type HighDensityRoute,
+} from "../lib"
 import {
   applyDrcErrorForces,
   cloneRoutes,
   getTraceRoutePairForError,
 } from "../lib/solvers/GlobalDrcForceImproveSolver/solverHelpers"
 import type { SimpleRouteJson, SimplifiedPcbTraces } from "../lib/types"
+
+test("tries a precise via displacement before topology changes at higher DRC counts", () => {
+  const srj: SimpleRouteJson = {
+    bounds: { minX: -2, minY: -2, maxX: 2, maxY: 2 },
+    connections: [
+      { name: "via_owner", pointsToConnect: [] },
+      { name: "trace", pointsToConnect: [] },
+    ],
+    obstacles: [],
+    layerCount: 2,
+    minTraceWidth: 0.1,
+    minViaDiameter: 0.3,
+  }
+  const hdRoutes: HighDensityRoute[] = [
+    {
+      connectionName: "via_owner",
+      route: [
+        { x: -1, y: 1, z: 0 },
+        { x: 0, y: 1, z: 0 },
+        { x: 0, y: 1, z: 1 },
+        { x: 1, y: 1, z: 1 },
+      ],
+      vias: [{ x: 0, y: 1 }],
+      traceThickness: 0.1,
+      viaDiameter: 0.3,
+    },
+    {
+      connectionName: "trace",
+      route: [
+        { x: -1, y: 0.8, z: 0 },
+        { x: 1, y: 0.8, z: 0 },
+      ],
+      vias: [],
+      traceThickness: 0.1,
+      viaDiameter: 0.3,
+    },
+  ]
+  const drcEvaluator: DrcEvaluator = ({ routes = [] }) => {
+    const viaY = routes[0]?.route[1]?.y ?? 0
+    if (viaY >= 1.05) return []
+    return Array.from({ length: 4 }, (_, index) => ({
+      type: "pcb_trace_error",
+      message: `trace is too close to via ${index}`,
+      pcb_trace_id: "trace_0",
+      pcb_trace_error_id: `overlap_trace_0_via_${index}`,
+      minimum_clearance: 0.1,
+      center: { x: 0, y: 0.9 },
+    }))
+  }
+  const solver = new GlobalDrcForceImproveSolver({
+    srj,
+    hdRoutes,
+    drcEvaluator,
+    maxIterations: 1,
+    enableLargeBoardBroadFallback: false,
+    enableBroadFallback: false,
+    enablePostSolveClearanceRelaxation: false,
+    enableSafeTraceLayerMoves: true,
+  })
+
+  solver.solve()
+
+  expect(solver.getOutput()[0]?.route[1]?.y).toBeGreaterThanOrEqual(1.05)
+  expect(solver.stats.finalDrcIssueCount).toBe(0)
+})
 
 test("repairs an exact via-trace pair when its reported center is distant", () => {
   const srj: SimpleRouteJson = {
