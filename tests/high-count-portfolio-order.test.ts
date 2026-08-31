@@ -146,7 +146,7 @@ test("starts broad repair from the baseline output", () => {
   )
 })
 
-test("does not repeat broad repair when safe-layer repair is rejected", () => {
+test("does not repeat broad repair after safe-layer repair is accepted", () => {
   const hdRoutes: HighDensityRoute[] = Array.from(
     { length: 121 },
     (_, index) => ({
@@ -172,9 +172,11 @@ test("does not repeat broad repair when safe-layer repair is rejected", () => {
     minViaDiameter: 0.3,
   }
   let evaluationCount = 0
-  const drcEvaluator: DrcEvaluator = () => {
+  const drcEvaluator: DrcEvaluator = ({ routes = [] }) => {
     evaluationCount += 1
-    return Array.from({ length: 4 }, (_, index) => ({
+    const issueCount =
+      routes[0]?.rootConnectionName === "safe-layer-output" ? 3 : 120
+    return Array.from({ length: issueCount }, (_, index) => ({
       type: "pcb_trace_error",
       message: `persistent violation ${index}`,
       pcb_trace_id: `trace_${index}`,
@@ -199,6 +201,12 @@ test("does not repeat broad repair when safe-layer repair is rejected", () => {
   solver.step()
   const safeTraceLayerSolver =
     solver.activeSubSolver as GlobalDrcForceImproveSolver
+  safeTraceLayerSolver.outputHdRoutes = safeTraceLayerSolver
+    .getOutput()
+    .map((route) => ({
+      ...route,
+      rootConnectionName: "safe-layer-output",
+    }))
   safeTraceLayerSolver.solved = true
   const evaluationsBeforeSafeResult = evaluationCount
   solver.step()

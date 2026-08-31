@@ -533,9 +533,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         ? this.safeTraceLayerSolver
         : this.portfolioSelectedSolver
       const shouldContinueBroadRepair =
-        acceptedSnapshot.count > 0 &&
-        !this.broadStartedAfterSafeTraceLayer &&
-        (!this.broadInputSnapshot || this.safeTraceLayerPhaseAccepted)
+        acceptedSnapshot.count > 0 && !this.broadInputSnapshot
       if (shouldContinueBroadRepair) {
         this.startBroadBranch(acceptedRoutes, acceptedSnapshot, acceptedSolver)
         return
