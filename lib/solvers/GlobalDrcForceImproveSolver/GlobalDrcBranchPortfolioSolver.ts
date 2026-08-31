@@ -47,6 +47,10 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
   private baselineSolver?: GlobalDrcForceImproveSolver
   private baselineSnapshot?: DrcSnapshot
   private broadInputSnapshot?: DrcSnapshot
+  private broadSourceRoutes?: HighDensityRoute[]
+  private broadSourceSnapshot?: DrcSnapshot
+  private broadSourceSolver?: GlobalDrcForceImproveSolver
+  private broadStartedAfterSafeTraceLayer = false
   private broadSnapshot?: DrcSnapshot
   private broadSolver?: GlobalDrcForceImproveSolver
   private safeTraceLayerInputRoutes?: HighDensityRoute[]
@@ -363,10 +367,18 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
     this.phase = "mixedSafeTraceLayer"
   }
 
-  private startBroadBranch() {
+  private startBroadBranch(
+    sourceRoutes: HighDensityRoute[],
+    sourceSnapshot: DrcSnapshot,
+    sourceSolver?: GlobalDrcForceImproveSolver,
+  ) {
+    this.broadSourceRoutes = sourceRoutes
+    this.broadSourceSnapshot = sourceSnapshot
+    this.broadSourceSolver = sourceSolver
+    this.broadStartedAfterSafeTraceLayer = Boolean(this.safeTraceLayerSolver)
     const broadInputRoutes = applyBroadRepulsionForces(
       this.params.srj,
-      this.inputHdRoutes,
+      sourceRoutes,
       this.params.effort ?? 1,
       this.broadPassMultiplier,
       this.params.connMap,
@@ -378,14 +390,8 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       this.params.connMap,
       this.autoroutingDrcEngine,
     )
-    if (
-      !isDrcSnapshotCountBetter(this.broadInputSnapshot, this.baselineSnapshot!)
-    ) {
-      this.startSafeTraceLayerPhase(
-        this.baselineSolver!.getOutput(),
-        this.baselineSnapshot!,
-        this.baselineSolver,
-      )
+    if (!isDrcSnapshotCountBetter(this.broadInputSnapshot, sourceSnapshot)) {
+      this.continueAfterBroad(sourceRoutes, sourceSnapshot, sourceSolver)
       return
     }
     this.broadSolver = new GlobalDrcForceImproveSolver({
@@ -399,6 +405,18 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
     })
     this.activeSubSolver = this.broadSolver
     this.phase = "broad"
+  }
+
+  private continueAfterBroad(
+    routes: HighDensityRoute[],
+    snapshot: DrcSnapshot,
+    selectedSolver?: GlobalDrcForceImproveSolver,
+  ) {
+    if (this.broadStartedAfterSafeTraceLayer) {
+      this.startViaInPadPhase(routes, snapshot, selectedSolver)
+    } else {
+      this.startSafeTraceLayerPhase(routes, snapshot, selectedSolver)
+    }
   }
 
   override _step() {
@@ -447,7 +465,11 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
           this.baselineSolver,
         )
       } else {
-        this.startBroadBranch()
+        this.startBroadBranch(
+          baselineRoutes,
+          this.baselineSnapshot,
+          this.baselineSolver,
+        )
       }
       return
     }
@@ -463,20 +485,14 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         this.params.connMap,
         this.autoroutingDrcEngine,
       )
-      if (
-        isDrcSnapshotCountBetter(this.broadSnapshot, this.baselineSnapshot!)
-      ) {
-        this.startSafeTraceLayerPhase(
-          broadRoutes,
-          this.broadSnapshot,
-          this.broadSolver,
-        )
-        return
-      }
-      this.startSafeTraceLayerPhase(
-        this.baselineSolver!.getOutput(),
-        this.baselineSnapshot!,
-        this.baselineSolver,
+      const acceptBroad = isDrcSnapshotCountBetter(
+        this.broadSnapshot,
+        this.broadSourceSnapshot!,
+      )
+      this.continueAfterBroad(
+        acceptBroad ? broadRoutes : this.broadSourceRoutes!,
+        acceptBroad ? this.broadSnapshot : this.broadSourceSnapshot!,
+        acceptBroad ? this.broadSolver : this.broadSourceSolver,
       )
       return
     }
@@ -516,8 +532,8 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       const acceptedSolver = this.safeTraceLayerPhaseAccepted
         ? this.safeTraceLayerSolver
         : this.portfolioSelectedSolver
-      if (acceptedSnapshot.count > 0 && !this.broadInputSnapshot) {
-        this.startBroadBranch()
+      if (acceptedSnapshot.count > 0 && !this.broadStartedAfterSafeTraceLayer) {
+        this.startBroadBranch(acceptedRoutes, acceptedSnapshot, acceptedSolver)
         return
       }
       if (
