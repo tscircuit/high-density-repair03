@@ -110,22 +110,6 @@ const TRACE_LAYER_CORRIDOR_VARIANTS = ([1, -1] as const).flatMap(
 
 const TRACE_LAYER_CORRIDOR_MAX_DRC_COUNT = 8
 
-const isTraceViaError = (error: Record<string, unknown>) => {
-  if (error.type !== "pcb_trace_error") return false
-  const errorId =
-    typeof error.pcb_trace_error_id === "string"
-      ? error.pcb_trace_error_id.toLowerCase()
-      : ""
-  const message =
-    typeof error.message === "string" ? error.message.toLowerCase() : ""
-  return (
-    typeof error.pcb_via_id === "string" ||
-    Array.isArray(error.pcb_via_ids) ||
-    errorId.includes("_via_") ||
-    message.includes("via")
-  )
-}
-
 const LOW_COUNT_TRACE_TOPOLOGY_VARIANTS = [
   ...([0, 1] as const).map((routeSide) => ({
     kind: "displacementChain" as const,
@@ -692,48 +676,6 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         error,
         bestSnapshot.traceRouteIndexById,
       )
-      if (
-        this.enableSafeTraceLayerMoves &&
-        traceRouteIndex !== undefined &&
-        candidateAttemptsThisStep < maxCandidateAttemptsThisStep
-      ) {
-        const candidateRoutes = cloneRoutes(bestRoutes)
-        const changed = applyViaOnlyDisplacementForTraceError(
-          this.srj,
-          candidateRoutes,
-          error,
-          bestSnapshot.traceRouteIndexById,
-          traceRouteIndex,
-          this.connMap,
-        )
-        if (changed) {
-          candidateAttemptsThisStep += 1
-          this.candidateAttempts += 1
-          const materializedCandidateRoutes = materializeRoutes(candidateRoutes)
-          const candidateSnapshot = this.getSnapshot(
-            materializedCandidateRoutes,
-          )
-          const candidateViaIssueCount =
-            this.getViaIssueCount(candidateSnapshot)
-          if (
-            isBetterDrcSnapshot(
-              candidateSnapshot,
-              candidateViaIssueCount,
-              bestIssueCount,
-              bestIssueScore,
-              bestViaIssueCount,
-              bestSnapshot,
-            )
-          ) {
-            bestTopologyCandidate = {
-              routes: materializedCandidateRoutes,
-              snapshot: candidateSnapshot,
-              viaIssueCount: candidateViaIssueCount,
-              usesViaInPad: false,
-            }
-          }
-        }
-      }
       if (this.enableSafeTraceLayerMoves && traceRouteIndex !== undefined) {
         const safeRouteIndexes = traceRoutePair ?? [traceRouteIndex]
         const localSpanVariantCount =
@@ -907,7 +849,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       }
       if (
         this.enableSafeTraceLayerMoves &&
-        (shouldTryTracePairTopology || isTraceViaError(error)) &&
+        shouldTryTracePairTopology &&
         traceErrorKey &&
         ((this.initialLowCountErrorsHaveMovableTraces &&
           (traceRoutePair || traceRouteIndex !== undefined)) ||
