@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { applyDrcErrorForces } from "../lib/solvers/GlobalDrcForceImproveSolver/solverHelpers"
-import type { HighDensityRoute, SimpleRouteJson } from "../lib/types"
+import type { HighDensityRoute, SimpleRouteJson } from "../lib"
 
 test("local pad repulsion leaves points outside the clearance region unchanged", (): void => {
   const route: HighDensityRoute = {
