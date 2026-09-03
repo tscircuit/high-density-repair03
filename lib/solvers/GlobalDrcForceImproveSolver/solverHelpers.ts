@@ -1726,7 +1726,7 @@ const getLocalObstacleSpanPointIndexes = (
   segment: Segment,
   obstacle: SimpleRouteJson["obstacles"][number],
   requiredDistance: number,
-) => {
+): number[] => {
   const obstacleBounds = expandBounds2d(
     getObstacleBounds(obstacle),
     requiredDistance,
@@ -1774,7 +1774,13 @@ const getLocalObstacleSpanPointIndexes = (
     index <= endSegmentIndex + 1;
     index += 1
   ) {
-    if (routePointCanMoveAsLocalSpan(route, index)) {
+    // Intersecting segment bounds also contain clear endpoints. Moving those
+    // endpoints can create a collision outside this obstacle's repair region.
+    if (
+      routePointCanMoveAsLocalSpan(route, index) &&
+      getPointToObstacleDistance(route.route[index]!, obstacle) <=
+        requiredDistance
+    ) {
       pointIndexes.push(index)
     }
   }
@@ -1790,7 +1796,7 @@ const moveLocalObstacleSpanByTranslation = (
   dx: number,
   dy: number,
   srj: SimpleRouteJson,
-) => {
+): boolean => {
   const route = routes[segment.routeIndex]
   if (!route) return false
 
@@ -1800,7 +1806,7 @@ const moveLocalObstacleSpanByTranslation = (
     obstacle,
     requiredDistance,
   )
-  if (pointIndexes.length <= 2) return false
+  if (pointIndexes.length === 0) return false
 
   return moveRoutePointIndexesByTranslation(
     route,
