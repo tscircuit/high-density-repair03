@@ -1964,8 +1964,24 @@ const translateVia = (
   return true
 }
 
-const getSameRootViaSite = (routes: MutableRoute[], via: ViaNode) => {
-  const currentVias = collectViaNodes(routes)
+const getSameRootViaSite = (
+  routes: MutableRoute[],
+  via: ViaNode,
+): ViaNode[] => {
+  const sameRootRoutes: MutableRoute[] = []
+  const originalRouteIndexes: number[] = []
+  for (let routeIndex = 0; routeIndex < routes.length; routeIndex += 1) {
+    const route: MutableRoute = routes[routeIndex]!
+    if (getRootConnectionName(route) !== via.rootConnectionName) continue
+    sameRootRoutes.push(route)
+    originalRouteIndexes.push(routeIndex)
+  }
+  // Only this root can share the site. Recollect current geometry after each
+  // move, retaining board route indexes and the original candidate order.
+  const currentVias: ViaNode[] = collectViaNodes(sameRootRoutes)
+  for (const candidate of currentVias) {
+    candidate.routeIndex = originalRouteIndexes[candidate.routeIndex]!
+  }
   const currentVia = currentVias.find(
     (candidate) =>
       candidate.routeIndex === via.routeIndex &&
