@@ -59,6 +59,8 @@ type StaticObstacle = {
   y: number
   width: number
   height: number
+  rotationCosine: number
+  rotationSine: number
   radius?: number
   layers: string[]
   pcbPortId?: string
@@ -161,12 +163,61 @@ const getViaBounds = (via: Via): Bounds => {
   }
 }
 
-const getObstacleBounds = (obstacle: StaticObstacle): Bounds => ({
-  minX: obstacle.x - obstacle.width / 2,
-  minY: obstacle.y - obstacle.height / 2,
-  maxX: obstacle.x + obstacle.width / 2,
-  maxY: obstacle.y + obstacle.height / 2,
-})
+const getObstacleBounds = (obstacle: StaticObstacle): Bounds => {
+  const halfWidth: number =
+    obstacle.radius === undefined
+      ? (Math.abs(obstacle.rotationCosine) * obstacle.width +
+          Math.abs(obstacle.rotationSine) * obstacle.height) /
+        2
+      : obstacle.radius
+  const halfHeight: number =
+    obstacle.radius === undefined
+      ? (Math.abs(obstacle.rotationSine) * obstacle.width +
+          Math.abs(obstacle.rotationCosine) * obstacle.height) /
+        2
+      : obstacle.radius
+  return {
+    minX: obstacle.x - halfWidth,
+    minY: obstacle.y - halfHeight,
+    maxX: obstacle.x + halfWidth,
+    maxY: obstacle.y + halfHeight,
+  }
+}
+
+const getUnrotatedObstacleBounds = (obstacle: StaticObstacle): Bounds => {
+  return {
+    minX: obstacle.x - obstacle.width / 2,
+    minY: obstacle.y - obstacle.height / 2,
+    maxX: obstacle.x + obstacle.width / 2,
+    maxY: obstacle.y + obstacle.height / 2,
+  }
+}
+
+const getPointInObstacleFrame = (
+  point: Point,
+  obstacle: StaticObstacle,
+): Point => {
+  if (obstacle.rotationCosine === 1 && obstacle.rotationSine === 0) return point
+  const dx: number = point.x - obstacle.x
+  const dy: number = point.y - obstacle.y
+  return {
+    x: obstacle.x + dx * obstacle.rotationCosine + dy * obstacle.rotationSine,
+    y: obstacle.y - dx * obstacle.rotationSine + dy * obstacle.rotationCosine,
+  }
+}
+
+const getPointInBoardFrame = (
+  point: Point,
+  obstacle: StaticObstacle,
+): Point => {
+  if (obstacle.rotationCosine === 1 && obstacle.rotationSine === 0) return point
+  const dx: number = point.x - obstacle.x
+  const dy: number = point.y - obstacle.y
+  return {
+    x: obstacle.x + dx * obstacle.rotationCosine - dy * obstacle.rotationSine,
+    y: obstacle.y + dx * obstacle.rotationSine + dy * obstacle.rotationCosine,
+  }
+}
 
 const getCellKey = (cellX: number, cellY: number) => `${cellX}:${cellY}`
 
@@ -524,6 +575,8 @@ export class AutoroutingDrcEngine {
 
       const isCircular =
         isMultiLayer && Math.abs(obstacle.width - obstacle.height) < 0.001
+      const rotationRadians: number =
+        ((obstacle.ccwRotationDegrees ?? 0) * Math.PI) / 180
       obstacles.push({
         kind: "obstacle",
         obstacleType,
@@ -533,6 +586,8 @@ export class AutoroutingDrcEngine {
         y: obstacle.center.y,
         width: obstacle.width,
         height: obstacle.height,
+        rotationCosine: Math.cos(rotationRadians),
+        rotationSine: Math.sin(rotationRadians),
         ...(isCircular
           ? { radius: Math.max(obstacle.width, obstacle.height) / 2 }
           : {}),
@@ -751,10 +806,22 @@ export class AutoroutingDrcEngine {
     if (this.obstacleSharesNet(segment.netId, obstacle)) return undefined
     this.lastRunStats.exactCheckCount += 1
 
-    const obstacleBounds = getObstacleBounds(obstacle)
+    const obstacleBounds: Bounds = getUnrotatedObstacleBounds(obstacle)
+    const localSegment: TraceSegment =
+      obstacle.rotationCosine === 1 && obstacle.rotationSine === 0
+        ? segment
+        : {
+            ...segment,
+            start: getPointInObstacleFrame(segment.start, obstacle),
+            end: getPointInObstacleFrame(segment.end, obstacle),
+          }
     const shapeDistance =
       obstacle.radius === undefined
-        ? segmentToBoundsMinDistance(segment.start, segment.end, obstacleBounds)
+        ? segmentToBoundsMinDistance(
+            localSegment.start,
+            localSegment.end,
+            obstacleBounds,
+          )
         : segmentToCircleMinDistance(segment.start, segment.end, {
             x: obstacle.x,
             y: obstacle.y,
@@ -787,7 +854,13 @@ export class AutoroutingDrcEngine {
       ],
       center:
         obstacle.radius === undefined
-          ? getClosestPointBetweenSegmentAndBounds(segment, obstacleBounds)
+          ? getPointInBoardFrame(
+              getClosestPointBetweenSegmentAndBounds(
+                localSegment,
+                obstacleBounds,
+              ),
+              obstacle,
+            )
           : getClosestPointBetweenSegmentAndPoint(segment, obstacle),
     }
   }
@@ -799,19 +872,20 @@ export class AutoroutingDrcEngine {
     if (this.obstacleSharesNet(via.netId, obstacle)) return undefined
     this.lastRunStats.exactCheckCount += 1
 
-    const obstacleBounds = getObstacleBounds(obstacle)
+    const obstacleBounds: Bounds = getUnrotatedObstacleBounds(obstacle)
+    const localVia: Point = getPointInObstacleFrame(via, obstacle)
     const pointToObstacleDistance =
       obstacle.radius === undefined
         ? Math.hypot(
             Math.max(
-              obstacleBounds.minX - via.x,
+              obstacleBounds.minX - localVia.x,
               0,
-              via.x - obstacleBounds.maxX,
+              localVia.x - obstacleBounds.maxX,
             ),
             Math.max(
-              obstacleBounds.minY - via.y,
+              obstacleBounds.minY - localVia.y,
               0,
-              via.y - obstacleBounds.maxY,
+              localVia.y - obstacleBounds.maxY,
             ),
           )
         : Math.hypot(via.x - obstacle.x, via.y - obstacle.y) - obstacle.radius
