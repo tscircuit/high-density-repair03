@@ -90,10 +90,7 @@ const getViaPadBlockers = (
   return blockers
 }
 
-const getSignedClearanceToBlocker = (
-  via: ViaNode,
-  blocker: ViaPadBlocker,
-) =>
+const getSignedClearanceToBlocker = (via: ViaNode, blocker: ViaPadBlocker) =>
   getPointToObstacleDistance(via, blocker.obstacle) -
   (via.radius + blocker.clearance + RELAXATION_CLEARANCE_SLACK)
 

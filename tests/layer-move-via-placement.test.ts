@@ -32,6 +32,8 @@ test("a layer repair places its vias clear of foreign pads before acceptance", (
   ).toEqual([])
   for (let index = 0; index < inputRoutes.length; index += 1) {
     expect(output[index]!.route[0]).toEqual(inputRoutes[index]!.route[0])
-    expect(output[index]!.route.at(-1)).toEqual(inputRoutes[index]!.route.at(-1))
+    expect(output[index]!.route.at(-1)).toEqual(
+      inputRoutes[index]!.route.at(-1),
+    )
   }
 })

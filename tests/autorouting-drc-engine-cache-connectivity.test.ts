@@ -52,10 +52,7 @@ test("cached DRC observes live connectivity and per-pad net changes", () => {
     width: 0.4,
     height: 0.4,
     layers: ["top"],
-    connectedTo: [
-      `pcb_smtpad_${index}`,
-      index === 0 ? "source_a" : "source_b",
-    ],
+    connectedTo: [`pcb_smtpad_${index}`, index === 0 ? "source_a" : "source_b"],
   }))
   const padEngine = new AutoroutingDrcEngine(srj)
   const singleTrace = traces.slice(0, 1)
