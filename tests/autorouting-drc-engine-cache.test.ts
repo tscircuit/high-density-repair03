@@ -130,6 +130,27 @@ test("last-result reuse is exact, mutation-safe, mode-specific and bounded", () 
   cached.errorsWithCenters[0]!.center!.y = 1000
   expect(engine.evaluate(traces)).toEqual(expected)
 
+  // Trace-via errors originally share their port array with collected segments.
+  // Mutating that returned array must not make a changed input look cached.
+  const viaTraces = createTraces()
+  for (const point of viaTraces[2]!.route) {
+    if (point.route_type !== "jumper") point.y = 0.1
+  }
+  const viaEngine = new AutoroutingDrcEngine(srj)
+  const viaResult = viaEngine.evaluate(viaTraces)
+  const viaError = viaResult.errors.find(
+    (error) => error.pcb_trace_error_id === "overlap_trace_a_via_0",
+  )!
+  expect(viaError).toBeDefined()
+  const viaErrorPortIds = viaError.pcb_port_ids as string[]
+  viaErrorPortIds.push("new_port")
+  const endpoint = viaTraces[0]!.route[1]!
+  if (endpoint.route_type === "wire") endpoint.end_pcb_port_id = "new_port"
+  expect(viaEngine.evaluate(viaTraces)).toEqual(
+    new AutoroutingDrcEngine(srj).evaluate(viaTraces),
+  )
+  expect(viaEngine.lastRunStats.exactCheckCount).toBeGreaterThan(0)
+
   const legacy = engine.evaluateLegacy(traces)
   expect(legacy.errors).toHaveLength(1)
   expect(engine.lastRunStats.exactCheckCount).toBeGreaterThan(0)
@@ -144,7 +165,7 @@ test("last-result reuse is exact, mutation-safe, mode-specific and bounded", () 
   engine.evaluate(traces)
   expect(engine.lastRunStats.exactCheckCount).toBeGreaterThan(0)
 
-  // This clear trace has a key larger than the eight-MiB serialized budget.
+  // This clear trace has metadata larger than the eight-MiB cache payload budget.
   // It must evict, rather than retain, the preceding full-board result.
   const oversized = createTraces().slice(0, 1)
   oversized[0]!.pcb_trace_id = "x".repeat(5 * 1024 * 1024)

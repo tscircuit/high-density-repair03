@@ -76,9 +76,9 @@ const getViaPadBlockers = (
     const isSameNet =
       obstacleSharesNet(via.rootConnectionName, obstacle, connMap) ||
       obstacleSharesNet(route.connectionName, obstacle, connMap)
-    // External vias must stay outside their own pads, but electrical spacing
-    // is required only between different nets. Applying it to the connected
-    // pad can push a legal escape via into neighboring copper.
+    // Candidate placement only requires an external via to clear its own pad;
+    // applying foreign-net spacing can push it into neighboring copper. The
+    // optional post-solve spacing pass retains its configured same-net margin.
     blockers.push({
       obstacle,
       clearance: isSameNet
