@@ -3214,9 +3214,6 @@ export const getRepairDrcIssueScore = (snapshot: DrcSnapshot) => {
   const legacyErrors = snapshot.errors.filter(
     (error) => !isViaPadDrcError(error),
   )
-  if (snapshot.errors.some(isViaPadDrcError)) {
-    return getDrcIssueScore(legacyErrors)
-  }
   return snapshot.legacyIssueScore ?? getDrcIssueScore(legacyErrors)
 }
 
