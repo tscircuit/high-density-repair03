@@ -223,8 +223,9 @@ test("snapshots show pad violations missed by the old shape approximation", asyn
       .replace(/[ \t]+$/gm, "")
       // The renderer reconstructs angles with atan2; its last bits differ
       // across JS runtimes. Canonicalize display angles, not DRC geometry.
-      .replace(/rotate\(([-\d.e+]+)/g, (_, angle: string) =>
-        `rotate(${Number(angle).toFixed(6)}`,
+      .replace(
+        /rotate\(([-\d.e+]+)/g,
+        (_, angle: string) => `rotate(${Number(angle).toFixed(6)}`,
       )
     const name = via ? "rotated-pad-via" : "square-pad-corner"
     const snapshotPath = new URL(
