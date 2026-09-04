@@ -3534,7 +3534,11 @@ export const applySafeTraceLayerMoveForError = (
     ) {
       firstPointIndex -= 1
     }
-    for (let index = firstPointIndex; index < originalPoints.length; index += 1) {
+    for (
+      let index = firstPointIndex;
+      index < originalPoints.length;
+      index += 1
+    ) {
       const point = originalPoints[index]!
       if (!areSameXY(point, position)) break
       if (point.z === targetZ) return true
