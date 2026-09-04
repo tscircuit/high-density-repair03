@@ -40,6 +40,7 @@ import {
   getNonViaPadDrcIssueCount,
   getRepairDrcIssueCount,
   getRepairDrcIssueScore,
+  getSafeTraceLayerFullSpanVariants,
   getTargetedClearanceSweepErrors,
   getTraceRouteIndexForError,
   getTraceRoutePairForError,
@@ -50,7 +51,6 @@ import {
   isViaPadDrcError,
   materializeRoutes,
   materializeRoutesForIndexes,
-  SAFE_TRACE_LAYER_DIRECTION_VARIANT_COUNT,
 } from "./solverHelpers"
 import { applyTraceToPadClearanceRelaxation } from "./traceToPadClearanceRelaxation"
 import { applyViaToPadClearanceRelaxation } from "./viaToPadClearanceRelaxation"
@@ -685,10 +685,14 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           safeRouteIndexes.length *
           this.srj.layerCount *
           SAFE_TRACE_LAYER_LOCAL_EXPANSIONS.length
-        const fullSpanVariantCount =
-          safeRouteIndexes.length *
-          this.srj.layerCount *
-          SAFE_TRACE_LAYER_DIRECTION_VARIANT_COUNT
+        const fullSpanVariants = getSafeTraceLayerFullSpanVariants(
+          this.srj,
+          bestRoutes,
+          error,
+          safeRouteIndexes,
+          this.connMap,
+        )
+        const fullSpanVariantCount = fullSpanVariants.length
         const variantCount = localSpanVariantCount + fullSpanVariantCount
         const prioritizeFullSpan = isTraceObstacleDrcError(error)
         const fullSpanVariantOffset = prioritizeFullSpan
@@ -697,9 +701,10 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         const localSpanVariantOffset = prioritizeFullSpan
           ? fullSpanVariantCount
           : 0
-        let safeTraceLayerCursor = traceErrorKey
-          ? (this.safeTraceLayerCursorByErrorId.get(traceErrorKey) ?? 0)
-          : 0
+        let safeTraceLayerCursor =
+          (traceErrorKey
+            ? (this.safeTraceLayerCursorByErrorId.get(traceErrorKey) ?? 0)
+            : 0) % variantCount
         let variantsChecked = 0
         while (
           safeTraceLayerCandidateAttemptsThisStep <
@@ -715,21 +720,26 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           const modeVariantIndex =
             variantIndex -
             (isFullSpan ? fullSpanVariantOffset : localSpanVariantOffset)
-          const routeSide = modeVariantIndex % safeRouteIndexes.length
           const layerVariant = Math.floor(
             modeVariantIndex / safeRouteIndexes.length,
           )
-          const targetZ = layerVariant % this.srj.layerCount
+          const variant = isFullSpan
+            ? fullSpanVariants[modeVariantIndex]!
+            : {
+                routeIndex:
+                  safeRouteIndexes[
+                    modeVariantIndex % safeRouteIndexes.length
+                  ]!,
+                targetZ: layerVariant % this.srj.layerCount,
+                directionVariant: 0,
+              }
           const spanExpansion = isFullSpan
             ? ("full" as const)
             : SAFE_TRACE_LAYER_LOCAL_EXPANSIONS[
                 Math.floor(layerVariant / this.srj.layerCount) %
                   SAFE_TRACE_LAYER_LOCAL_EXPANSIONS.length
               ]!
-          const directionVariant = isFullSpan
-            ? Math.floor(layerVariant / this.srj.layerCount)
-            : 0
-          const changedRouteIndex = safeRouteIndexes[routeSide]!
+          const changedRouteIndex = variant.routeIndex
           const candidateRoutes = cloneRoutesForIndexes(bestRoutes, [
             changedRouteIndex,
           ])
@@ -738,10 +748,10 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
             candidateRoutes,
             error,
             changedRouteIndex,
-            targetZ,
+            variant.targetZ,
             spanExpansion,
             this.connMap,
-            directionVariant,
+            variant.directionVariant,
           )
           if (!changed) continue
 
