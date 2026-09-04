@@ -73,7 +73,12 @@ test("full-span enumeration preserves ordered unique geometry using only active 
       {
         connectionName: "trace",
         route: points,
-        vias: otherLayer ? [{ x: -1, y: 0 }, { x: 1, y: 0 }] : [],
+        vias: otherLayer
+          ? [
+              { x: -1, y: 0 },
+              { x: 1, y: 0 },
+            ]
+          : [],
         traceThickness: 0.1,
         viaDiameter: 0.3,
       },

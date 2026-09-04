@@ -727,9 +727,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
             ? fullSpanVariants[modeVariantIndex]!
             : {
                 routeIndex:
-                  safeRouteIndexes[
-                    modeVariantIndex % safeRouteIndexes.length
-                  ]!,
+                  safeRouteIndexes[modeVariantIndex % safeRouteIndexes.length]!,
                 targetZ: layerVariant % this.srj.layerCount,
                 directionVariant: 0,
               }

@@ -94,9 +94,7 @@ test("a layer corridor joins overlapping same-net via copper without moving its 
     expect(output[0]!.route[0]).toEqual(original[0]!.route[0])
     expect(output[0]!.route.at(-1)).toEqual(original[0]!.route.at(-1))
     const physicalSites = new Set(
-      output.flatMap((route) =>
-        route.vias.map((via) => `${via.x},${via.y}`),
-      ),
+      output.flatMap((route) => route.vias.map((via) => `${via.x},${via.y}`)),
     )
     // Only the opposite end needs a new drilled site. The existing shared
     // via remains fixed, including when traversed in the reverse direction.

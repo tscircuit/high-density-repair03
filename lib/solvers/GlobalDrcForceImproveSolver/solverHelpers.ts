@@ -4615,7 +4615,11 @@ export const applyTraceLayerCorridorForError = (
   const rootConnectionName = getRootConnectionName(route)
   const existingVias = collectViaNodes(
     routes.filter((existingRoute) =>
-      sharesNet(rootConnectionName, getRootConnectionName(existingRoute), connMap),
+      sharesNet(
+        rootConnectionName,
+        getRootConnectionName(existingRoute),
+        connMap,
+      ),
     ),
     srj.minViaDiameter ?? 0.3,
   ).filter(

@@ -102,7 +102,10 @@ test("same-layer repeats require new via placement while real stacked transition
   }
   const attached: HighDensityRoute = {
     ...input[0]!,
-    vias: [{ x: -0.5, y: 0 }, { x: 0.5, y: 0 }],
+    vias: [
+      { x: -0.5, y: 0 },
+      { x: 0.5, y: 0 },
+    ],
     route: [
       { x: -2, y: 0, z: 0 },
       { x: -0.5, y: 0, z: 0 },
