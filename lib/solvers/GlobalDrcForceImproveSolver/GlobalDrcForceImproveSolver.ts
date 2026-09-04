@@ -391,7 +391,9 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   }
 
   private getViaIssueCount(snapshot: DrcSnapshot) {
-    return getViaDrcIssueCount(snapshot, false)
+    // Via-to-pad clearances are physical via constraints too. Excluding them
+    // lets a trace repair introduce illegal vias while appearing to improve DRC.
+    return getViaDrcIssueCount(snapshot)
   }
 
   private getRepairIssueCount(snapshot: DrcSnapshot) {
