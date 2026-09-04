@@ -49,14 +49,7 @@ test("via placement completes trace clearance before a layer candidate is scored
   expect(input.errors).toHaveLength(1)
   const candidate = cloneRoutes(inputRoutes)
   expect(
-    applySafeTraceLayerMoveForError(
-      srj,
-      candidate,
-      input.errors[0]!,
-      0,
-      1,
-      0,
-    ),
+    applySafeTraceLayerMoveForError(srj, candidate, input.errors[0]!, 0, 1, 0),
   ).toBe(true)
   const incomplete = evaluate(materializeRoutes(candidate))
   // The layer swap removes the crossing, but its unplaced vias now contact

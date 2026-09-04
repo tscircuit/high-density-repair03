@@ -50,7 +50,10 @@ test("an unchanged own-pad edge overlap does not veto another via's repair", () 
         { x: 1.4, y: 0, z: 0 },
         { x: 2, y: -1, z: 0 },
       ],
-      vias: [{ x: 0.45, y: 0 }, { x: 1.4, y: 0 }],
+      vias: [
+        { x: 0.45, y: 0 },
+        { x: 1.4, y: 0 },
+      ],
     },
   ]
   const input = structuredClone(routes)

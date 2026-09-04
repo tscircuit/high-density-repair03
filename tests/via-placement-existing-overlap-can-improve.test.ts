@@ -64,26 +64,16 @@ test("an existing copper overlap can improve without grandfathering a newly crea
     vias: [],
   }
   expect(
-    applyViaToPadClearanceRelaxation(
-      srj,
-      routes,
-      undefined,
-      0,
-      [previousRoute],
-    ),
+    applyViaToPadClearanceRelaxation(srj, routes, undefined, 0, [
+      previousRoute,
+    ]),
   ).toBe(routes)
 
   // The allowance is the old signed copper gap, not just the old center
   // distance. A larger via must not deepen that overlap after a size change.
   const enlargedRoutes = [{ ...route, viaDiameter: 0.4 }]
   expect(
-    applyViaToPadClearanceRelaxation(
-      srj,
-      enlargedRoutes,
-      undefined,
-      0,
-      routes,
-    ),
+    applyViaToPadClearanceRelaxation(srj, enlargedRoutes, undefined, 0, routes),
   ).toBe(enlargedRoutes)
   expect(routes).toEqual(input)
 })

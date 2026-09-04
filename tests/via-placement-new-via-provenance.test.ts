@@ -63,13 +63,9 @@ test("only a pre-existing via can retain an own-pad attachment after a topology 
     route: candidate.route.filter((_, pointIndex) => pointIndex !== 1),
   }
   expect(
-    applyViaToPadClearanceRelaxation(
-      srj,
-      candidates,
-      undefined,
-      0,
-      [existingAttachment],
-    ),
+    applyViaToPadClearanceRelaxation(srj, candidates, undefined, 0, [
+      existingAttachment,
+    ]),
   ).toBe(candidates)
   expect(candidates).toEqual(before)
   expect(beforeLayerChange).toEqual(existingBefore)

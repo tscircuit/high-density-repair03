@@ -82,8 +82,7 @@ const viaIsAttachedToSameNetObstacle = (
       return (
         originalVia !== undefined &&
         originalVia !== null &&
-        getPointToObstacleDistance(originalVia, obstacle) <=
-          CLEARANCE_EPSILON
+        getPointToObstacleDistance(originalVia, obstacle) <= CLEARANCE_EPSILON
       )
     })
   )

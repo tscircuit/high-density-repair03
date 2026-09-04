@@ -416,7 +416,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     // trace count cannot establish whether the completed move improves DRC.
     if (
       this.getViaIssueCount(snapshot) <=
-        this.getViaIssueCount(comparisonSnapshot)
+      this.getViaIssueCount(comparisonSnapshot)
     ) {
       return { routes, snapshot }
     }
