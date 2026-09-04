@@ -169,7 +169,10 @@ test("snapshot shows an unsafe via-creating repair being rejected", async (): Pr
   ])
 
   const graphics = stackGraphicsHorizontally(
-    [createPanel(srj, beforeRoutes, true), createPanel(srj, afterRoutes, false)],
+    [
+      createPanel(srj, beforeRoutes, true),
+      createPanel(srj, afterRoutes, false),
+    ],
     {
       titles: ["Before: unsafe vias", "After: change rejected"],
     },
