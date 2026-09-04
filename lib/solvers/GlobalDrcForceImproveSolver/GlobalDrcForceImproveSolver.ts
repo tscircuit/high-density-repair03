@@ -408,12 +408,13 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     routes: HighDensityRoute[],
     changedRouteIndex: number,
     comparisonSnapshot: DrcSnapshot,
+    existingRoute: HighDensityRoute,
   ): { routes: HighDensityRoute[]; snapshot: DrcSnapshot } {
     const snapshot = this.getSnapshot(routes)
-    // Only complete a promising topology whose new via clearance prevents
-    // acceptance. Rejected trace topologies need no additional placement work.
+    // Finish placement when new via clearance blocks acceptance. Moving a via
+    // also changes its adjacent trace segments, so an incomplete candidate's
+    // trace count cannot establish whether the completed move improves DRC.
     if (
-      !isDrcSnapshotCountBetter(snapshot, comparisonSnapshot) ||
       this.getViaIssueCount(snapshot) <=
         this.getViaIssueCount(comparisonSnapshot)
     ) {
@@ -440,6 +441,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       [changedRoute],
       this.connMap,
       0,
+      [existingRoute],
     )
     if (relaxedRoutes[0] === changedRoute) return { routes, snapshot }
     const viaRadius = changedRoute.viaDiameter / 2
@@ -811,6 +813,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
             materializeRoutesForIndexes(candidateRoutes, [changedRouteIndex]),
             changedRouteIndex,
             bestTopologyCandidate?.snapshot ?? bestSnapshot,
+            bestRoutes[changedRouteIndex]!,
           )
           const candidateViaIssueCount =
             this.getViaIssueCount(candidateSnapshot)
@@ -885,6 +888,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
             materializeRoutesForIndexes(candidateRoutes, [changedRouteIndex]),
             changedRouteIndex,
             bestTopologyCandidate?.snapshot ?? bestSnapshot,
+            bestRoutes[changedRouteIndex]!,
           )
           const candidateViaIssueCount =
             this.getViaIssueCount(candidateSnapshot)
