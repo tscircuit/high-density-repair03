@@ -134,6 +134,16 @@ const MIN_VIA_CLEARANCE = 0.1
 const DEFAULT_VIA_TO_PAD_CLEARANCE = 0.1
 const DRC_EPSILON = 5e-3
 const POSITION_EPSILON = 1e-6
+// Retain only the last evaluation, with a bounded serialized payload. This
+// counts UTF-16 string bytes, not engine-dependent object/allocator overhead.
+const MAX_CACHED_EVALUATION_BYTES = 8 * 1024 * 1024
+
+// Numeric tuple positions contain numbers for ordinary geometry and strings
+// only for values that JSON would otherwise conflate with zero or null.
+const encodeCoordinate = (value: number): number | string => {
+  if (Object.is(value, -0)) return "-0"
+  return Number.isFinite(value) ? value : String(value)
+}
 
 const expandBounds = (bounds: Bounds, amount: number): Bounds => ({
   minX: bounds.minX - amount,
@@ -412,6 +422,10 @@ export class AutoroutingDrcEngine {
     string,
     SpatialHash<StaticObstacle>
   >()
+  private lastEvaluation?: {
+    key: string
+    result: AutoroutingDrcResult
+  }
 
   lastRunStats: AutoroutingDrcEngineRunStats = {
     traceCount: 0,
@@ -974,15 +988,55 @@ export class AutoroutingDrcEngine {
     return this.evaluateInternal(traces, false)
   }
 
+  private getEvaluationKey(
+    segments: TraceSegment[],
+    vias: Via[],
+    includeViaPadErrors: boolean,
+  ): string {
+    // ConnectivityMap is mutable. Capture the live lookups performed by
+    // areConnected, including its second lookup of already-resolved net ids.
+    const getNetState = (id: string) => [
+      id,
+      this.resolveNetId(id),
+      this.connMap?.getNetConnectedToId(id),
+    ]
+    const dynamicNetIds = new Set([
+      ...segments.map((segment) => segment.netId),
+      ...vias.map((via) => via.netId),
+    ])
+    return JSON.stringify([
+      includeViaPadErrors,
+      // Array position already represents segment/via order. Encode only the
+      // fields consumed by DRC; native JSON avoids a per-property replacer.
+      segments.map((segment) => [
+        segment.traceId,
+        segment.netId,
+        encodeCoordinate(segment.start.x),
+        encodeCoordinate(segment.start.y),
+        encodeCoordinate(segment.end.x),
+        encodeCoordinate(segment.end.y),
+        encodeCoordinate(segment.width),
+        segment.layer,
+        segment.pcbPortIds,
+      ]),
+      vias.map((via) => [
+        via.traceId,
+        via.netId,
+        encodeCoordinate(via.x),
+        encodeCoordinate(via.y),
+        encodeCoordinate(via.diameter),
+        via.layers,
+      ]),
+      [...dynamicNetIds].map(getNetState),
+      this.obstacles.map((obstacle) => obstacle.connectedTo.map(getNetState)),
+    ])
+  }
+
   private evaluateInternal(
     traces: SimplifiedPcbTraces,
     includeViaPadErrors: boolean,
   ): AutoroutingDrcResult {
     const { segments, vias } = this.collectDynamicGeometry(traces)
-    const dynamicIndexesByLayer = this.buildDynamicIndexes(segments, vias)
-    const detectedTraceErrors: AutoroutingDrcError[] = []
-    const detectedViaPadErrors: AutoroutingDrcError[] = []
-
     this.lastRunStats = {
       traceCount: traces.length,
       segmentCount: segments.length,
@@ -991,6 +1045,18 @@ export class AutoroutingDrcEngine {
       broadPhaseCandidateCount: 0,
       exactCheckCount: 0,
     }
+    const key = this.getEvaluationKey(segments, vias, includeViaPadErrors)
+    if (key === this.lastEvaluation?.key) {
+      // Each caller owns its result, including nested error metadata. A cache
+      // hit performs no spatial or exact checks; the run statistics stay zero.
+      return structuredClone(this.lastEvaluation.result)
+    }
+    // This is deliberately a last-result cache, not an accumulating history of
+    // routing candidates. Oversized evaluations also evict the previous entry.
+    this.lastEvaluation = undefined
+    const dynamicIndexesByLayer = this.buildDynamicIndexes(segments, vias)
+    const detectedTraceErrors: AutoroutingDrcError[] = []
+    const detectedViaPadErrors: AutoroutingDrcError[] = []
 
     for (const segment of segments) {
       const queryBounds = getSegmentBounds(segment)
@@ -1093,11 +1159,19 @@ export class AutoroutingDrcEngine {
       AutoroutingDrcError & { center: Point }
     >
 
-    return {
+    const result = {
       errors,
       errorsWithCenters,
       locationAwareErrors,
     }
+    if (
+      key.length * 2 <= MAX_CACHED_EVALUATION_BYTES &&
+      (key.length + JSON.stringify(result).length) * 2 <=
+        MAX_CACHED_EVALUATION_BYTES
+    ) {
+      this.lastEvaluation = { key, result: structuredClone(result) }
+    }
+    return result
   }
 }
 

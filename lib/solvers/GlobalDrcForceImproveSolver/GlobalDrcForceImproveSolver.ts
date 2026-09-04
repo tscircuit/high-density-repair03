@@ -404,6 +404,64 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     return getRepairDrcIssueScore(snapshot)
   }
 
+  private prepareLayerMoveCandidate(
+    routes: HighDensityRoute[],
+    changedRouteIndex: number,
+    comparisonSnapshot: DrcSnapshot,
+  ): { routes: HighDensityRoute[]; snapshot: DrcSnapshot } {
+    const snapshot = this.getSnapshot(routes)
+    // Only complete a promising topology whose new via clearance prevents
+    // acceptance. Rejected trace topologies need no additional placement work.
+    if (
+      !isDrcSnapshotCountBetter(snapshot, comparisonSnapshot) ||
+      this.getViaIssueCount(snapshot) <=
+        this.getViaIssueCount(comparisonSnapshot)
+    ) {
+      return { routes, snapshot }
+    }
+    const viaPadErrors = snapshot.errors.filter(
+      (error) =>
+        isViaPadDrcError(error) &&
+        getTraceRouteIndexForError(error, snapshot.traceRouteIndexById) ===
+          changedRouteIndex,
+    )
+    if (viaPadErrors.length === 0) return { routes, snapshot }
+
+    // A layer change and placement of its vias are one candidate. Resolve pad
+    // clearance on the changed route before applying the full-board safety
+    // gate; never commit an unsafe intermediate route to repair it later.
+    const clearance = Math.max(
+      ...viaPadErrors.map((error) => Number(error.minimum_clearance)),
+    )
+    if (!Number.isFinite(clearance)) return { routes, snapshot }
+    const changedRoute = routes[changedRouteIndex]!
+    const relaxedRoutes = applyViaToPadClearanceRelaxation(
+      { ...this.srj, minViaEdgeToPadEdgeClearance: clearance },
+      [changedRoute],
+      this.connMap,
+      0,
+    )
+    if (relaxedRoutes[0] === changedRoute) return { routes, snapshot }
+    const viaRadius = changedRoute.viaDiameter / 2
+    if (
+      relaxedRoutes[0]!.vias.some(
+        (via) =>
+          via.x - viaRadius < this.srj.bounds.minX ||
+          via.x + viaRadius > this.srj.bounds.maxX ||
+          via.y - viaRadius < this.srj.bounds.minY ||
+          via.y + viaRadius > this.srj.bounds.maxY,
+      )
+    ) {
+      return { routes, snapshot }
+    }
+    const completedRoutes = [...routes]
+    completedRoutes[changedRouteIndex] = relaxedRoutes[0]!
+    return {
+      routes: completedRoutes,
+      snapshot: this.getSnapshot(completedRoutes),
+    }
+  }
+
   private acceptSolvedRoutes(
     routes: HighDensityRoute[],
     snapshot: DrcSnapshot,
@@ -744,14 +802,15 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           )
           if (!changed) continue
 
-          const materializedCandidateRoutes = materializeRoutesForIndexes(
-            candidateRoutes,
-            [changedRouteIndex],
-          )
           safeTraceLayerCandidateAttemptsThisStep += 1
           this.candidateAttempts += 1
-          const candidateSnapshot = this.getSnapshot(
-            materializedCandidateRoutes,
+          const {
+            routes: materializedCandidateRoutes,
+            snapshot: candidateSnapshot,
+          } = this.prepareLayerMoveCandidate(
+            materializeRoutesForIndexes(candidateRoutes, [changedRouteIndex]),
+            changedRouteIndex,
+            bestTopologyCandidate?.snapshot ?? bestSnapshot,
           )
           const candidateViaIssueCount =
             this.getViaIssueCount(candidateSnapshot)
@@ -817,14 +876,15 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           )
           if (!changed) continue
 
-          const materializedCandidateRoutes = materializeRoutesForIndexes(
-            candidateRoutes,
-            [changedRouteIndex],
-          )
           candidateAttemptsThisStep += 1
           this.candidateAttempts += 1
-          const candidateSnapshot = this.getSnapshot(
-            materializedCandidateRoutes,
+          const {
+            routes: materializedCandidateRoutes,
+            snapshot: candidateSnapshot,
+          } = this.prepareLayerMoveCandidate(
+            materializeRoutesForIndexes(candidateRoutes, [changedRouteIndex]),
+            changedRouteIndex,
+            bestTopologyCandidate?.snapshot ?? bestSnapshot,
           )
           const candidateViaIssueCount =
             this.getViaIssueCount(candidateSnapshot)

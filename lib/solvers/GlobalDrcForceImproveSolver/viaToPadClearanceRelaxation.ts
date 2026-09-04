@@ -24,6 +24,7 @@ type Point2D = { x: number; y: number }
 
 type ViaPadBlocker = {
   obstacle: SimpleRouteJson["obstacles"][number]
+  clearance: number
 }
 
 const limitVector = (vector: Point2D, maxMagnitude: number): Point2D => {
@@ -56,6 +57,7 @@ const getViaPadBlockers = (
   routes: HighDensityRoute[],
   via: ViaNode,
   connMap?: ConnectivityMap,
+  sameNetClearance = srj.minViaEdgeToPadEdgeClearance!,
 ) => {
   const blockers: ViaPadBlocker[] = []
   const route = routes[via.routeIndex]
@@ -71,29 +73,46 @@ const getViaPadBlockers = (
 
     const zLayers = getObstacleZLayers(obstacle, srj.layerCount)
     if (!zLayersOverlap(via.zLayers, zLayers)) continue
-    blockers.push({ obstacle })
+    const isSameNet =
+      obstacleSharesNet(via.rootConnectionName, obstacle, connMap) ||
+      obstacleSharesNet(route.connectionName, obstacle, connMap)
+    // External vias must stay outside their own pads, but electrical spacing
+    // is required only between different nets. Applying it to the connected
+    // pad can push a legal escape via into neighboring copper.
+    blockers.push({
+      obstacle,
+      clearance: isSameNet
+        ? sameNetClearance
+        : srj.minViaEdgeToPadEdgeClearance!,
+    })
   }
 
   return blockers
 }
 
 const getSignedClearanceToBlocker = (
-  srj: SimpleRouteJson,
   via: ViaNode,
   blocker: ViaPadBlocker,
 ) =>
   getPointToObstacleDistance(via, blocker.obstacle) -
-  (via.radius + srj.minViaEdgeToPadEdgeClearance! + RELAXATION_CLEARANCE_SLACK)
+  (via.radius + blocker.clearance + RELAXATION_CLEARANCE_SLACK)
 
 const getViaClearancePenalty = (
   srj: SimpleRouteJson,
   routes: HighDensityRoute[],
   via: ViaNode,
   connMap?: ConnectivityMap,
+  sameNetClearance = srj.minViaEdgeToPadEdgeClearance!,
 ) => {
   let penalty = 0
-  for (const blocker of getViaPadBlockers(srj, routes, via, connMap)) {
-    const signedClearance = getSignedClearanceToBlocker(srj, via, blocker)
+  for (const blocker of getViaPadBlockers(
+    srj,
+    routes,
+    via,
+    connMap,
+    sameNetClearance,
+  )) {
+    const signedClearance = getSignedClearanceToBlocker(via, blocker)
     if (signedClearance >= 0) continue
 
     penalty += signedClearance * signedClearance
@@ -112,12 +131,14 @@ const getRouteViaClearancePenalty = (
   routes: HighDensityRoute[],
   routeIndex: number,
   connMap?: ConnectivityMap,
+  sameNetClearance = srj.minViaEdgeToPadEdgeClearance!,
 ) =>
   collectViaNodes(routes, srj.minViaDiameter)
     .filter((via) => via.routeIndex === routeIndex)
     .reduce(
       (penalty, via) =>
-        penalty + getViaClearancePenalty(srj, routes, via, connMap),
+        penalty +
+        getViaClearancePenalty(srj, routes, via, connMap, sameNetClearance),
       0,
     )
 
@@ -126,6 +147,7 @@ const computeViaNudgeForces = (
   routes: HighDensityRoute[],
   routeIndex: number,
   connMap?: ConnectivityMap,
+  sameNetClearance = srj.minViaEdgeToPadEdgeClearance!,
 ) => {
   const route = routes[routeIndex]
   if (!route) return []
@@ -137,11 +159,15 @@ const computeViaNudgeForces = (
   for (const via of vias) {
     if (!via.movable) continue
 
-    for (const blocker of getViaPadBlockers(srj, routes, via, connMap)) {
+    for (const blocker of getViaPadBlockers(
+      srj,
+      routes,
+      via,
+      connMap,
+      sameNetClearance,
+    )) {
       const requiredDistance =
-        via.radius +
-        srj.minViaEdgeToPadEdgeClearance! +
-        RELAXATION_CLEARANCE_SLACK
+        via.radius + blocker.clearance + RELAXATION_CLEARANCE_SLACK
       const repulsion = getRectRepulsion(
         via,
         blocker.obstacle,
@@ -208,6 +234,7 @@ const nudgeRouteVias = (
   route: HighDensityRoute,
   routeIndex: number,
   connMap?: ConnectivityMap,
+  sameNetClearance = srj.minViaEdgeToPadEdgeClearance!,
 ) => {
   let nudgedRoute = route
   let currentPenalty = getRouteViaClearancePenalty(
@@ -215,12 +242,19 @@ const nudgeRouteVias = (
     routes,
     routeIndex,
     connMap,
+    sameNetClearance,
   )
 
   for (let iteration = 0; iteration < RELAXATION_ITERATIONS; iteration += 1) {
     if (currentPenalty <= CLEARANCE_EPSILON) break
 
-    const forces = computeViaNudgeForces(srj, routes, routeIndex, connMap)
+    const forces = computeViaNudgeForces(
+      srj,
+      routes,
+      routeIndex,
+      connMap,
+      sameNetClearance,
+    )
     if (forces.every((force) => distance(force, { x: 0, y: 0 }) < 1e-9)) {
       break
     }
@@ -237,6 +271,7 @@ const nudgeRouteVias = (
         candidateRoutes,
         routeIndex,
         connMap,
+        sameNetClearance,
       )
 
       if (
@@ -262,6 +297,10 @@ export const applyViaToPadClearanceRelaxation = (
   srj: SimpleRouteJson,
   routes: HighDensityRoute[],
   connMap?: ConnectivityMap,
+  // Post-solve spacing keeps its configured same-net preference. Layer-change
+  // candidates use zero: remain outside connected pads without imposing
+  // foreign-net electrical clearance on their own terminals.
+  sameNetClearance = srj.minViaEdgeToPadEdgeClearance!,
 ) => {
   if (
     srj.minViaEdgeToPadEdgeClearance === undefined ||
@@ -287,6 +326,7 @@ export const applyViaToPadClearanceRelaxation = (
         route,
         routeIndex,
         connMap,
+        sameNetClearance,
       )
       if (nudgedRoute !== route) {
         relaxedRoutes[routeIndex] = nudgedRoute

@@ -80,20 +80,20 @@ const createPanel = (
           fill: "transparent",
           stroke: "#dc2626",
         }))
-      : [
-          {
-            center: { x: 0, y: 0 },
-            radius: 0.25,
+      : routes.flatMap((route) =>
+          route.vias.map((via) => ({
+            center: via,
+            radius: 0.23,
             fill: "transparent",
-            stroke: "#dc2626",
-          },
-        ]),
+            stroke: "#16a34a",
+          })),
+        )),
   ],
   texts: [
     {
       x: 0,
       y: 2.38,
-      text: "ONE REPAIR ITERATION — not a completed route",
+      text: "ONE REPAIR ITERATION — same crossing input",
       fontSize: 0.13,
       anchorSide: "center",
       color: "#475569",
@@ -103,10 +103,10 @@ const createPanel = (
       y: -2.38,
       text: before
         ? "2 new via-pad violations: gap 0.050 vs required 0.100 mm"
-        : "Unsafe vias rejected; original crossing remains",
+        : "Layer change + clear via placement: zero DRC errors",
       fontSize: 0.13,
       anchorSide: "center",
-      color: "#b91c1c",
+      color: before ? "#b91c1c" : "#15803d",
     },
     {
       x: 0,
@@ -119,7 +119,9 @@ const createPanel = (
     {
       x: 0,
       y: -2.86,
-      text: "Gold: foreign bottom pads | Red rings: DRC conflicts",
+      text: before
+        ? "Gold: foreign bottom pads | Red rings: DRC conflicts"
+        : "Gold: foreign bottom pads | Green rings: clear vias",
       fontSize: 0.11,
       anchorSide: "center",
       color: "#475569",
@@ -127,7 +129,7 @@ const createPanel = (
   ],
 })
 
-test("snapshot shows an unsafe via-creating repair being rejected", async (): Promise<void> => {
+test("snapshot shows layer repair placing clear vias before acceptance", async (): Promise<void> => {
   const srj = fixture.srj as SimpleRouteJson
   const inputRoutes: HighDensityRoute[] = fixture.inputRoutes
   const beforeRoutes: HighDensityRoute[] = fixture.beforeOutputRoutes
@@ -159,14 +161,17 @@ test("snapshot shows an unsafe via-creating repair being rejected", async (): Pr
   })
   solver.solve()
   const afterRoutes = solver.getOutput()
+  expect(solver.solved).toBe(true)
   expect(solver.failed).toBe(false)
   expect(solver.stats.globalDrcForceImproveCandidateAttempts).toBeGreaterThan(0)
-  expect(solver.stats.globalDrcForceImproveTargetedForceAccepted).toBe(false)
-  expect(afterRoutes).toEqual(inputRoutes)
-  expect(afterRoutes.flatMap((route) => route.vias)).toHaveLength(0)
-  expect(evaluate(afterRoutes).errors).toMatchObject([
-    { type: "pcb_trace_error" },
-  ])
+  expect(afterRoutes.flatMap((route) => route.vias)).toHaveLength(2)
+  expect(evaluate(afterRoutes).errors).toEqual([])
+  for (let index = 0; index < inputRoutes.length; index += 1) {
+    expect(afterRoutes[index]!.route[0]).toEqual(inputRoutes[index]!.route[0])
+    expect(afterRoutes[index]!.route.at(-1)).toEqual(
+      inputRoutes[index]!.route.at(-1),
+    )
+  }
 
   const graphics = stackGraphicsHorizontally(
     [
@@ -174,7 +179,7 @@ test("snapshot shows an unsafe via-creating repair being rejected", async (): Pr
       createPanel(srj, afterRoutes, false),
     ],
     {
-      titles: ["Before: unsafe vias", "After: change rejected"],
+      titles: ["Before: unsafe vias", "After: clear traces and vias"],
     },
   )
   const svg = getSvgFromGraphicsObject(graphics, {

@@ -26,15 +26,22 @@ base commit `c16f524607897f78773f51cb0ca1cc94b15f3d6c`. The snapshot test keeps
 explicit legacy-shape controls and asserts the corrected engine's measured
 clearances; it does not embed a second copy of the old DRC engine.
 
-## Unsafe layer-change candidate
+## Layer change with safe via placement
 
-![One-iteration via safety](./repair-via-safety.snap.png)
+![One-iteration layer repair with clear vias](./repair-via-safety.snap.png)
 
-This comparison is limited to **one repair iteration**. The old solver accepts
-a layer change that removes a trace crossing but introduces two vias too close
-to foreign pads. The corrected solver rejects that unsafe change. The original
-crossing still needs a valid repair; this is a safety demonstration, not a claim
-of successful routing.
+Both panels use the same crossing input and **one repair iteration**. The old
+solver accepts a layer change that removes the crossing but introduces two vias
+too close to foreign pads. Merely rejecting those vias leaves the crossing
+unrepaired. The corrected solver completes the layer change and via placement
+as one candidate: it moves the new vias clear of the pads before applying the
+full-board DRC acceptance check. It never accepts the unsafe intermediate route.
+
+The right panel has two vias, unchanged connection endpoints, and **zero DRC
+errors**. The test asserts this using the real DRC engine; the left panel retains
+the frozen output from the actual base solver and its two measured 0.050 mm
+via-pad violations. This demonstrates successful repair of this fixture, not
+completion or DRC results for an entire benchmark dataset.
 
 ## Regeneration
 
