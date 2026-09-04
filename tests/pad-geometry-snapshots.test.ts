@@ -106,9 +106,7 @@ const createPanel = ({
       ...(!before
         ? [
             {
-              center: via
-                ? points[0]!
-                : { x: 1.075, y: 1.075 },
+              center: via ? points[0]! : { x: 1.075, y: 1.075 },
               radius: via ? 0.25 : 0.16,
               fill: "transparent",
               stroke: "#dc2626",
@@ -180,7 +178,12 @@ test("snapshots show pad violations missed by the old shape approximation", asyn
                 from_layer: "top",
                 to_layer: "bottom",
               },
-              { route_type: "wire", ...points[0]!, width: 0.1, layer: "bottom" },
+              {
+                route_type: "wire",
+                ...points[0]!,
+                width: 0.1,
+                layer: "bottom",
+              },
             ]
           : points.map((point) => ({
               route_type: "wire" as const,
@@ -209,10 +212,7 @@ test("snapshots show pad violations missed by the old shape approximation", asyn
         createPanel({ srj, points, via, before, clearance }),
       ),
       {
-        titles: [
-          "Before: violation missed",
-          "After: violation detected",
-        ],
+        titles: ["Before: violation missed", "After: violation detected"],
       },
     )
     const svg = getSvgFromGraphicsObject(graphics, {

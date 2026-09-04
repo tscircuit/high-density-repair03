@@ -1,0 +1,147 @@
+{
+  "provenance": {
+    "repository": "https://github.com/tscircuit/high-density-repair03",
+    "commit": "c16f524607897f78773f51cb0ca1cc94b15f3d6c",
+    "solver": "GlobalDrcForceImproveSolver",
+    "description": "Actual base-commit solver output after one repair iteration on the input below; no mocked DRC evaluator or solver overrides. This captures candidate acceptance, not a completed repair search."
+  },
+  "solverOptions": {
+    "maxIterations": 1,
+    "enableBroadFallback": false,
+    "enableLargeBoardBroadFallback": false,
+    "enableTargetedErrorSweep": false,
+    "enablePostSolveClearanceRelaxation": false,
+    "enableSafeTraceLayerMoves": true,
+    "enableViaInPadLayerMoves": false
+  },
+  "srj": {
+    "layerCount": 2,
+    "minTraceWidth": 0.1,
+    "minViaDiameter": 0.3,
+    "bounds": { "minX": -3, "minY": -3, "maxX": 3, "maxY": 3 },
+    "connections": [
+      { "name": "horizontal", "pointsToConnect": [] },
+      { "name": "vertical", "pointsToConnect": [] }
+    ],
+    "obstacles": [
+      {
+        "type": "rect",
+        "layers": ["bottom"],
+        "center": { "x": -2, "y": 0.25 },
+        "width": 0.1,
+        "height": 0.1,
+        "connectedTo": ["pcb_smtpad_h_-2"]
+      },
+      {
+        "type": "rect",
+        "layers": ["bottom"],
+        "center": { "x": -0.5, "y": 0.25 },
+        "width": 0.1,
+        "height": 0.1,
+        "connectedTo": ["pcb_smtpad_h_-0.5"]
+      },
+      {
+        "type": "rect",
+        "layers": ["bottom"],
+        "center": { "x": 0.5, "y": 0.25 },
+        "width": 0.1,
+        "height": 0.1,
+        "connectedTo": ["pcb_smtpad_h_0.5"]
+      },
+      {
+        "type": "rect",
+        "layers": ["bottom"],
+        "center": { "x": 2, "y": 0.25 },
+        "width": 0.1,
+        "height": 0.1,
+        "connectedTo": ["pcb_smtpad_h_2"]
+      },
+      {
+        "type": "rect",
+        "layers": ["bottom"],
+        "center": { "x": 0.25, "y": -2 },
+        "width": 0.1,
+        "height": 0.1,
+        "connectedTo": ["pcb_smtpad_v_-2"]
+      },
+      {
+        "type": "rect",
+        "layers": ["bottom"],
+        "center": { "x": 0.25, "y": -0.5 },
+        "width": 0.1,
+        "height": 0.1,
+        "connectedTo": ["pcb_smtpad_v_-0.5"]
+      },
+      {
+        "type": "rect",
+        "layers": ["bottom"],
+        "center": { "x": 0.25, "y": 0.5 },
+        "width": 0.1,
+        "height": 0.1,
+        "connectedTo": ["pcb_smtpad_v_0.5"]
+      },
+      {
+        "type": "rect",
+        "layers": ["bottom"],
+        "center": { "x": 0.25, "y": 2 },
+        "width": 0.1,
+        "height": 0.1,
+        "connectedTo": ["pcb_smtpad_v_2"]
+      }
+    ]
+  },
+  "inputRoutes": [
+    {
+      "connectionName": "horizontal",
+      "traceThickness": 0.1,
+      "viaDiameter": 0.3,
+      "vias": [],
+      "route": [
+        { "x": -2, "y": 0, "z": 0 },
+        { "x": -0.5, "y": 0, "z": 0 },
+        { "x": 0.5, "y": 0, "z": 0 },
+        { "x": 2, "y": 0, "z": 0 }
+      ]
+    },
+    {
+      "connectionName": "vertical",
+      "traceThickness": 0.1,
+      "viaDiameter": 0.3,
+      "vias": [],
+      "route": [
+        { "x": 0, "y": -2, "z": 0 },
+        { "x": 0, "y": -0.5, "z": 0 },
+        { "x": 0, "y": 0.5, "z": 0 },
+        { "x": 0, "y": 2, "z": 0 }
+      ]
+    }
+  ],
+  "beforeOutputRoutes": [
+    {
+      "connectionName": "horizontal",
+      "traceThickness": 0.1,
+      "viaDiameter": 0.3,
+      "vias": [{ "x": -0.5, "y": 0 }, { "x": 0.5, "y": 0 }],
+      "route": [
+        { "x": -2, "y": 0, "z": 0 },
+        { "x": -0.5, "y": 0, "z": 0 },
+        { "x": -0.5, "y": 0, "z": 1 },
+        { "x": 0.5, "y": 0, "z": 1 },
+        { "x": 0.5, "y": 0, "z": 0 },
+        { "x": 2, "y": 0, "z": 0 }
+      ]
+    },
+    {
+      "connectionName": "vertical",
+      "traceThickness": 0.1,
+      "viaDiameter": 0.3,
+      "vias": [],
+      "route": [
+        { "x": 0, "y": -2, "z": 0 },
+        { "x": 0, "y": -0.5, "z": 0 },
+        { "x": 0, "y": 0.5, "z": 0 },
+        { "x": 0, "y": 2, "z": 0 }
+      ]
+    }
+  ]
+}
