@@ -1,8 +1,9 @@
 # Pad geometry and via-safety regression snapshots
 
 These examples exercise the **post-routing DRC repair stage**, not initial
-route planning. They demonstrate detection and candidate acceptance; they do
-not claim that an entire board or benchmark is DRC-clean.
+route planning. They demonstrate pad detection and construction of legal
+layer-change candidates; they do not claim that an entire board or benchmark
+is DRC-clean.
 
 ## Square pad corner
 
@@ -26,22 +27,25 @@ base commit `c16f524607897f78773f51cb0ca1cc94b15f3d6c`. The snapshot test keeps
 explicit legacy-shape controls and asserts the corrected engine's measured
 clearances; it does not embed a second copy of the old DRC engine.
 
-## Layer change with safe via placement
+## Pad-clear layer-change construction
 
-![One-iteration layer repair with clear vias](./repair-via-safety.snap.png)
+![One-iteration via safety](./repair-via-safety.snap.png)
 
-Both panels use the same crossing input and **one repair iteration**. The old
-solver accepts a layer change that removes the crossing but introduces two vias
-too close to foreign pads. Merely rejecting those vias leaves the crossing
-unrepaired. The corrected solver completes the layer change and via placement
-as one candidate: it moves the new vias clear of the pads before applying the
-full-board DRC acceptance check. It never accepts the unsafe intermediate route.
+This comparison is limited to **one repair iteration**. The left panel retains
+the actual base-commit output: a layer change removes the trace crossing but
+places two new vias only **0.050 mm** from foreign pads.
 
-The right panel has two vias, unchanged connection endpoints, and **zero DRC
-errors**. The test asserts this using the real DRC engine; the left panel retains
-the frozen output from the actual base solver and its two measured 0.050 mm
-via-pad violations. This demonstrates successful repair of this fixture, not
-completion or DRC results for an entire benchmark dataset.
+The corrected constructor places each new via outside the pads' copper and
+clearance regions, then builds the connecting trace segments at those
+positions. The existing full-board DRC check evaluates that completed candidate.
+The right panel has **two vias and zero DRC errors**, with the required
+**0.100 mm** via-to-pad clearance and unchanged route endpoints. This fixes the
+crossing in this example; it does not merely reject the unsafe candidate or run
+an extra DRC-driven repair loop.
+
+`layer-move-constructs-clear-vias.test.ts` also checks the constructor's output
+directly, before any candidate scoring or force relaxation, using the real DRC
+engine.
 
 ## Regeneration
 

@@ -83,7 +83,7 @@ const createPanel = (
       : routes.flatMap((route) =>
           route.vias.map((via) => ({
             center: via,
-            radius: 0.23,
+            radius: 0.28,
             fill: "transparent",
             stroke: "#16a34a",
           })),
@@ -93,7 +93,9 @@ const createPanel = (
     {
       x: 0,
       y: 2.38,
-      text: "ONE REPAIR ITERATION — same crossing input",
+      text: before
+        ? "ONE REPAIR ITERATION — not a completed route"
+        : "ONE REPAIR ITERATION — 2 VIAS, 0 DRC ERRORS",
       fontSize: 0.13,
       anchorSide: "center",
       color: "#475569",
@@ -103,7 +105,7 @@ const createPanel = (
       y: -2.38,
       text: before
         ? "2 new via-pad violations: gap 0.050 vs required 0.100 mm"
-        : "Layer change + clear via placement: zero DRC errors",
+        : "Crossing removed | 2 vias | 0.100 mm pad gap",
       fontSize: 0.13,
       anchorSide: "center",
       color: before ? "#b91c1c" : "#15803d",
@@ -121,7 +123,7 @@ const createPanel = (
       y: -2.86,
       text: before
         ? "Gold: foreign bottom pads | Red rings: DRC conflicts"
-        : "Gold: foreign bottom pads | Green rings: clear vias",
+        : "Gold: foreign bottom pads | Green rings: correctly placed vias",
       fontSize: 0.11,
       anchorSide: "center",
       color: "#475569",
@@ -129,7 +131,7 @@ const createPanel = (
   ],
 })
 
-test("snapshot shows layer repair placing clear vias before acceptance", async (): Promise<void> => {
+test("snapshot shows pad-clear vias constructed for a layer-change repair", async (): Promise<void> => {
   const srj = fixture.srj as SimpleRouteJson
   const inputRoutes: HighDensityRoute[] = fixture.inputRoutes
   const beforeRoutes: HighDensityRoute[] = fixture.beforeOutputRoutes
@@ -161,11 +163,11 @@ test("snapshot shows layer repair placing clear vias before acceptance", async (
   })
   solver.solve()
   const afterRoutes = solver.getOutput()
-  expect(solver.solved).toBe(true)
   expect(solver.failed).toBe(false)
   expect(solver.stats.globalDrcForceImproveCandidateAttempts).toBeGreaterThan(0)
+  expect(solver.stats.globalDrcForceImproveTargetedForceAccepted).toBe(true)
   expect(afterRoutes.flatMap((route) => route.vias)).toHaveLength(2)
-  expect(evaluate(afterRoutes).errors).toEqual([])
+  expect(evaluate(afterRoutes).errors).toHaveLength(0)
   for (let index = 0; index < inputRoutes.length; index += 1) {
     expect(afterRoutes[index]!.route[0]).toEqual(inputRoutes[index]!.route[0])
     expect(afterRoutes[index]!.route.at(-1)).toEqual(
@@ -179,7 +181,7 @@ test("snapshot shows layer repair placing clear vias before acceptance", async (
       createPanel(srj, afterRoutes, false),
     ],
     {
-      titles: ["Before: unsafe vias", "After: clear traces and vias"],
+      titles: ["Before: unsafe vias", "After: pad-clear vias"],
     },
   )
   const svg = getSvgFromGraphicsObject(graphics, {

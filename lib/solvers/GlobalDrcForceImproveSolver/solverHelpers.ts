@@ -46,6 +46,10 @@ import type { SimpleRouteJson, SimplifiedPcbTraces } from "../../types"
 import type { HighDensityRoute } from "../../types/high-density-types"
 import { convertHdRouteToSimplifiedRoute } from "../../utils/convertHdRouteToSimplifiedRoute"
 import { mapZToLayerName } from "../../utils/mapZToLayerName"
+import {
+  findPadClearanceViaPosition,
+  isViaPositionClearOfPads,
+} from "./findPadClearanceViaPosition"
 
 const cloneRoute = (route: HighDensityRoute): MutableRoute => ({
   ...route,
@@ -3438,9 +3442,9 @@ const appendDistinctRoutePoint = (
 export type SafeTraceLayerMoveSpanExpansion = number | "full"
 
 /**
- * Moves a span containing the reported conflict onto another layer. Layer
- * transitions inside the route stay at their existing coordinates;
- * transitions at connected terminals are moved fully outside their pads. The
+ * Moves a span containing the reported conflict onto another layer. Existing
+ * layer transitions stay at their coordinates, and new transitions are
+ * placed outside pad clearance regions before the route is assembled. The
  * caller scores every candidate against full-board DRC.
  */
 export const applySafeTraceLayerMoveForError = (
@@ -3511,8 +3515,47 @@ export const applySafeTraceLayerMoveForError = (
   const movesStartTerminal = spanStartIndex === 0 && first.pcb_port_id
   const movesEndTerminal =
     spanEndIndex === originalPoints.length - 1 && last.pcb_port_id
+  const spanStart = originalPoints[spanStartIndex]!
+  const startsAtExistingTransition =
+    spanStartIndex > 0 &&
+    areSameXY(originalPoints[spanStartIndex - 1]!, spanStart)
+  const spanEnd = originalPoints[spanEndIndex]!
+  const endsAtExistingTransition =
+    spanEndIndex < originalPoints.length - 1 &&
+    areSameXY(originalPoints[spanEndIndex + 1]!, spanEnd)
 
-  const viaRadius = route.viaDiameter / 2
+  const viaRadius = (route.viaDiameter ?? srj.minViaDiameter ?? 0.3) / 2
+  const canReuseTransition = (pointIndex: number) => {
+    const position = originalPoints[pointIndex]!
+    let firstPointIndex = pointIndex
+    while (
+      firstPointIndex > 0 &&
+      areSameXY(originalPoints[firstPointIndex - 1]!, position)
+    ) {
+      firstPointIndex -= 1
+    }
+    for (let index = firstPointIndex; index < originalPoints.length; index += 1) {
+      const point = originalPoints[index]!
+      if (!areSameXY(point, position)) break
+      if (point.z === targetZ) return true
+    }
+    // Existing attachments stay fixed, but extending a via to a new layer
+    // requires that its copper also fits on that layer.
+    return isViaPositionClearOfPads(
+      srj,
+      route,
+      position,
+      viaRadius,
+      [targetZ],
+      connMap,
+    )
+  }
+  if (
+    (startsAtExistingTransition && !canReuseTransition(spanStartIndex)) ||
+    (endsAtExistingTransition && !canReuseTransition(spanEndIndex))
+  ) {
+    return false
+  }
   const rotationPair =
     TERMINAL_ESCAPE_ROTATION_PAIRS[
       directionVariant % SAFE_TRACE_LAYER_DIRECTION_VARIANT_COUNT
@@ -3531,70 +3574,82 @@ export const applySafeTraceLayerMoveForError = (
       rotateDirection(tangent, rotation),
       viaRadius,
     )
+    // This variant describes a terminal escape ray. If it reaches the board
+    // edge before clearing its own pad, it cannot supply a via on that ray.
     if (
       !escape ||
-      !isViaInsideBounds(escape, viaRadius, srj.bounds) ||
-      getPointToObstacleDistance(escape, pad) + POSITION_EPSILON < viaRadius
+      !isViaInsideBounds(
+        escape,
+        viaRadius + (srj.minBoardEdgeClearance ?? 0),
+        srj.bounds,
+      )
     ) {
       return undefined
     }
     return escape
   }
 
-  const startEscape = movesStartTerminal
+  const preferredStart = movesStartTerminal
     ? getTerminalEscape("start")
-    : undefined
-  const endEscape = movesEndTerminal ? getTerminalEscape("end") : undefined
-  if (
-    (movesStartTerminal && !startEscape) ||
-    (movesEndTerminal && !endEscape)
+    : spanStart
+  const preferredEnd = movesEndTerminal ? getTerminalEscape("end") : spanEnd
+  if (!preferredStart || !preferredEnd) return false
+  const startVia = startsAtExistingTransition
+    ? spanStart
+    : findPadClearanceViaPosition(
+        srj,
+        route,
+        preferredStart,
+        viaRadius,
+        [segment.z, targetZ],
+        connMap,
+      )
+  const endVia = endsAtExistingTransition
+    ? spanEnd
+    : findPadClearanceViaPosition(
+        srj,
+        route,
+        preferredEnd,
+        viaRadius,
+        [segment.z, targetZ],
+        connMap,
+      )
+  if (!startVia || !endVia) return false
+  let hasTargetLayerSpan = !areSameXY(startVia, endVia)
+  for (
+    let index = spanStartIndex + 1;
+    !hasTargetLayerSpan && index < spanEndIndex;
+    index += 1
   ) {
-    return false
+    hasTargetLayerSpan = !areSameXY(originalPoints[index]!, startVia)
   }
+  if (!hasTargetLayerSpan) return false
 
   const movedRoute: MutableRoute["route"] = []
   for (let index = 0; index < spanStartIndex; index += 1) {
     appendDistinctRoutePoint(movedRoute, originalPoints[index]!)
   }
 
-  const spanStart = originalPoints[spanStartIndex]!
-  const startsAtExistingTransition =
-    spanStartIndex > 0 &&
-    areSameXY(originalPoints[spanStartIndex - 1]!, spanStart)
-  const spanEnd = originalPoints[spanEndIndex]!
-  const endsAtExistingTransition =
-    spanEndIndex < originalPoints.length - 1 &&
-    areSameXY(originalPoints[spanEndIndex + 1]!, spanEnd)
-
-  if (movesStartTerminal) {
+  // An endpoint remains an anchor even when it has no port metadata.
+  if (spanStartIndex === 0) {
     appendDistinctRoutePoint(movedRoute, first)
-    appendDistinctRoutePoint(movedRoute, {
-      ...first,
-      ...startEscape!,
-      pcb_port_id: undefined,
-    })
-    appendDistinctRoutePoint(movedRoute, {
-      ...first,
-      ...startEscape!,
-      z: targetZ,
-      pcb_port_id: undefined,
-    })
-  } else {
-    if (!startsAtExistingTransition) {
-      appendDistinctRoutePoint(movedRoute, {
-        ...spanStart,
-        pcb_port_id: undefined,
-      })
-    }
+  }
+  if (!startsAtExistingTransition) {
     appendDistinctRoutePoint(movedRoute, {
       ...spanStart,
-      z: targetZ,
+      ...startVia,
       pcb_port_id: undefined,
     })
   }
+  appendDistinctRoutePoint(movedRoute, {
+    ...spanStart,
+    ...startVia,
+    z: targetZ,
+    pcb_port_id: undefined,
+  })
 
   const firstMovedIndex = spanStartIndex + 1
-  const lastMovedIndex = movesEndTerminal ? spanEndIndex - 1 : spanEndIndex
+  const lastMovedIndex = spanEndIndex - 1
   for (let index = firstMovedIndex; index <= lastMovedIndex; index += 1) {
     appendDistinctRoutePoint(movedRoute, {
       ...originalPoints[index]!,
@@ -3603,24 +3658,21 @@ export const applySafeTraceLayerMoveForError = (
     })
   }
 
-  if (movesEndTerminal) {
-    appendDistinctRoutePoint(movedRoute, {
-      ...last,
-      ...endEscape!,
-      z: targetZ,
-      pcb_port_id: undefined,
-    })
-    appendDistinctRoutePoint(movedRoute, {
-      ...last,
-      ...endEscape!,
-      pcb_port_id: undefined,
-    })
-    appendDistinctRoutePoint(movedRoute, last)
-  } else if (!endsAtExistingTransition) {
+  appendDistinctRoutePoint(movedRoute, {
+    ...spanEnd,
+    ...endVia,
+    z: targetZ,
+    pcb_port_id: undefined,
+  })
+  if (!endsAtExistingTransition) {
     appendDistinctRoutePoint(movedRoute, {
       ...spanEnd,
+      ...endVia,
       pcb_port_id: undefined,
     })
+  }
+  if (spanEndIndex === originalPoints.length - 1) {
+    appendDistinctRoutePoint(movedRoute, last)
   }
 
   for (
@@ -4378,6 +4430,7 @@ export const applyTraceLayerCorridorForError = (
   normalDirectionSign: -1 | 1,
   tangentDirectionSign: -1 | 1,
   reverseEndpointOffsets = false,
+  connMap?: ConnectivityMap,
 ) => {
   if (!Number.isInteger(targetZ) || targetZ < 0 || targetZ >= srj.layerCount) {
     return false
@@ -4441,15 +4494,33 @@ export const applyTraceLayerCorridorForError = (
     projectOntoTangent(start) + corridorPitch * 0.5 * tangentDirectionSign
   const endTangentPosition =
     projectOntoTangent(end) + corridorPitch * tangentDirectionSign
-  const startVia = pointOnAxes(startTangentPosition, startNormalOffset, start.z)
-  const endVia = pointOnAxes(endTangentPosition, endNormalOffset, start.z)
+  const viaRadius = (route.viaDiameter ?? srj.minViaDiameter ?? 0.3) / 2
+  const startViaPosition = findPadClearanceViaPosition(
+    srj,
+    route,
+    pointOnAxes(startTangentPosition, startNormalOffset, start.z),
+    viaRadius,
+    [start.z, targetZ],
+    connMap,
+  )
+  const endViaPosition = findPadClearanceViaPosition(
+    srj,
+    route,
+    pointOnAxes(endTangentPosition, endNormalOffset, start.z),
+    viaRadius,
+    [start.z, targetZ],
+    connMap,
+  )
+  if (!startViaPosition || !endViaPosition) return false
+  const startVia = { ...startViaPosition, z: start.z }
+  const endVia = { ...endViaPosition, z: start.z }
   const corridorStart = pointOnAxes(
-    startTangentPosition,
+    projectOntoTangent(startVia),
     corridorPitch * 2,
     targetZ,
   )
   const corridorEnd = pointOnAxes(
-    endTangentPosition,
+    projectOntoTangent(endVia),
     corridorPitch * 2,
     targetZ,
   )
@@ -4465,7 +4536,6 @@ export const applyTraceLayerCorridorForError = (
   ]
 
   const boardEdgeClearance = srj.minBoardEdgeClearance ?? 0
-  const viaRadius = (route.viaDiameter ?? srj.minViaDiameter ?? 0.3) / 2
   const traceRadius = route.traceThickness / 2
   if (
     [startVia, endVia].some(
@@ -4636,7 +4706,17 @@ export const isBetterDrcSnapshot = (
   )
 }
 
-export const applyDrcErrorForces = (
+type DrcCorrectionVariation =
+  | { kind: "direct" }
+  | { kind: "magnitude"; saturationScale: number }
+  | { kind: "signed" }
+
+type DrcErrorCorrection = {
+  changed: boolean
+  variation: DrcCorrectionVariation
+}
+
+const applyDrcErrorCorrection = (
   srj: SimpleRouteJson,
   routes: MutableRoute[],
   errors: Array<Record<string, unknown>>,
@@ -4647,8 +4727,21 @@ export const applyDrcErrorForces = (
   enableSameNetViaCanonicalization = false,
   allowSharedViaSiteMove = true,
   enableTraceViaOwnerTargeting = false,
-) => {
+): DrcErrorCorrection => {
   let changed = false
+  let variation: DrcCorrectionVariation = { kind: "direct" }
+  let magnitudeOperationCount = 0
+  const includeMagnitudeOperation = (saturationScale: number): void => {
+    magnitudeOperationCount += 1
+    if (variation.kind === "signed") return
+    // Sequential corrections can change one another's required displacement.
+    // Only a single primitive has a fixed saturation point for this input.
+    variation = {
+      kind: "magnitude",
+      saturationScale:
+        magnitudeOperationCount === 1 ? saturationScale : Infinity,
+    }
+  }
   const vias = collectViaNodes(routes)
   const segments = collectSegments(routes)
 
@@ -4685,6 +4778,23 @@ export const applyDrcErrorForces = (
         const isCanonicalViaPairError =
           enableCanonicalPairRepairs &&
           getDrcErrorType(error) === "pcb_via_clearance_error"
+        if (!shouldCanonicalizeSameNetViaPair) {
+          const [left, right] = nearestViaPair
+          const movableCount = Number(left.movable) + Number(right.movable)
+          const penetration =
+            left.radius +
+            right.radius +
+            PREFERRED_VIA_TO_VIA_CLEARANCE +
+            CLEARANCE_SLACK -
+            Math.hypot(left.x - right.x, left.y - right.y)
+          if (movableCount > 0) {
+            includeMagnitudeOperation(
+              Math.max(0, penetration) /
+                movableCount /
+                VIA_PAIR_REPAIR_MAX_MOVE,
+            )
+          }
+        }
         changed =
           (shouldCanonicalizeSameNetViaPair
             ? canonicalizeSameNetViaPair(
@@ -4816,6 +4926,16 @@ export const applyDrcErrorForces = (
         (isExactViaTraceError ||
           Math.hypot(nearestVia.x - center.x, nearestVia.y - center.y) < 0.45)
       ) {
+        const projection = pointToSegmentProjection(nearestVia, nearestSegment)
+        const penetration =
+          nearestVia.radius +
+          nearestSegment.radius +
+          (RELAXED_DRC_OPTIONS.traceClearance ?? 0.1) +
+          CLEARANCE_SLACK -
+          Math.hypot(nearestVia.x - projection.x, nearestVia.y - projection.y)
+        includeMagnitudeOperation(
+          Math.max(0, penetration) / TRACE_PAD_REPAIR_MAX_MOVE,
+        )
         const pushedViaSegment = pushViaSegmentPair(
           routes,
           nearestVia,
@@ -4845,6 +4965,25 @@ export const applyDrcErrorForces = (
               nearestSegment,
               srj.layerCount,
             )))
+      if (shouldUseObstacleMove) {
+        const requiredDistance =
+          nearestSegment.radius +
+          getTraceToPadEdgeClearance(srj) +
+          CLEARANCE_SLACK
+        const repulsion = getSegmentRectRepulsion(
+          nearestSegment,
+          nearestObstacle!,
+          requiredDistance,
+        )
+        includeMagnitudeOperation(
+          repulsion
+            ? (repulsion.penetration + CLEARANCE_SLACK) /
+                TRACE_PAD_REPAIR_MAX_MOVE
+            : 0,
+        )
+      } else {
+        variation = { kind: "signed" }
+      }
       const movedSegment = shouldUseObstacleMove
         ? moveSegmentAwayFromObstacle(
             routes,
@@ -4876,5 +5015,56 @@ export const applyDrcErrorForces = (
     }
   }
 
-  return changed
+  return { changed, variation }
+}
+
+export const applyDrcErrorForces = (
+  ...args: Parameters<typeof applyDrcErrorCorrection>
+): boolean => applyDrcErrorCorrection(...args).changed
+
+/** Enumerates the physical degrees of freedom of the selected correction. */
+export function* getDrcErrorForceCandidates(
+  srj: SimpleRouteJson,
+  routes: HighDensityRoute[],
+  error: Record<string, unknown>,
+  traceRouteIndexById: Map<string, number>,
+  scales: readonly number[],
+  connMap?: ConnectivityMap,
+  enableSameNetViaCanonicalization = false,
+  allowSharedViaSiteMove = true,
+  enableTraceViaOwnerTargeting = false,
+): Generator<HighDensityRoute[]> {
+  const attemptedCorrections: Array<{
+    scale: number
+    variation: DrcCorrectionVariation
+  }> = []
+  for (const scale of scales) {
+    const correctionAlreadyGenerated = attemptedCorrections.some(
+      ({ scale: previousScale, variation }) => {
+        if (variation.kind === "direct") return true
+        if (variation.kind === "signed") return scale === previousScale
+        return (
+          Math.min(Math.abs(scale), variation.saturationScale) ===
+          Math.min(Math.abs(previousScale), variation.saturationScale)
+        )
+      },
+    )
+    if (correctionAlreadyGenerated) continue
+
+    const candidateRoutes = cloneRoutes(routes)
+    const correction = applyDrcErrorCorrection(
+      srj,
+      candidateRoutes,
+      [error],
+      traceRouteIndexById,
+      scale,
+      connMap,
+      true,
+      enableSameNetViaCanonicalization,
+      allowSharedViaSiteMove,
+      enableTraceViaOwnerTargeting,
+    )
+    attemptedCorrections.push({ scale, variation: correction.variation })
+    if (correction.changed) yield materializeRoutes(candidateRoutes)
+  }
 }

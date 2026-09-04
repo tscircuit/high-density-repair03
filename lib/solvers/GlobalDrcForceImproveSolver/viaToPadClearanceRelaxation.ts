@@ -12,7 +12,6 @@ import {
 import type { SimpleRouteJson } from "../../types"
 import type { HighDensityRoute } from "../../types/high-density-types"
 import type { ViaNode } from "./internalTypes"
-import { COORDINATE_EPSILON } from "./solverConfig"
 
 const CLEARANCE_EPSILON = 1e-6
 const RELAXATION_CLEARANCE_SLACK = 0.006
@@ -23,14 +22,8 @@ const CANDIDATE_SCALES = [1, 0.5, 0.25, 0.1, 0.05, 0.025] as const
 
 type Point2D = { x: number; y: number }
 
-// Route-point indexes remain stable while relaxation moves their coordinates.
-// Null identifies a new via, rather than an attachment from the original route.
-type ViaOrigins = Array<Map<number, ViaNode | null>>
-
 type ViaPadBlocker = {
   obstacle: SimpleRouteJson["obstacles"][number]
-  clearance: number
-  isSameNet: boolean
 }
 
 const limitVector = (vector: Point2D, maxMagnitude: number): Point2D => {
@@ -43,31 +36,9 @@ const limitVector = (vector: Point2D, maxMagnitude: number): Point2D => {
 const zLayersOverlap = (left: number[], right: number[]) =>
   left.some((z) => right.includes(z))
 
-const getViaOrigins = (
-  routes: HighDensityRoute[],
-  existingRoutes: HighDensityRoute[],
-  defaultViaDiameter = 0.3,
-): ViaOrigins => {
-  const origins: ViaOrigins = routes.map(() => new Map())
-  const existingVias = collectViaNodes(existingRoutes, defaultViaDiameter)
-  for (const via of collectViaNodes(routes, defaultViaDiameter)) {
-    const existingVia = existingVias.find(
-      (existing) =>
-        existing.routeIndex === via.routeIndex &&
-        Math.abs(existing.x - via.x) <= COORDINATE_EPSILON &&
-        Math.abs(existing.y - via.y) <= COORDINATE_EPSILON,
-    )
-    for (const pointIndex of via.pointIndexes) {
-      origins[via.routeIndex]!.set(pointIndex, existingVia ?? null)
-    }
-  }
-  return origins
-}
-
 const viaIsAttachedToSameNetObstacle = (
   via: ViaNode,
   route: HighDensityRoute,
-  viaOrigins: ViaOrigins,
   obstacle: SimpleRouteJson["obstacles"][number],
   connMap?: ConnectivityMap,
 ) => {
@@ -76,46 +47,15 @@ const viaIsAttachedToSameNetObstacle = (
     obstacleSharesNet(route.connectionName, obstacle, connMap)
 
   return (
-    isSameNet &&
-    via.pointIndexes.every((pointIndex) => {
-      const originalVia = viaOrigins[via.routeIndex]?.get(pointIndex)
-      return (
-        originalVia !== undefined &&
-        originalVia !== null &&
-        getPointToObstacleDistance(originalVia, obstacle) <= CLEARANCE_EPSILON
-      )
-    })
+    isSameNet && getPointToObstacleDistance(via, obstacle) <= CLEARANCE_EPSILON
   )
 }
-
-const getMinimumOwnPadDistance = (
-  via: ViaNode,
-  viaOrigins: ViaOrigins,
-  obstacle: SimpleRouteJson["obstacles"][number],
-) =>
-  Math.max(
-    ...via.pointIndexes.map((pointIndex) => {
-      const originalVia = viaOrigins[via.routeIndex]?.get(pointIndex)
-      // A new via must clear the pad with its whole copper radius. Existing
-      // overlaps may improve incrementally, but must never become worse.
-      return originalVia
-        ? via.radius +
-            Math.min(
-              0,
-              getPointToObstacleDistance(originalVia, obstacle) -
-                originalVia.radius,
-            )
-        : via.radius
-    }),
-  )
 
 const getViaPadBlockers = (
   srj: SimpleRouteJson,
   routes: HighDensityRoute[],
-  viaOrigins: ViaOrigins,
   via: ViaNode,
   connMap?: ConnectivityMap,
-  sameNetClearance = srj.minViaEdgeToPadEdgeClearance!,
 ) => {
   const blockers: ViaPadBlocker[] = []
   const route = routes[via.routeIndex]
@@ -124,55 +64,36 @@ const getViaPadBlockers = (
   for (const obstacle of srj.obstacles) {
     if (
       obstacle.isCopperPour ||
-      // Only an attachment present before relaxation is exempt. Moving an
-      // external via into its own pad must not make the pad stop repelling it.
-      viaIsAttachedToSameNetObstacle(via, route, viaOrigins, obstacle, connMap)
+      viaIsAttachedToSameNetObstacle(via, route, obstacle, connMap)
     ) {
       continue
     }
 
     const zLayers = getObstacleZLayers(obstacle, srj.layerCount)
     if (!zLayersOverlap(via.zLayers, zLayers)) continue
-    const isSameNet =
-      obstacleSharesNet(via.rootConnectionName, obstacle, connMap) ||
-      obstacleSharesNet(route.connectionName, obstacle, connMap)
-    // Candidate placement only requires an external via to clear its own pad;
-    // applying foreign-net spacing can push it into neighboring copper. The
-    // optional post-solve spacing pass retains its configured same-net margin.
-    blockers.push({
-      obstacle,
-      isSameNet,
-      clearance: isSameNet
-        ? sameNetClearance
-        : srj.minViaEdgeToPadEdgeClearance!,
-    })
+    blockers.push({ obstacle })
   }
 
   return blockers
 }
 
-const getSignedClearanceToBlocker = (via: ViaNode, blocker: ViaPadBlocker) =>
+const getSignedClearanceToBlocker = (
+  srj: SimpleRouteJson,
+  via: ViaNode,
+  blocker: ViaPadBlocker,
+) =>
   getPointToObstacleDistance(via, blocker.obstacle) -
-  (via.radius + blocker.clearance + RELAXATION_CLEARANCE_SLACK)
+  (via.radius + srj.minViaEdgeToPadEdgeClearance! + RELAXATION_CLEARANCE_SLACK)
 
 const getViaClearancePenalty = (
   srj: SimpleRouteJson,
   routes: HighDensityRoute[],
-  viaOrigins: ViaOrigins,
   via: ViaNode,
   connMap?: ConnectivityMap,
-  sameNetClearance = srj.minViaEdgeToPadEdgeClearance!,
 ) => {
   let penalty = 0
-  for (const blocker of getViaPadBlockers(
-    srj,
-    routes,
-    viaOrigins,
-    via,
-    connMap,
-    sameNetClearance,
-  )) {
-    const signedClearance = getSignedClearanceToBlocker(via, blocker)
+  for (const blocker of getViaPadBlockers(srj, routes, via, connMap)) {
+    const signedClearance = getSignedClearanceToBlocker(srj, via, blocker)
     if (signedClearance >= 0) continue
 
     penalty += signedClearance * signedClearance
@@ -189,34 +110,22 @@ const getViaClearancePenalty = (
 const getRouteViaClearancePenalty = (
   srj: SimpleRouteJson,
   routes: HighDensityRoute[],
-  viaOrigins: ViaOrigins,
   routeIndex: number,
   connMap?: ConnectivityMap,
-  sameNetClearance = srj.minViaEdgeToPadEdgeClearance!,
 ) =>
   collectViaNodes(routes, srj.minViaDiameter)
     .filter((via) => via.routeIndex === routeIndex)
     .reduce(
       (penalty, via) =>
-        penalty +
-        getViaClearancePenalty(
-          srj,
-          routes,
-          viaOrigins,
-          via,
-          connMap,
-          sameNetClearance,
-        ),
+        penalty + getViaClearancePenalty(srj, routes, via, connMap),
       0,
     )
 
 const computeViaNudgeForces = (
   srj: SimpleRouteJson,
   routes: HighDensityRoute[],
-  viaOrigins: ViaOrigins,
   routeIndex: number,
   connMap?: ConnectivityMap,
-  sameNetClearance = srj.minViaEdgeToPadEdgeClearance!,
 ) => {
   const route = routes[routeIndex]
   if (!route) return []
@@ -228,16 +137,11 @@ const computeViaNudgeForces = (
   for (const via of vias) {
     if (!via.movable) continue
 
-    for (const blocker of getViaPadBlockers(
-      srj,
-      routes,
-      viaOrigins,
-      via,
-      connMap,
-      sameNetClearance,
-    )) {
+    for (const blocker of getViaPadBlockers(srj, routes, via, connMap)) {
       const requiredDistance =
-        via.radius + blocker.clearance + RELAXATION_CLEARANCE_SLACK
+        via.radius +
+        srj.minViaEdgeToPadEdgeClearance! +
+        RELAXATION_CLEARANCE_SLACK
       const repulsion = getRectRepulsion(
         via,
         blocker.obstacle,
@@ -301,33 +205,22 @@ const routeStaysInsideBounds = (
 const nudgeRouteVias = (
   srj: SimpleRouteJson,
   routes: HighDensityRoute[],
-  viaOrigins: ViaOrigins,
   route: HighDensityRoute,
   routeIndex: number,
   connMap?: ConnectivityMap,
-  sameNetClearance = srj.minViaEdgeToPadEdgeClearance!,
 ) => {
   let nudgedRoute = route
   let currentPenalty = getRouteViaClearancePenalty(
     srj,
     routes,
-    viaOrigins,
     routeIndex,
     connMap,
-    sameNetClearance,
   )
 
   for (let iteration = 0; iteration < RELAXATION_ITERATIONS; iteration += 1) {
     if (currentPenalty <= CLEARANCE_EPSILON) break
 
-    const forces = computeViaNudgeForces(
-      srj,
-      routes,
-      viaOrigins,
-      routeIndex,
-      connMap,
-      sameNetClearance,
-    )
+    const forces = computeViaNudgeForces(srj, routes, routeIndex, connMap)
     if (forces.every((force) => distance(force, { x: 0, y: 0 }) < 1e-9)) {
       break
     }
@@ -342,10 +235,8 @@ const nudgeRouteVias = (
       const candidatePenalty = getRouteViaClearancePenalty(
         srj,
         candidateRoutes,
-        viaOrigins,
         routeIndex,
         connMap,
-        sameNetClearance,
       )
 
       if (
@@ -371,13 +262,6 @@ export const applyViaToPadClearanceRelaxation = (
   srj: SimpleRouteJson,
   routes: HighDensityRoute[],
   connMap?: ConnectivityMap,
-  // Post-solve spacing keeps its configured same-net preference. Layer-change
-  // candidates use zero: remain outside connected pads without imposing
-  // foreign-net electrical clearance on their own terminals.
-  sameNetClearance = srj.minViaEdgeToPadEdgeClearance!,
-  // Routes before a speculative topology edit, aligned by route index.
-  // Spacing-only callers omit this because their input vias already exist.
-  existingRoutes: HighDensityRoute[] = routes,
 ) => {
   if (
     srj.minViaEdgeToPadEdgeClearance === undefined ||
@@ -386,8 +270,7 @@ export const applyViaToPadClearanceRelaxation = (
     return routes
   }
 
-  const changedRouteIndexes = new Set<number>()
-  const viaOrigins = getViaOrigins(routes, existingRoutes, srj.minViaDiameter)
+  let changed = false
   const relaxedRoutes = cloneRoutes(routes)
 
   for (let pass = 0; pass < RELAXATION_PASSES; pass += 1) {
@@ -401,42 +284,16 @@ export const applyViaToPadClearanceRelaxation = (
       const nudgedRoute = nudgeRouteVias(
         srj,
         relaxedRoutes,
-        viaOrigins,
         route,
         routeIndex,
         connMap,
-        sameNetClearance,
       )
       if (nudgedRoute !== route) {
         relaxedRoutes[routeIndex] = nudgedRoute
-        changedRouteIndexes.add(routeIndex)
+        changed = true
       }
     }
   }
 
-  if (changedRouteIndexes.size === 0) return routes
-  const completedRoutes = materializeRoutes(relaxedRoutes)
-  for (const via of collectViaNodes(completedRoutes, srj.minViaDiameter)) {
-    if (!changedRouteIndexes.has(via.routeIndex)) continue
-    const overlapsOwnPad = getViaPadBlockers(
-      srj,
-      completedRoutes,
-      viaOrigins,
-      via,
-      connMap,
-      sameNetClearance,
-    ).some(
-      (blocker) =>
-        blocker.isSameNet &&
-        getPointToObstacleDistance(via, blocker.obstacle) <
-          getMinimumOwnPadDistance(via, viaOrigins, blocker.obstacle),
-    )
-    if (!overlapsOwnPad) continue
-    // Force iterations may explore partial placements, but committing one
-    // must not introduce or worsen own-pad copper overlap. A failed placement
-    // leaves the original candidate for its caller's full-board DRC gate.
-    completedRoutes[via.routeIndex] = routes[via.routeIndex]!
-    changedRouteIndexes.delete(via.routeIndex)
-  }
-  return changedRouteIndexes.size > 0 ? completedRoutes : routes
+  return changed ? materializeRoutes(relaxedRoutes) : routes
 }

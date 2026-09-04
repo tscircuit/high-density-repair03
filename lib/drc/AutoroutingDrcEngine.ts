@@ -134,27 +134,6 @@ const MIN_VIA_CLEARANCE = 0.1
 const DEFAULT_VIA_TO_PAD_CLEARANCE = 0.1
 const DRC_EPSILON = 5e-3
 const POSITION_EPSILON = 1e-6
-// Retain only the last evaluation. Budget geometry/connectivity string bytes
-// and numeric/reference slots plus serialized result bytes, excluding object
-// headers/allocator overhead. Geometry is compared directly, never serialized.
-const MAX_CACHED_EVALUATION_BYTES = 8 * 1024 * 1024
-
-type CachedEvaluation = {
-  segments: TraceSegment[]
-  vias: Via[]
-  includeViaPadErrors: boolean
-  obstacleConnectionIds: string[][]
-  netStates: Array<readonly [string, string, string | undefined]>
-  result: AutoroutingDrcResult
-}
-
-const stringArraysEqual = (left: string[], right: string[]) => {
-  if (left.length !== right.length) return false
-  for (let index = 0; index < left.length; index += 1) {
-    if (left[index] !== right[index]) return false
-  }
-  return true
-}
 
 const expandBounds = (bounds: Bounds, amount: number): Bounds => ({
   minX: bounds.minX - amount,
@@ -433,7 +412,6 @@ export class AutoroutingDrcEngine {
     string,
     SpatialHash<StaticObstacle>
   >()
-  private lastEvaluation?: CachedEvaluation
 
   lastRunStats: AutoroutingDrcEngineRunStats = {
     traceCount: 0,
@@ -996,162 +974,15 @@ export class AutoroutingDrcEngine {
     return this.evaluateInternal(traces, false)
   }
 
-  private canReuseEvaluation(
-    segments: TraceSegment[],
-    vias: Via[],
-    includeViaPadErrors: boolean,
-  ): boolean {
-    const previous = this.lastEvaluation
-    if (
-      !previous ||
-      previous.includeViaPadErrors !== includeViaPadErrors ||
-      previous.segments.length !== segments.length ||
-      previous.vias.length !== vias.length
-    ) {
-      return false
-    }
-
-    // Collection creates detached geometry. Compare every DRC-consumed field;
-    // array position also fixes order and the generated via ids. Object.is
-    // preserves -0 and non-finite values without JSON normalization.
-    for (let index = 0; index < segments.length; index += 1) {
-      const left = segments[index]!
-      const right = previous.segments[index]!
-      if (
-        left.traceId !== right.traceId ||
-        left.netId !== right.netId ||
-        left.layer !== right.layer ||
-        !Object.is(left.width, right.width) ||
-        !Object.is(left.start.x, right.start.x) ||
-        !Object.is(left.start.y, right.start.y) ||
-        !Object.is(left.end.x, right.end.x) ||
-        !Object.is(left.end.y, right.end.y) ||
-        !stringArraysEqual(left.pcbPortIds, right.pcbPortIds)
-      ) {
-        return false
-      }
-    }
-    for (let index = 0; index < vias.length; index += 1) {
-      const left = vias[index]!
-      const right = previous.vias[index]!
-      if (
-        left.traceId !== right.traceId ||
-        left.netId !== right.netId ||
-        !Object.is(left.x, right.x) ||
-        !Object.is(left.y, right.y) ||
-        !Object.is(left.diameter, right.diameter) ||
-        !stringArraysEqual(left.layers, right.layers)
-      ) {
-        return false
-      }
-    }
-    for (let index = 0; index < this.obstacles.length; index += 1) {
-      if (
-        !stringArraysEqual(
-          this.obstacles[index]!.connectedTo,
-          previous.obstacleConnectionIds[index]!,
-        )
-      ) {
-        return false
-      }
-    }
-    // ConnectivityMap and obstacle connectedTo arrays are mutable. Verify the
-    // second lookup of already-resolved dynamic net ids as well as pad ids.
-    for (const [id, resolvedNetId, connMapNetId] of previous.netStates) {
-      if (
-        this.resolveNetId(id) !== resolvedNetId ||
-        this.connMap?.getNetConnectedToId(id) !== connMapNetId
-      ) {
-        return false
-      }
-    }
-    return true
-  }
-
-  private rememberEvaluation(
-    segments: TraceSegment[],
-    vias: Via[],
-    includeViaPadErrors: boolean,
-    result: AutoroutingDrcResult,
-  ) {
-    let payloadBytes = 6 * 8
-    const netIds = new Set<string>()
-    for (const segment of segments) {
-      // Six numeric and eight reference slots, including the array entry.
-      payloadBytes +=
-        14 * 8 +
-        segment.pcbPortIds.length * 8 +
-        2 *
-          (segment.kind.length +
-            segment.traceId.length +
-            segment.netId.length +
-            segment.layer.length)
-      if (payloadBytes > MAX_CACHED_EVALUATION_BYTES) return
-      for (const id of segment.pcbPortIds) {
-        payloadBytes += id.length * 2
-        if (payloadBytes > MAX_CACHED_EVALUATION_BYTES) return
-      }
-      netIds.add(segment.netId)
-    }
-    for (const via of vias) {
-      // Four numeric and six reference slots, including the array entry.
-      payloadBytes +=
-        10 * 8 +
-        via.layers.length * 8 +
-        2 *
-          (via.kind.length +
-            via.viaId.length +
-            via.traceId.length +
-            via.netId.length)
-      if (payloadBytes > MAX_CACHED_EVALUATION_BYTES) return
-      for (const layer of via.layers) payloadBytes += layer.length * 2
-      netIds.add(via.netId)
-    }
-    if (payloadBytes > MAX_CACHED_EVALUATION_BYTES) return
-
-    const obstacleConnectionIds: string[][] = []
-    for (const obstacle of this.obstacles) {
-      payloadBytes += (obstacle.connectedTo.length + 1) * 8
-      if (payloadBytes > MAX_CACHED_EVALUATION_BYTES) return
-      for (const id of obstacle.connectedTo) {
-        payloadBytes += id.length * 2
-        if (payloadBytes > MAX_CACHED_EVALUATION_BYTES) return
-        netIds.add(id)
-      }
-      obstacleConnectionIds.push([...obstacle.connectedTo])
-    }
-    const netStates: CachedEvaluation["netStates"] = []
-    // Store each live connectivity lookup once, not once for every pad alias.
-    for (const id of netIds) {
-      const resolvedNetId = this.resolveNetId(id)
-      const connMapNetId = this.connMap?.getNetConnectedToId(id)
-      payloadBytes +=
-        4 * 8 +
-        2 * (id.length + resolvedNetId.length + (connMapNetId?.length ?? 0))
-      if (payloadBytes > MAX_CACHED_EVALUATION_BYTES) return
-      netStates.push([id, resolvedNetId, connMapNetId])
-    }
-    if (
-      payloadBytes <= MAX_CACHED_EVALUATION_BYTES &&
-      payloadBytes + JSON.stringify(result).length * 2 <=
-        MAX_CACHED_EVALUATION_BYTES
-    ) {
-      this.lastEvaluation = {
-        segments,
-        vias,
-        includeViaPadErrors,
-        obstacleConnectionIds,
-        netStates,
-        result,
-      }
-    }
-  }
-
   private evaluateInternal(
     traces: SimplifiedPcbTraces,
     includeViaPadErrors: boolean,
   ): AutoroutingDrcResult {
     const { segments, vias } = this.collectDynamicGeometry(traces)
+    const dynamicIndexesByLayer = this.buildDynamicIndexes(segments, vias)
+    const detectedTraceErrors: AutoroutingDrcError[] = []
+    const detectedViaPadErrors: AutoroutingDrcError[] = []
+
     this.lastRunStats = {
       traceCount: traces.length,
       segmentCount: segments.length,
@@ -1160,17 +991,6 @@ export class AutoroutingDrcEngine {
       broadPhaseCandidateCount: 0,
       exactCheckCount: 0,
     }
-    if (this.canReuseEvaluation(segments, vias, includeViaPadErrors)) {
-      // Each caller owns its result, including nested error metadata. A cache
-      // hit performs no spatial or exact checks; the run statistics stay zero.
-      return structuredClone(this.lastEvaluation!.result)
-    }
-    // This is deliberately a last-result cache, not an accumulating history of
-    // routing candidates. Oversized evaluations also evict the previous entry.
-    this.lastEvaluation = undefined
-    const dynamicIndexesByLayer = this.buildDynamicIndexes(segments, vias)
-    const detectedTraceErrors: AutoroutingDrcError[] = []
-    const detectedViaPadErrors: AutoroutingDrcError[] = []
 
     for (const segment of segments) {
       const queryBounds = getSegmentBounds(segment)
@@ -1273,15 +1093,11 @@ export class AutoroutingDrcEngine {
       AutoroutingDrcError & { center: Point }
     >
 
-    const result = {
+    return {
       errors,
       errorsWithCenters,
       locationAwareErrors,
     }
-    this.rememberEvaluation(segments, vias, includeViaPadErrors, result)
-    // Some error metadata shares arrays with collected geometry. Never expose
-    // the retained result, so callers cannot poison either cache component.
-    return this.lastEvaluation ? structuredClone(result) : result
   }
 }
 
