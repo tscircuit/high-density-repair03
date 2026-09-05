@@ -1,14 +1,12 @@
 import { mapZToLayerName } from "./mapZToLayerName"
 
-type ViaLayers = {
-  layers?: string[]
-  from_layer?: string
-  to_layer?: string
+type ViaSpan = {
+  from_layer: string
+  to_layer: string
 }
 
-/** Normalize the explicit-layer and inclusive-endpoint representations. */
-export const getViaLayers = (via: ViaLayers, layerCount: number): string[] => {
-  if (via.layers !== undefined) return via.layers
+/** Expand via endpoints into the inclusive span of board layers. */
+export const getViaLayers = (via: ViaSpan, layerCount: number): string[] => {
   if (!Number.isInteger(layerCount) || layerCount < 1) {
     throw new Error(`Invalid board layer count: ${layerCount}`)
   }
