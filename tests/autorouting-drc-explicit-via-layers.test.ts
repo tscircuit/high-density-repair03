@@ -52,6 +52,6 @@ test("DRC honors declared via copper layers without changing legacy transitions"
   expect(engine.evaluate(declared).errors).toEqual([])
   const json = convertToCircuitJson(srj, declared)
   const exportedVia = json.find((element) => element.type === "pcb_via")
-  expect(exportedVia?.layers).toEqual(via.layers)
+  expect(exportedVia?.layers).toEqual(["top", "inner1", "inner2"])
   expect(engine.evaluate(traces).errors).toEqual([])
 })
