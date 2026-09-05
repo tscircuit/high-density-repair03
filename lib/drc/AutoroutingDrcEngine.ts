@@ -1,4 +1,5 @@
 import {
+  getBoundsFromPoints,
   getSegmentIntersection,
   pointToSegmentClosestPoint,
   segmentToBoundsMinDistance,
@@ -6,6 +7,15 @@ import {
   segmentToSegmentMinDistance,
 } from "@tscircuit/math-utils"
 import type { ConnectivityMap } from "circuit-json-to-connectivity-map"
+import {
+  applyToPoint,
+  applyToPoints,
+  compose,
+  inverse,
+  type Matrix,
+  rotateDEG,
+  translate,
+} from "transformation-matrix"
 import type {
   SimpleRouteJson,
   SimplifiedPcbTrace,
@@ -61,8 +71,8 @@ type StaticObstacle = {
   width: number
   height: number
   radius?: number
-  rotationCos: number
-  rotationSin: number
+  localToWorld: Matrix
+  worldToLocal: Matrix
   layers: string[]
   pcbPortId?: string
 }
@@ -164,54 +174,21 @@ const getViaBounds = (via: Via): Bounds => {
   }
 }
 
-const getObstacleBounds = (obstacle: StaticObstacle): Bounds => {
-  const halfWidth =
-    (Math.abs(obstacle.rotationCos) * obstacle.width +
-      Math.abs(obstacle.rotationSin) * obstacle.height) /
-    2
-  const halfHeight =
-    (Math.abs(obstacle.rotationSin) * obstacle.width +
-      Math.abs(obstacle.rotationCos) * obstacle.height) /
-    2
-  return {
-    minX: obstacle.x - halfWidth,
-    minY: obstacle.y - halfHeight,
-    maxX: obstacle.x + halfWidth,
-    maxY: obstacle.y + halfHeight,
-  }
-}
+const getObstacleBounds = (obstacle: StaticObstacle): Bounds =>
+  getBoundsFromPoints(
+    applyToPoints(obstacle.localToWorld, [
+      { x: -obstacle.width / 2, y: -obstacle.height / 2 },
+      { x: obstacle.width / 2, y: -obstacle.height / 2 },
+      { x: obstacle.width / 2, y: obstacle.height / 2 },
+      { x: -obstacle.width / 2, y: obstacle.height / 2 },
+    ]),
+  )!
 
 const getObstacleLocalBounds = (obstacle: StaticObstacle): Bounds => ({
   minX: -obstacle.width / 2,
   minY: -obstacle.height / 2,
   maxX: obstacle.width / 2,
   maxY: obstacle.height / 2,
-})
-
-const toObstacleLocalPoint = (
-  point: Point,
-  obstacle: StaticObstacle,
-): Point => {
-  const dx = point.x - obstacle.x
-  const dy = point.y - obstacle.y
-  return {
-    x: dx * obstacle.rotationCos + dy * obstacle.rotationSin,
-    y: -dx * obstacle.rotationSin + dy * obstacle.rotationCos,
-  }
-}
-
-const fromObstacleLocalPoint = (
-  point: Point,
-  obstacle: StaticObstacle,
-): Point => ({
-  x:
-    obstacle.x +
-    point.x * obstacle.rotationCos -
-    point.y * obstacle.rotationSin,
-  y:
-    obstacle.y +
-    point.x * obstacle.rotationSin +
-    point.y * obstacle.rotationCos,
 })
 
 const getCellKey = (cellX: number, cellY: number) => `${cellX}:${cellY}`
@@ -571,9 +548,10 @@ export class AutoroutingDrcEngine {
       const hasRotation =
         typeof obstacle.ccwRotationDegrees === "number" &&
         Number.isFinite(obstacle.ccwRotationDegrees)
-      const rotationRadians = hasRotation
-        ? (obstacle.ccwRotationDegrees! * Math.PI) / 180
-        : 0
+      const localToWorld = compose(
+        translate(obstacle.center.x, obstacle.center.y),
+        rotateDEG(hasRotation ? obstacle.ccwRotationDegrees! : 0),
+      )
       // Explicit rotation describes a rectangular pad, including square pads.
       // Only legacy, unrotated multilayer obstacles use the circular inference.
       const isCircular =
@@ -589,8 +567,8 @@ export class AutoroutingDrcEngine {
         y: obstacle.center.y,
         width: obstacle.width,
         height: obstacle.height,
-        rotationCos: Math.cos(rotationRadians),
-        rotationSin: Math.sin(rotationRadians),
+        localToWorld,
+        worldToLocal: inverse(localToWorld),
         ...(isCircular
           ? { radius: Math.max(obstacle.width, obstacle.height) / 2 }
           : {}),
@@ -812,8 +790,8 @@ export class AutoroutingDrcEngine {
     const obstacleBounds = getObstacleLocalBounds(obstacle)
     const localSegment = {
       ...segment,
-      start: toObstacleLocalPoint(segment.start, obstacle),
-      end: toObstacleLocalPoint(segment.end, obstacle),
+      start: applyToPoint(obstacle.worldToLocal, segment.start),
+      end: applyToPoint(obstacle.worldToLocal, segment.end),
     }
     const shapeDistance =
       obstacle.radius === undefined
@@ -854,12 +832,12 @@ export class AutoroutingDrcEngine {
       ],
       center:
         obstacle.radius === undefined
-          ? fromObstacleLocalPoint(
+          ? applyToPoint(
+              obstacle.localToWorld,
               getClosestPointBetweenSegmentAndBounds(
                 localSegment,
                 obstacleBounds,
               ),
-              obstacle,
             )
           : getClosestPointBetweenSegmentAndPoint(segment, obstacle),
     }
@@ -873,7 +851,7 @@ export class AutoroutingDrcEngine {
     this.lastRunStats.exactCheckCount += 1
 
     const obstacleBounds = getObstacleLocalBounds(obstacle)
-    const localVia = toObstacleLocalPoint(via, obstacle)
+    const localVia = applyToPoint(obstacle.worldToLocal, via)
     const pointToObstacleDistance =
       obstacle.radius === undefined
         ? Math.hypot(
