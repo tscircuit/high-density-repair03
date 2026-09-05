@@ -10,7 +10,9 @@ type Board = Pick<
   SimpleRouteJson,
   "bounds" | "layerCount" | "obstacles" | "minBoardEdgeClearance"
 >
-type RoutePoint = HighDensityRoute["route"][number] & { traceThickness?: number }
+type RoutePoint = HighDensityRoute["route"][number] & {
+  traceThickness?: number
+}
 
 const OFFSET_FACTORS = [0, 0.75, -0.75, 1, -1, 1.5, -1.5, 2, -2]
 
@@ -34,7 +36,9 @@ export function* getTerminalViaEscapeCandidates({
   const route = routes[routeIndex]!
   if (
     route.jumpers?.length ||
-    route.route.some((point) => point.toNextSegmentType || point.insideJumperPad)
+    route.route.some(
+      (point) => point.toNextSegmentType || point.insideJumperPad,
+    )
   ) {
     return
   }
@@ -51,7 +55,8 @@ export function* getTerminalViaEscapeCandidates({
         Math.hypot(
           endpoint.x - obstacle.center.x,
           endpoint.y - obstacle.center.y,
-        ) <= Math.min(obstacle.width, obstacle.height) / 2 + 1e-6,
+        ) <=
+          Math.min(obstacle.width, obstacle.height) / 2 + 1e-6,
     )
     if (
       !terminalPad ||
@@ -88,8 +93,7 @@ export function* getTerminalViaEscapeCandidates({
     )
     const viaRadius = route.viaDiameter / 2
     const edgeMargin =
-      Math.max(viaRadius, traceThickness / 2) +
-      (srj.minBoardEdgeClearance ?? 0)
+      Math.max(viaRadius, traceThickness / 2) + (srj.minBoardEdgeClearance ?? 0)
     for (const xFactor of OFFSET_FACTORS) {
       for (const yFactor of OFFSET_FACTORS) {
         const x = endpoint.x + xFactor * route.viaDiameter
@@ -166,8 +170,7 @@ export function* getTerminalViaEscapeCandidates({
                               ? anchor.x
                               : bend === "45x"
                                 ? x - Math.sign(x - anchor.x) * diagonal
-                                : anchor.x +
-                                  Math.sign(x - anchor.x) * diagonal,
+                                : anchor.x + Math.sign(x - anchor.x) * diagonal,
                         y: bend === "x" || bend === "45x" ? anchor.y : y,
                       },
                     ]

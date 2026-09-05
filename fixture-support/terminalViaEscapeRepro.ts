@@ -42,7 +42,10 @@ export const createTerminalViaEscapeRepro = (): {
       connectionName: "escape",
       traceThickness: 0.1,
       viaDiameter: 0.2,
-      vias: [{ x: -2, y: -0.5 }, { x: 0, y: 0.8 }],
+      vias: [
+        { x: -2, y: -0.5 },
+        { x: 0, y: 0.8 },
+      ],
       route: [
         { x: -2, y: -1, z: 0, pcb_port_id: "start" },
         { x: -2, y: -0.5, z: 0 },
@@ -61,8 +64,8 @@ export const createTerminalViaEscapeRepro = (): {
       viaDiameter: 0.2,
       vias: [],
       route: [
-        { x: -1.5, y: 0.3, z: 1 },
-        { x: 1.5, y: 0.3, z: 1 },
+        { x: -1.5, y: 0.45, z: 1 },
+        { x: 1.5, y: 0.45, z: 1 },
       ],
     },
   ]
