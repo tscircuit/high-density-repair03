@@ -63,6 +63,8 @@ export interface SimpleRouteJson {
 
 export interface Obstacle {
   obstacleId?: string
+  /** Optional owner used to identify adjacent pads on the same component. */
+  componentId?: string
   type: "rect"
   layers: string[]
   zLayers?: number[]
