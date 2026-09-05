@@ -4,6 +4,8 @@ export {
   setGlobalDrcForceImproveSolverVisualizer,
 } from "./solvers/GlobalDrcForceImproveSolver"
 export { AutoroutingDrcEngine } from "./drc"
+export { repairFinePitchPadEscapes } from "./solvers/GlobalDrcForceImproveSolver/repairFinePitchPadEscapes"
+export type { FinePitchPadEscapeResult } from "./solvers/GlobalDrcForceImproveSolver/repairFinePitchPadEscapes"
 export type {
   AutoroutingDrcEngineOptions,
   AutoroutingDrcEngineRunStats,
@@ -24,6 +26,3 @@ export type {
   SingleLayerConnectionPoint,
   SimpleRouteJson,
 } from "./solvers/GlobalDrcForceImproveSolver"
-
-export { repairFinePitchPadEscapes } from "./solvers/GlobalDrcForceImproveSolver/repairFinePitchPadEscapes"
-export type { FinePitchPadEscapeResult } from "./solvers/GlobalDrcForceImproveSolver/repairFinePitchPadEscapes"
