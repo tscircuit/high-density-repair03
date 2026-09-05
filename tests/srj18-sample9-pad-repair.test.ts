@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 import { getConnectivityMapFromSimpleRouteJson } from "../fixture-support/getConnectivityMapFromSimpleRouteJson"
 import {
   AutoroutingDrcEngine,
-  GlobalDrcBranchPortfolioSolver,
+  GlobalDrcForceImproveSolver,
   type HighDensityRoute,
   type SimpleRouteJson,
 } from "../lib"
@@ -22,8 +22,8 @@ test("repairs SRJ18 sample 9 with original pads and safe layer transitions", asy
   })
   expect(
     getDrcSnapshot(srj, hdRoutes, undefined, connMap, engine).errors,
-  ).toHaveLength(16)
-  const solver = new GlobalDrcBranchPortfolioSolver({
+  ).toHaveLength(7)
+  const solver = new GlobalDrcForceImproveSolver({
     srj,
     hdRoutes,
     connMap,
@@ -31,14 +31,11 @@ test("repairs SRJ18 sample 9 with original pads and safe layer transitions", asy
     maxIterations: 32,
     enableBroadFallback: false,
     enableLargeBoardBroadFallback: false,
-    enableTargetedErrorSweep: true,
+    enableTargetedErrorSweep: false,
     enableTraceViaOwnerTargeting: true,
     enablePostSolveClearanceRelaxation: false,
     enableSafeTraceLayerMoves: true,
     enableViaInPadLayerMoves: false,
-    viaInPadMaxIterations: 32,
-    broadMaxIterations: 12,
-    broadPassMultiplier: 3,
   })
   solver.solve()
 
@@ -51,10 +48,5 @@ test("repairs SRJ18 sample 9 with original pads and safe layer transitions", asy
     process.platform === "linux"
       ? import.meta.path.replace(/\.test\.ts$/, "-linux.test.ts")
       : import.meta.path
-  await expectSrjRepairSnapshot(
-    srj,
-    hdRoutes,
-    solver.getOutput(),
-    snapshotPath,
-  )
+  await expectSrjRepairSnapshot(srj, hdRoutes, solver.getOutput(), snapshotPath)
 })
