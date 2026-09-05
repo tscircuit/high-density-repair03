@@ -10,7 +10,7 @@ import { getDrcSnapshot } from "../lib/solvers/GlobalDrcForceImproveSolver/solve
 import { expectSrjRepairSnapshot } from "./fixtures/expectSrjRepairSnapshot"
 import input from "./fixtures/srj18-sample9-repair-input.json"
 
-test("captures the SRJ18 sample 9 layer-repair baseline", async () => {
+test("repairs SRJ18 sample 9 with original pads and safe layer transitions", async () => {
   const { srj, hdRoutes } = structuredClone(input) as {
     srj: SimpleRouteJson
     hdRoutes: HighDensityRoute[]
@@ -22,7 +22,7 @@ test("captures the SRJ18 sample 9 layer-repair baseline", async () => {
   })
   expect(
     getDrcSnapshot(srj, hdRoutes, undefined, connMap, engine).errors,
-  ).toHaveLength(23)
+  ).toHaveLength(8)
   const solver = new GlobalDrcForceImproveSolver({
     srj,
     hdRoutes,
@@ -43,7 +43,7 @@ test("captures the SRJ18 sample 9 layer-repair baseline", async () => {
   expect(solver.failed).toBe(false)
   expect(
     getDrcSnapshot(srj, solver.getOutput(), undefined, connMap, engine).errors,
-  ).toHaveLength(15)
+  ).toEqual([])
   const snapshotPath =
     process.platform === "linux"
       ? import.meta.path.replace(/\.test\.ts$/, "-linux.test.ts")

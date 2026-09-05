@@ -8,6 +8,7 @@ import {
   type SimpleRouteJson,
 } from "../lib"
 import exactInput from "./fixtures/dataset01-circuit143-exact-input.json"
+import { expectSrjRepairSnapshot } from "./fixtures/expectSrjRepairSnapshot"
 
 const getLayerName = (z: number, layerCount: number) => {
   if (z === 0) return "top"
@@ -64,7 +65,7 @@ const convertHdRoutesToSimplifiedTraces = (
     }
   })
 
-test("repairs the exact dataset01 circuit143 DRC chain without broad fallback", () => {
+test("repairs the exact dataset01 circuit143 DRC chain without broad fallback", async () => {
   const { srj, hdRoutes } = structuredClone(exactInput) as unknown as {
     srj: SimpleRouteJson
     hdRoutes: HighDensityRoute[]
@@ -136,4 +137,10 @@ test("repairs the exact dataset01 circuit143 DRC chain without broad fallback", 
   expect(solver.stats.drcBranchPortfolioSafeTraceLayerPhaseAttempted).toBe(true)
   expect(solver.stats.drcBranchPortfolioSafeTraceLayerPhaseAccepted).toBe(true)
   expect(solver.stats.globalDrcForceImproveBroadForceAccepted).toBe(false)
+  await expectSrjRepairSnapshot(
+    srj,
+    hdRoutes,
+    solver.getOutput(),
+    import.meta.path,
+  )
 })

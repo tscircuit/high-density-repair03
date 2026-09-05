@@ -110,11 +110,13 @@ const TRACE_LAYER_CORRIDOR_VARIANTS = ([1, -1] as const).flatMap(
 
 const TRACE_LAYER_CORRIDOR_MAX_DRC_COUNT = 8
 
+const TRACE_PAIR_DISPLACEMENT_VARIANTS = ([0, 1] as const).map((routeSide) => ({
+  kind: "displacementChain" as const,
+  routeSide,
+}))
+
 const LOW_COUNT_TRACE_TOPOLOGY_VARIANTS = [
-  ...([0, 1] as const).map((routeSide) => ({
-    kind: "displacementChain" as const,
-    routeSide,
-  })),
+  ...TRACE_PAIR_DISPLACEMENT_VARIANTS,
   ...([-1, 1] as const).flatMap((directionSign) =>
     ([0, 1] as const).map((routeSide) => ({
       kind: "segment" as const,
@@ -391,7 +393,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   }
 
   private getViaIssueCount(snapshot: DrcSnapshot) {
-    return getViaDrcIssueCount(snapshot, false)
+    return getViaDrcIssueCount(snapshot)
   }
 
   private getRepairIssueCount(snapshot: DrcSnapshot) {
@@ -676,6 +678,42 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         error,
         bestSnapshot.traceRouteIndexById,
       )
+      if (
+        this.enableTraceViaOwnerTargeting &&
+        traceRouteIndex !== undefined &&
+        Array.isArray(error.pcb_via_ids) &&
+        error.pcb_via_ids.length === 1 &&
+        candidateAttemptsThisStep < maxCandidateAttemptsThisStep
+      ) {
+        const candidateRoutes = cloneRoutes(bestRoutes)
+        if (
+          applyViaOnlyDisplacementForTraceError(
+            this.srj,
+            candidateRoutes,
+            error,
+            bestSnapshot.traceRouteIndexById,
+            traceRouteIndex,
+            this.connMap,
+          )
+        ) {
+          const routes = materializeRoutes(candidateRoutes)
+          const snapshot = this.getSnapshot(routes)
+          const viaIssueCount = this.getViaIssueCount(snapshot)
+          candidateAttemptsThisStep += 1
+          this.candidateAttempts += 1
+          if (
+            viaIssueCount <= bestViaIssueCount &&
+            isDrcSnapshotCountBetter(snapshot, bestSnapshot)
+          ) {
+            bestTopologyCandidate = {
+              routes,
+              snapshot,
+              viaIssueCount,
+              usesViaInPad: false,
+            }
+          }
+        }
+      }
       if (this.enableSafeTraceLayerMoves && traceRouteIndex !== undefined) {
         const safeRouteIndexes = traceRoutePair ?? [traceRouteIndex]
         const localSpanVariantCount =
@@ -727,48 +765,62 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
             ? Math.floor(layerVariant / this.srj.layerCount)
             : 0
           const changedRouteIndex = safeRouteIndexes[routeSide]!
-          const candidateRoutes = cloneRoutesForIndexes(bestRoutes, [
-            changedRouteIndex,
-          ])
-          const changed = applySafeTraceLayerMoveForError(
-            this.srj,
-            candidateRoutes,
-            error,
-            changedRouteIndex,
-            targetZ,
-            spanExpansion,
-            this.connMap,
-            directionVariant,
-          )
-          if (!changed) continue
+          // Compare both placements before accepting a direction. The helper
+          // skips the adjusted candidate when its via positions are unchanged.
+          let evaluatedDirection = false
+          for (const adjustViaClearance of [false, true]) {
+            const candidateRoutes = cloneRoutesForIndexes(bestRoutes, [
+              changedRouteIndex,
+            ])
+            const changed = applySafeTraceLayerMoveForError(
+              this.srj,
+              candidateRoutes,
+              error,
+              changedRouteIndex,
+              targetZ,
+              spanExpansion,
+              this.connMap,
+              directionVariant,
+              adjustViaClearance,
+            )
+            if (!changed) continue
 
-          const materializedCandidateRoutes = materializeRoutesForIndexes(
-            candidateRoutes,
-            [changedRouteIndex],
-          )
-          safeTraceLayerCandidateAttemptsThisStep += 1
-          this.candidateAttempts += 1
-          const candidateSnapshot = this.getSnapshot(
-            materializedCandidateRoutes,
-          )
-          const candidateViaIssueCount =
-            this.getViaIssueCount(candidateSnapshot)
-          const comparisonSnapshot =
-            bestTopologyCandidate?.snapshot ?? bestSnapshot
-          const comparisonViaIssueCount =
-            bestTopologyCandidate?.viaIssueCount ?? bestViaIssueCount
+            const materializedCandidateRoutes = materializeRoutesForIndexes(
+              candidateRoutes,
+              [changedRouteIndex],
+            )
+            evaluatedDirection = true
+            this.candidateAttempts += 1
+            const candidateSnapshot = this.getSnapshot(
+              materializedCandidateRoutes,
+            )
+            const candidateViaIssueCount =
+              this.getViaIssueCount(candidateSnapshot)
+            const comparisonSnapshot =
+              bestTopologyCandidate?.snapshot ?? bestSnapshot
+            const comparisonViaIssueCount =
+              bestTopologyCandidate?.viaIssueCount ?? bestViaIssueCount
 
-          if (
-            candidateViaIssueCount <= comparisonViaIssueCount &&
-            isDrcSnapshotCountBetter(candidateSnapshot, comparisonSnapshot)
-          ) {
-            bestTopologyCandidate = {
-              routes: materializedCandidateRoutes,
-              snapshot: candidateSnapshot,
-              viaIssueCount: candidateViaIssueCount,
-              usesViaInPad: false,
+            if (
+              candidateViaIssueCount <= comparisonViaIssueCount &&
+              (isDrcSnapshotCountBetter(
+                candidateSnapshot,
+                comparisonSnapshot,
+              ) ||
+                (bestTopologyCandidate !== undefined &&
+                  getRepairDrcIssueCount(candidateSnapshot) ===
+                    getRepairDrcIssueCount(comparisonSnapshot) &&
+                  candidateSnapshot.count < comparisonSnapshot.count))
+            ) {
+              bestTopologyCandidate = {
+                routes: materializedCandidateRoutes,
+                snapshot: candidateSnapshot,
+                viaIssueCount: candidateViaIssueCount,
+                usesViaInPad: false,
+              }
             }
           }
+          if (evaluatedDirection) safeTraceLayerCandidateAttemptsThisStep += 1
         }
         if (traceErrorKey) {
           this.safeTraceLayerCursorByErrorId.set(
@@ -849,7 +901,6 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       }
       if (
         this.enableSafeTraceLayerMoves &&
-        shouldTryTracePairTopology &&
         traceErrorKey &&
         ((this.initialLowCountErrorsHaveMovableTraces &&
           (traceRoutePair || traceRouteIndex !== undefined)) ||
@@ -858,7 +909,12 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         const traceTopologyVariants = this
           .initialLowCountErrorsHaveMovableTraces
           ? LOW_COUNT_TRACE_TOPOLOGY_VARIANTS
-          : TRACE_PAIR_DETOUR_VARIANTS
+          : shouldTryTracePairTopology
+            ? [
+                ...TRACE_PAIR_DISPLACEMENT_VARIANTS,
+                ...TRACE_PAIR_DETOUR_VARIANTS,
+              ]
+            : TRACE_PAIR_DISPLACEMENT_VARIANTS
         const detourRouteIndexes = traceRoutePair ?? [traceRouteIndex!]
         let detourCursor =
           this.tracePairDetourCursorByErrorId.get(traceErrorKey) ?? 0
@@ -906,7 +962,6 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
 
             if (
               chainIssueCount > 0 &&
-              chainIssueCount <= 3 &&
               candidateAttemptsThisStep < maxCandidateAttemptsThisStep
             ) {
               const propagatedRoutes = cloneRoutes(materializedChainRoutes)
@@ -959,6 +1014,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
             const comparisonViaIssueCount =
               bestTopologyCandidate?.viaIssueCount ?? bestViaIssueCount
             if (
+              chainViaIssueCount <= comparisonViaIssueCount &&
               isBetterDrcSnapshot(
                 chainSnapshot,
                 chainViaIssueCount,

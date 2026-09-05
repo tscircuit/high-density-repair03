@@ -384,6 +384,9 @@ function createPcbPadElements(srj: SimpleRouteJson): AnyCircuitElement[] {
     const height = obstacle.height
     const x = obstacle.center.x
     const y = obstacle.center.y
+    const rotationDegrees = obstacle.ccwRotationDegrees
+    const hasRotation =
+      typeof rotationDegrees === "number" && Number.isFinite(rotationDegrees)
 
     const isMultiLayerObstacle = layers.length > 1
 
@@ -392,6 +395,30 @@ function createPcbPadElements(srj: SimpleRouteJson): AnyCircuitElement[] {
         platedHoleId ?? `pcb_plated_hole_${x.toFixed(3)}_${y.toFixed(3)}`
       if (addedPlatedHoleIds.has(id)) continue
       addedPlatedHoleIds.add(id)
+
+      if (hasRotation) {
+        const holeDiameter = Math.max(Math.min(width, height) * 0.5, 0.1)
+        pads.push({
+          type: "pcb_plated_hole",
+          pcb_plated_hole_id: id,
+          shape: "rotated_pill_hole_with_rect_pad",
+          hole_shape: "rotated_pill",
+          pad_shape: "rect",
+          hole_width: holeDiameter,
+          hole_height: holeDiameter,
+          hole_ccw_rotation: rotationDegrees,
+          rect_pad_width: width,
+          rect_pad_height: height,
+          rect_ccw_rotation: rotationDegrees,
+          hole_offset_x: 0,
+          hole_offset_y: 0,
+          x,
+          y,
+          layers,
+          ...(pcbPortId ? { pcb_port_id: pcbPortId } : {}),
+        })
+        continue
+      }
 
       const isCircularLike = Math.abs(width - height) < 0.001
 
@@ -431,6 +458,22 @@ function createPcbPadElements(srj: SimpleRouteJson): AnyCircuitElement[] {
     const id = smtPadId ?? `pcb_smtpad_${x.toFixed(3)}_${y.toFixed(3)}`
     if (addedSmtPadIds.has(id)) continue
     addedSmtPadIds.add(id)
+
+    if (hasRotation) {
+      pads.push({
+        type: "pcb_smtpad",
+        pcb_smtpad_id: id,
+        layer: layers[0],
+        shape: "rotated_rect",
+        x,
+        y,
+        width,
+        height,
+        ccw_rotation: rotationDegrees,
+        ...(pcbPortId ? { pcb_port_id: pcbPortId } : {}),
+      })
+      continue
+    }
 
     pads.push({
       type: "pcb_smtpad",
