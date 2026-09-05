@@ -111,7 +111,7 @@ export interface SimplifiedPcbTrace {
         to_layer: string
         from_layer: string
         via_diameter?: number
-        /** Explicit occupied copper layers; omitted preserves legacy endpoints. */
+        /** Explicit copper layers; otherwise expand the inclusive from/to span. */
         layers?: string[]
       }
     | {
