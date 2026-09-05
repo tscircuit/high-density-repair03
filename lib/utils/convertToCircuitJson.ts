@@ -564,7 +564,9 @@ export function convertToCircuitJson(
   circuitJson.push(...createPcbPadElements(srjWithPointPairs))
 
   // Extract and add vias as independent pcb_via elements
-  circuitJson.push(...extractViasFromRoutes(routes, minViaDiameter, srjWithPointPairs))
+  circuitJson.push(
+    ...extractViasFromRoutes(routes, minViaDiameter, srjWithPointPairs),
+  )
 
   // Build a map of connection names to simplify lookups
   const connectionMap = new Map<string, string>()
