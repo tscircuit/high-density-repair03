@@ -1,3 +1,13 @@
+import {
+  clamp,
+  distSq,
+  doBoundsOverlap,
+  getBoundFromCenteredRect,
+  getBoundsFromPoints,
+  getSegmentIntersection,
+  isPointInsideBounds,
+  pointToSegmentClosestPoint,
+} from "@tscircuit/math-utils"
 import type { ConnectivityMap } from "circuit-json-to-connectivity-map"
 import type { SimpleRouteJson } from "../../types"
 import type { HighDensityRoute } from "../../types/high-density-types"
@@ -21,24 +31,9 @@ type PadRegion = {
   bounds: Bounds
 }
 
-const squaredDistance = (left: Point, right: Point) =>
-  (left.x - right.x) ** 2 + (left.y - right.y) ** 2
-
-const boundsOverlap = (left: Bounds, right: Bounds) =>
-  left.minX <= right.maxX &&
-  left.maxX >= right.minX &&
-  left.minY <= right.maxY &&
-  left.maxY >= right.minY
-
-const pointInsideBounds = (point: Point, bounds: Bounds) =>
-  point.x >= bounds.minX &&
-  point.x <= bounds.maxX &&
-  point.y >= bounds.minY &&
-  point.y <= bounds.maxY
-
 const projectToBounds = (point: Point, bounds: Bounds): Point => ({
-  x: Math.max(bounds.minX, Math.min(bounds.maxX, point.x)),
-  y: Math.max(bounds.minY, Math.min(bounds.maxY, point.y)),
+  x: clamp(point.x, bounds.minX, bounds.maxX),
+  y: clamp(point.y, bounds.minY, bounds.maxY),
 })
 
 const distanceToPad = (point: Point, pad: PadRegion) => {
@@ -57,24 +52,18 @@ const createLine = (start: Point, end: Point): Line => ({
   kind: "line",
   start,
   end,
-  bounds: {
-    minX: Math.min(start.x, end.x),
-    maxX: Math.max(start.x, end.x),
-    minY: Math.min(start.y, end.y),
-    maxY: Math.max(start.y, end.y),
-  },
+  bounds: getBoundsFromPoints([start, end])!,
 })
 
 const createCircle = (center: Point, radius: number): Circle => ({
   kind: "circle",
   center,
   radius,
-  bounds: {
-    minX: center.x - radius,
-    maxX: center.x + radius,
-    minY: center.y - radius,
-    maxY: center.y + radius,
-  },
+  bounds: getBoundFromCenteredRect({
+    center,
+    width: radius * 2,
+    height: radius * 2,
+  }),
 })
 
 const getPadBoundaries = (pad: PadRegion): Boundary[] => {
@@ -121,28 +110,10 @@ const boundaryProjections = (point: Point, boundary: Boundary): Point[] => {
       },
     ]
   }
-  const dx = boundary.end.x - boundary.start.x
-  const dy = boundary.end.y - boundary.start.y
-  const lengthSquared = dx * dx + dy * dy
-  const t =
-    lengthSquared === 0
-      ? 0
-      : Math.max(
-          0,
-          Math.min(
-            1,
-            ((point.x - boundary.start.x) * dx +
-              (point.y - boundary.start.y) * dy) /
-              lengthSquared,
-          ),
-        )
   return [
     boundary.start,
     boundary.end,
-    {
-      x: boundary.start.x + dx * t,
-      y: boundary.start.y + dy * t,
-    },
+    pointToSegmentClosestPoint(point, boundary.start, boundary.end),
   ]
 }
 
@@ -171,18 +142,13 @@ const boundaryIntersections = (left: Boundary, right: Boundary): Point[] => {
     return lineCircleIntersections(right, left)
   }
   if (left.kind === "line" && right.kind === "line") {
-    const ax = left.end.x - left.start.x
-    const ay = left.end.y - left.start.y
-    const bx = right.end.x - right.start.x
-    const by = right.end.y - right.start.y
-    const denominator = ax * by - ay * bx
-    if (denominator === 0) return []
-    const dx = right.start.x - left.start.x
-    const dy = right.start.y - left.start.y
-    const t = (dx * by - dy * bx) / denominator
-    const u = (dx * ay - dy * ax) / denominator
-    if (t < 0 || t > 1 || u < 0 || u > 1) return []
-    return [{ x: left.start.x + ax * t, y: left.start.y + ay * t }]
+    const intersection = getSegmentIntersection(
+      left.start,
+      left.end,
+      right.start,
+      right.end,
+    )
+    return intersection ? [intersection] : []
   }
   if (left.kind !== "circle" || right.kind !== "circle") return []
   const dx = right.center.x - left.center.x
@@ -305,11 +271,11 @@ export const findPadClearanceViaPosition = (
 
   const pads = getPadRegions(srj, route, viaRadius, zLayers, connMap)
   const isFeasible = (point: Point) =>
-    pointInsideBounds(point, board) &&
+    isPointInsideBounds(point, board) &&
     pads.every((pad) => distanceToPad(point, pad) >= pad.clearance)
   const projected = projectToBounds(preferred, board)
   if (isFeasible(projected))
-    return pointInsideBounds(preferred, board) ? preferred : projected
+    return isPointInsideBounds(preferred, board) ? preferred : projected
 
   // Only the connected local obstruction can displace this point. Bounding
   // boxes conservatively connect rounded regions without enumerating the
@@ -322,7 +288,7 @@ export const findPadClearanceViaPosition = (
     for (const pad of pads) {
       if (
         !included.has(pad) &&
-        boundsOverlap(component[index]!.bounds, pad.bounds)
+        doBoundsOverlap(component[index]!.bounds, pad.bounds)
       ) {
         included.add(pad)
         component.push(pad)
@@ -344,7 +310,7 @@ export const findPadClearanceViaPosition = (
   let best: Point | undefined
   let bestDistance = Number.POSITIVE_INFINITY
   const consider = (candidate: Point) => {
-    const candidateDistance = squaredDistance(candidate, preferred)
+    const candidateDistance = distSq(candidate, preferred)
     if (candidateDistance < bestDistance && isFeasible(candidate)) {
       best = candidate
       bestDistance = candidateDistance
@@ -356,17 +322,13 @@ export const findPadClearanceViaPosition = (
   }
   for (let left = 0; left < boundaries.length; left += 1) {
     const a = boundaries[left]!
-    if (
-      squaredDistance(preferred, projectToBounds(preferred, a.bounds)) >
-      bestDistance
-    )
+    if (distSq(preferred, projectToBounds(preferred, a.bounds)) > bestDistance)
       continue
     for (let right = left + 1; right < boundaries.length; right += 1) {
       const b = boundaries[right]!
-      if (!boundsOverlap(a.bounds, b.bounds)) continue
+      if (!doBoundsOverlap(a.bounds, b.bounds)) continue
       if (
-        squaredDistance(preferred, projectToBounds(preferred, b.bounds)) >
-        bestDistance
+        distSq(preferred, projectToBounds(preferred, b.bounds)) > bestDistance
       )
         continue
       for (const point of boundaryIntersections(a, b)) consider(point)
