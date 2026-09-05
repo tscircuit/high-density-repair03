@@ -137,5 +137,10 @@ test("repairs the exact dataset01 circuit143 DRC chain without broad fallback", 
   expect(solver.stats.drcBranchPortfolioSafeTraceLayerPhaseAttempted).toBe(true)
   expect(solver.stats.drcBranchPortfolioSafeTraceLayerPhaseAccepted).toBe(true)
   expect(solver.stats.globalDrcForceImproveBroadForceAccepted).toBe(false)
-  await expectSrjRepairSnapshot(srj, hdRoutes, solver.getOutput(), import.meta.path)
+  await expectSrjRepairSnapshot(
+    srj,
+    hdRoutes,
+    solver.getOutput(),
+    import.meta.path,
+  )
 })

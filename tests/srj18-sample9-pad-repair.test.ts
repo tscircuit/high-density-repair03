@@ -47,5 +47,14 @@ test("repairs SRJ18 sample 9 with original pads and safe layer transitions", asy
   expect(
     getDrcSnapshot(srj, solver.getOutput(), undefined, connMap, engine).errors,
   ).toEqual([])
-  await expectSrjRepairSnapshot(srj, hdRoutes, solver.getOutput(), import.meta.path)
+  const snapshotPath =
+    process.platform === "linux"
+      ? import.meta.path.replace(/\.test\.ts$/, "-linux.test.ts")
+      : import.meta.path
+  await expectSrjRepairSnapshot(
+    srj,
+    hdRoutes,
+    solver.getOutput(),
+    snapshotPath,
+  )
 })

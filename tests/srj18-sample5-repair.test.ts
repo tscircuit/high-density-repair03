@@ -36,5 +36,10 @@ test("repairs captured SRJ18 sample 5 without losing terminal connections", asyn
   expect(
     getDrcSnapshot(srj, solver.getOutput(), undefined, connMap, engine).errors,
   ).toEqual([])
-  await expectSrjRepairSnapshot(srj, hdRoutes, solver.getOutput(), import.meta.path)
+  await expectSrjRepairSnapshot(
+    srj,
+    hdRoutes,
+    solver.getOutput(),
+    import.meta.path,
+  )
 })
