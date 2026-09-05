@@ -34,6 +34,7 @@
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.1",
+    "bun-match-svg": "0.0.14",
     "dataset-drc14": "github:tscircuit/dataset-14#6582f636ca61c7fc8bb237cbcd6195076b9b7628",
     "react-cosmos": "^7.3.0",
     "react-cosmos-plugin-vite": "^7.3.0",
