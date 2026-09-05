@@ -3218,6 +3218,9 @@ export const getRepairDrcIssueScore = (snapshot: DrcSnapshot) => {
   const legacyErrors = snapshot.errors.filter(
     (error) => !isViaPadDrcError(error),
   )
+  if (snapshot.errors.some(isViaPadDrcError)) {
+    return getDrcIssueScore(legacyErrors)
+  }
   return snapshot.legacyIssueScore ?? getDrcIssueScore(legacyErrors)
 }
 
@@ -3441,40 +3444,43 @@ const appendDistinctRoutePoint = (
 
 export type SafeTraceLayerMoveSpanExpansion = number | "full"
 
-type SafeTraceLayerMoveSpan = {
-  segment: Segment
-  spanStartIndex: number
-  spanEndIndex: number
-}
-
-type SafeTraceLayerFullSpanVariant = {
-  routeIndex: number
-  targetZ: number
-  directionVariant: number
-}
-
-const getSafeTraceLayerMoveSpan = (
+/**
+ * Moves a span containing the reported conflict onto another layer. Existing
+ * layer transitions stay at their coordinates, and new transitions are
+ * placed outside pad clearance regions before the route is assembled. The
+ * caller scores every candidate against full-board DRC.
+ */
+export const applySafeTraceLayerMoveForError = (
   srj: SimpleRouteJson,
-  routes: HighDensityRoute[],
+  routes: MutableRoute[],
   error: Record<string, unknown>,
   routeIndex: number,
+  targetZ: number,
   spanExpansion: SafeTraceLayerMoveSpanExpansion,
   connMap?: ConnectivityMap,
-): SafeTraceLayerMoveSpan | undefined => {
+  directionVariant = 0,
+) => {
   const errorType = getDrcErrorType(error)
   if (
     errorType !== "pcb_pad_trace_clearance_error" &&
     errorType !== "pcb_trace_error"
   ) {
-    return undefined
+    return false
+  }
+  if (targetZ < 0 || targetZ >= srj.layerCount) {
+    return false
   }
 
   const route = routes[routeIndex]
-  if (!route || route.route.length < 2) return undefined
-  const originalPoints = route.route
+  if (!route || route.route.length < 2) return false
+
+  const originalPoints = route.route.map((point) => ({ ...point }))
+  const first = originalPoints[0]
+  const last = originalPoints.at(-1)
+  if (!first || !last) return false
 
   const center = getErrorCenter(error)
-  if (!center) return undefined
+  if (!center) return false
   const isObstacleError = isTraceObstacleDrcError(error)
   const traceObstaclePair = isObstacleError
     ? getNearestTraceObstacleSegmentPair(
@@ -3488,7 +3494,7 @@ const getSafeTraceLayerMoveSpan = (
   const segment = isObstacleError
     ? traceObstaclePair?.segment
     : getNearestSegment(collectSegmentsForRoute(route, routeIndex), center)
-  if (!segment) return undefined
+  if (!segment || segment.z === targetZ) return false
 
   let spanStartIndex = segment.startIndex
   let spanEndIndex = segment.endIndex
@@ -3508,93 +3514,6 @@ const getSafeTraceLayerMoveSpan = (
     }
     if (!expanded) break
   }
-  return { segment, spanStartIndex, spanEndIndex }
-}
-
-/** Enumerates only rotations that affect a full span's moving terminals. */
-export const getSafeTraceLayerFullSpanVariants = (
-  srj: SimpleRouteJson,
-  routes: HighDensityRoute[],
-  error: Record<string, unknown>,
-  routeIndexes: readonly number[],
-  connMap?: ConnectivityMap,
-): SafeTraceLayerFullSpanVariant[] => {
-  const directionsByRoute = routeIndexes.map((routeIndex) => {
-    const span = getSafeTraceLayerMoveSpan(
-      srj,
-      routes,
-      error,
-      routeIndex,
-      "full",
-      connMap,
-    )
-    const directions = new Set<number>()
-    if (!span) return directions
-    const points = routes[routeIndex]!.route
-    const movesStart =
-      span.spanStartIndex === 0 && Boolean(points[0]!.pcb_port_id)
-    const movesEnd =
-      span.spanEndIndex === points.length - 1 &&
-      Boolean(points.at(-1)!.pcb_port_id)
-    const rotationPairs = new Set<string>()
-    for (const [index, pair] of TERMINAL_ESCAPE_ROTATION_PAIRS.entries()) {
-      const [start, end] = pair
-      const activePair = `${movesStart ? start : 0},${movesEnd ? end : 0}`
-      if (rotationPairs.has(activePair)) continue
-      rotationPairs.add(activePair)
-      directions.add(index)
-    }
-    return directions
-  })
-  const variants: SafeTraceLayerFullSpanVariant[] = []
-  // Preserve the original direction, layer, then route ordering while
-  // enumerating each active pair of rotation parameters only once.
-  for (
-    let directionVariant = 0;
-    directionVariant < TERMINAL_ESCAPE_ROTATION_PAIRS.length;
-    directionVariant += 1
-  ) {
-    for (let targetZ = 0; targetZ < srj.layerCount; targetZ += 1) {
-      for (const [routeSide, routeIndex] of routeIndexes.entries()) {
-        if (!directionsByRoute[routeSide]!.has(directionVariant)) continue
-        variants.push({ routeIndex, targetZ, directionVariant })
-      }
-    }
-  }
-  return variants
-}
-
-/**
- * Moves a span containing the reported conflict onto another layer. Existing
- * layer transitions stay at their coordinates, and new transitions are
- * placed outside pad clearance regions before the route is assembled. The
- * caller scores every candidate against full-board DRC.
- */
-export const applySafeTraceLayerMoveForError = (
-  srj: SimpleRouteJson,
-  routes: MutableRoute[],
-  error: Record<string, unknown>,
-  routeIndex: number,
-  targetZ: number,
-  spanExpansion: SafeTraceLayerMoveSpanExpansion,
-  connMap?: ConnectivityMap,
-  directionVariant = 0,
-) => {
-  if (targetZ < 0 || targetZ >= srj.layerCount) return false
-  const span = getSafeTraceLayerMoveSpan(
-    srj,
-    routes,
-    error,
-    routeIndex,
-    spanExpansion,
-    connMap,
-  )
-  if (!span || span.segment.z === targetZ) return false
-  const { segment, spanStartIndex, spanEndIndex } = span
-  const route = routes[routeIndex]!
-  const originalPoints = route.route.map((point) => ({ ...point }))
-  const first = originalPoints[0]!
-  const last = originalPoints.at(-1)!
 
   const movesStartTerminal = spanStartIndex === 0 && first.pcb_port_id
   const movesEndTerminal =
@@ -4837,17 +4756,7 @@ export const isBetterDrcSnapshot = (
   )
 }
 
-type DrcCorrectionVariation =
-  | { kind: "direct" }
-  | { kind: "magnitude"; saturationScale: number }
-  | { kind: "signed" }
-
-type DrcErrorCorrection = {
-  changed: boolean
-  variation: DrcCorrectionVariation
-}
-
-const applyDrcErrorCorrection = (
+export const applyDrcErrorForces = (
   srj: SimpleRouteJson,
   routes: MutableRoute[],
   errors: Array<Record<string, unknown>>,
@@ -4858,21 +4767,8 @@ const applyDrcErrorCorrection = (
   enableSameNetViaCanonicalization = false,
   allowSharedViaSiteMove = true,
   enableTraceViaOwnerTargeting = false,
-): DrcErrorCorrection => {
+) => {
   let changed = false
-  let variation: DrcCorrectionVariation = { kind: "direct" }
-  let magnitudeOperationCount = 0
-  const includeMagnitudeOperation = (saturationScale: number): void => {
-    magnitudeOperationCount += 1
-    if (variation.kind === "signed") return
-    // Sequential corrections can change one another's required displacement.
-    // Only a single primitive has a fixed saturation point for this input.
-    variation = {
-      kind: "magnitude",
-      saturationScale:
-        magnitudeOperationCount === 1 ? saturationScale : Infinity,
-    }
-  }
   const vias = collectViaNodes(routes)
   const segments = collectSegments(routes)
 
@@ -4909,23 +4805,6 @@ const applyDrcErrorCorrection = (
         const isCanonicalViaPairError =
           enableCanonicalPairRepairs &&
           getDrcErrorType(error) === "pcb_via_clearance_error"
-        if (!shouldCanonicalizeSameNetViaPair) {
-          const [left, right] = nearestViaPair
-          const movableCount = Number(left.movable) + Number(right.movable)
-          const penetration =
-            left.radius +
-            right.radius +
-            PREFERRED_VIA_TO_VIA_CLEARANCE +
-            CLEARANCE_SLACK -
-            Math.hypot(left.x - right.x, left.y - right.y)
-          if (movableCount > 0) {
-            includeMagnitudeOperation(
-              Math.max(0, penetration) /
-                movableCount /
-                VIA_PAIR_REPAIR_MAX_MOVE,
-            )
-          }
-        }
         changed =
           (shouldCanonicalizeSameNetViaPair
             ? canonicalizeSameNetViaPair(
@@ -5057,16 +4936,6 @@ const applyDrcErrorCorrection = (
         (isExactViaTraceError ||
           Math.hypot(nearestVia.x - center.x, nearestVia.y - center.y) < 0.45)
       ) {
-        const projection = pointToSegmentProjection(nearestVia, nearestSegment)
-        const penetration =
-          nearestVia.radius +
-          nearestSegment.radius +
-          (RELAXED_DRC_OPTIONS.traceClearance ?? 0.1) +
-          CLEARANCE_SLACK -
-          Math.hypot(nearestVia.x - projection.x, nearestVia.y - projection.y)
-        includeMagnitudeOperation(
-          Math.max(0, penetration) / TRACE_PAD_REPAIR_MAX_MOVE,
-        )
         const pushedViaSegment = pushViaSegmentPair(
           routes,
           nearestVia,
@@ -5096,25 +4965,6 @@ const applyDrcErrorCorrection = (
               nearestSegment,
               srj.layerCount,
             )))
-      if (shouldUseObstacleMove) {
-        const requiredDistance =
-          nearestSegment.radius +
-          getTraceToPadEdgeClearance(srj) +
-          CLEARANCE_SLACK
-        const repulsion = getSegmentRectRepulsion(
-          nearestSegment,
-          nearestObstacle!,
-          requiredDistance,
-        )
-        includeMagnitudeOperation(
-          repulsion
-            ? (repulsion.penetration + CLEARANCE_SLACK) /
-                TRACE_PAD_REPAIR_MAX_MOVE
-            : 0,
-        )
-      } else {
-        variation = { kind: "signed" }
-      }
       const movedSegment = shouldUseObstacleMove
         ? moveSegmentAwayFromObstacle(
             routes,
@@ -5146,56 +4996,5 @@ const applyDrcErrorCorrection = (
     }
   }
 
-  return { changed, variation }
-}
-
-export const applyDrcErrorForces = (
-  ...args: Parameters<typeof applyDrcErrorCorrection>
-): boolean => applyDrcErrorCorrection(...args).changed
-
-/** Enumerates the physical degrees of freedom of the selected correction. */
-export function* getDrcErrorForceCandidates(
-  srj: SimpleRouteJson,
-  routes: HighDensityRoute[],
-  error: Record<string, unknown>,
-  traceRouteIndexById: Map<string, number>,
-  scales: readonly number[],
-  connMap?: ConnectivityMap,
-  enableSameNetViaCanonicalization = false,
-  allowSharedViaSiteMove = true,
-  enableTraceViaOwnerTargeting = false,
-): Generator<HighDensityRoute[]> {
-  const attemptedCorrections: Array<{
-    scale: number
-    variation: DrcCorrectionVariation
-  }> = []
-  for (const scale of scales) {
-    const correctionAlreadyGenerated = attemptedCorrections.some(
-      ({ scale: previousScale, variation }) => {
-        if (variation.kind === "direct") return true
-        if (variation.kind === "signed") return scale === previousScale
-        return (
-          Math.min(Math.abs(scale), variation.saturationScale) ===
-          Math.min(Math.abs(previousScale), variation.saturationScale)
-        )
-      },
-    )
-    if (correctionAlreadyGenerated) continue
-
-    const candidateRoutes = cloneRoutes(routes)
-    const correction = applyDrcErrorCorrection(
-      srj,
-      candidateRoutes,
-      [error],
-      traceRouteIndexById,
-      scale,
-      connMap,
-      true,
-      enableSameNetViaCanonicalization,
-      allowSharedViaSiteMove,
-      enableTraceViaOwnerTargeting,
-    )
-    attemptedCorrections.push({ scale, variation: correction.variation })
-    if (correction.changed) yield materializeRoutes(candidateRoutes)
-  }
+  return changed
 }
