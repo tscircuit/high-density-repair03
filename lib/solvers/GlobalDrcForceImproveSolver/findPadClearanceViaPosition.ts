@@ -7,7 +7,18 @@ import {
   getSegmentIntersection,
   isPointInsideBounds,
   pointToSegmentClosestPoint,
+  pointToBoundsDistance,
+  range,
 } from "@tscircuit/math-utils"
+import {
+  applyToPoint,
+  applyToPoints,
+  compose,
+  inverse,
+  type Matrix,
+  rotateDEG,
+  translate,
+} from "transformation-matrix"
 import type { ConnectivityMap } from "circuit-json-to-connectivity-map"
 import type { SimpleRouteJson } from "../../types"
 import type { HighDensityRoute } from "../../types/high-density-types"
@@ -24,8 +35,8 @@ type PadRegion = {
   center: Point
   halfWidth: number
   halfHeight: number
-  cos: number
-  sin: number
+  localToWorld: Matrix
+  worldToLocal: Matrix
   circular: boolean
   clearance: number
   bounds: Bounds
@@ -40,12 +51,12 @@ const distanceToPad = (point: Point, pad: PadRegion) => {
   const dx = point.x - pad.center.x
   const dy = point.y - pad.center.y
   if (pad.circular) return Math.max(0, Math.hypot(dx, dy) - pad.halfWidth)
-  const x = dx * pad.cos + dy * pad.sin
-  const y = -dx * pad.sin + dy * pad.cos
-  return Math.hypot(
-    Math.max(0, Math.abs(x) - pad.halfWidth),
-    Math.max(0, Math.abs(y) - pad.halfHeight),
-  )
+  return pointToBoundsDistance(applyToPoint(pad.worldToLocal, point), {
+    minX: -pad.halfWidth,
+    maxX: pad.halfWidth,
+    minY: -pad.halfHeight,
+    maxY: pad.halfHeight,
+  })
 }
 
 const createLine = (start: Point, end: Point): Line => ({
@@ -71,10 +82,8 @@ const getPadBoundaries = (pad: PadRegion): Boundary[] => {
   // cannot turn a geometrically valid new via into a clearance violation.
   const margin = pad.clearance + POSITION_EPSILON
   if (pad.circular) return [createCircle(pad.center, pad.halfWidth + margin)]
-  const world = (x: number, y: number): Point => ({
-    x: pad.center.x + x * pad.cos - y * pad.sin,
-    y: pad.center.y + x * pad.sin + y * pad.cos,
-  })
+  const world = (x: number, y: number) =>
+    applyToPoint(pad.localToWorld, { x, y })
   const { halfWidth: w, halfHeight: h } = pad
   return [
     createLine(world(-w, -h - margin), world(w, -h - margin)),
@@ -177,7 +186,11 @@ const getPadRegions = (
   zLayers: readonly number[],
   connMap?: ConnectivityMap,
 ): PadRegion[] => {
-  const layers = new Set(zLayers.map((z) => mapZToLayerName(z, srj.layerCount)))
+  const layers = new Set(
+    range(Math.min(...zLayers), Math.max(...zLayers) + 1).map((z) =>
+      mapZToLayerName(z, srj.layerCount),
+    ),
+  )
   return srj.obstacles
     .filter(
       (obstacle) =>
@@ -188,15 +201,14 @@ const getPadRegions = (
       const hasRotation =
         typeof obstacle.ccwRotationDegrees === "number" &&
         Number.isFinite(obstacle.ccwRotationDegrees)
-      const angle = hasRotation
-        ? (obstacle.ccwRotationDegrees! * Math.PI) / 180
-        : 0
       const circular =
         !hasRotation &&
         obstacle.layers.length > 1 &&
         Math.abs(obstacle.width - obstacle.height) < 0.001
-      const cos = Math.cos(angle)
-      const sin = Math.sin(angle)
+      const localToWorld = compose(
+        translate(obstacle.center.x, obstacle.center.y),
+        rotateDEG(hasRotation ? obstacle.ccwRotationDegrees! : 0),
+      )
       const halfWidth = circular
         ? Math.max(obstacle.width, obstacle.height) / 2
         : obstacle.width / 2
@@ -206,46 +218,32 @@ const getPadRegions = (
         obstacleSharesNet(route.connectionName, obstacle, connMap)
       const clearance =
         viaRadius + (sameNet ? 0 : getViaEdgeToPadEdgeClearance(srj))
-      const extentX =
-        Math.abs(cos) * halfWidth +
-        Math.abs(sin) * halfHeight +
-        clearance +
-        POSITION_EPSILON
-      const extentY =
-        Math.abs(sin) * halfWidth +
-        Math.abs(cos) * halfHeight +
-        clearance +
-        POSITION_EPSILON
+      const bounds = getBoundsFromPoints(
+        applyToPoints(localToWorld, [
+          { x: -halfWidth, y: -halfHeight },
+          { x: halfWidth, y: -halfHeight },
+          { x: halfWidth, y: halfHeight },
+          { x: -halfWidth, y: halfHeight },
+        ]),
+      )!
+      const margin = clearance + POSITION_EPSILON
       return {
         center: obstacle.center,
         halfWidth,
         halfHeight,
-        cos,
-        sin,
+        localToWorld,
+        worldToLocal: inverse(localToWorld),
         circular,
         clearance,
         bounds: {
-          minX: obstacle.center.x - extentX,
-          maxX: obstacle.center.x + extentX,
-          minY: obstacle.center.y - extentY,
-          maxY: obstacle.center.y + extentY,
+          minX: bounds.minX - margin,
+          maxX: bounds.maxX + margin,
+          minY: bounds.minY - margin,
+          maxY: bounds.maxY + margin,
         },
       }
     })
 }
-
-/** Checks pad copper on newly occupied layers of a stationary transition. */
-export const isViaPositionClearOfPads = (
-  srj: SimpleRouteJson,
-  route: HighDensityRoute,
-  point: Point,
-  viaRadius: number,
-  zLayers: readonly number[],
-  connMap?: ConnectivityMap,
-): boolean =>
-  getPadRegions(srj, route, viaRadius, zLayers, connMap).every(
-    (pad) => distanceToPad(point, pad) >= pad.clearance,
-  )
 
 /**
  * Places a newly constructed via outside pad copper and foreign-net

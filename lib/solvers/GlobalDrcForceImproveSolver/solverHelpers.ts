@@ -46,10 +46,7 @@ import type { SimpleRouteJson, SimplifiedPcbTraces } from "../../types"
 import type { HighDensityRoute } from "../../types/high-density-types"
 import { convertHdRouteToSimplifiedRoute } from "../../utils/convertHdRouteToSimplifiedRoute"
 import { mapZToLayerName } from "../../utils/mapZToLayerName"
-import {
-  findPadClearanceViaPosition,
-  isViaPositionClearOfPads,
-} from "./findPadClearanceViaPosition"
+import { findPadClearanceViaPosition } from "./findPadClearanceViaPosition"
 
 const cloneRoute = (route: HighDensityRoute): MutableRoute => ({
   ...route,
@@ -3445,9 +3442,9 @@ const appendDistinctRoutePoint = (
 export type SafeTraceLayerMoveSpanExpansion = number | "full"
 
 /**
- * Moves a span containing the reported conflict onto another layer. Existing
- * layer transitions stay at their coordinates, and new transitions are
- * placed outside pad clearance regions before the route is assembled. The
+ * Moves a span containing the reported conflict onto another layer. Layer
+ * transitions inside the route stay at their existing coordinates;
+ * transitions at connected terminals are moved fully outside their pads. The
  * caller scores every candidate against full-board DRC.
  */
 export const applySafeTraceLayerMoveForError = (
@@ -3459,6 +3456,7 @@ export const applySafeTraceLayerMoveForError = (
   spanExpansion: SafeTraceLayerMoveSpanExpansion,
   connMap?: ConnectivityMap,
   directionVariant = 0,
+  adjustViaClearance = false,
 ) => {
   const errorType = getDrcErrorType(error)
   if (
@@ -3518,68 +3516,14 @@ export const applySafeTraceLayerMoveForError = (
   const movesStartTerminal = spanStartIndex === 0 && first.pcb_port_id
   const movesEndTerminal =
     spanEndIndex === originalPoints.length - 1 && last.pcb_port_id
-  const hasExistingTransition = (
-    pointIndex: number,
-    direction: -1 | 1,
-  ): boolean => {
-    const position = originalPoints[pointIndex]!
-    for (
-      let index = pointIndex + direction;
-      index >= 0 && index < originalPoints.length;
-      index += direction
-    ) {
-      const point = originalPoints[index]!
-      if (!areSameXY(point, position)) break
-      if (point.z !== position.z) return true
-    }
-    return false
-  }
-  const spanStart = originalPoints[spanStartIndex]!
-  const startsAtExistingTransition = hasExistingTransition(spanStartIndex, -1)
-  const spanEnd = originalPoints[spanEndIndex]!
-  const endsAtExistingTransition = hasExistingTransition(spanEndIndex, 1)
 
-  const viaRadius = (route.viaDiameter ?? srj.minViaDiameter ?? 0.3) / 2
-  const canReuseTransition = (pointIndex: number) => {
-    const position = originalPoints[pointIndex]!
-    let firstPointIndex = pointIndex
-    while (
-      firstPointIndex > 0 &&
-      areSameXY(originalPoints[firstPointIndex - 1]!, position)
-    ) {
-      firstPointIndex -= 1
-    }
-    for (
-      let index = firstPointIndex;
-      index < originalPoints.length;
-      index += 1
-    ) {
-      const point = originalPoints[index]!
-      if (!areSameXY(point, position)) break
-      if (point.z === targetZ) return true
-    }
-    // Existing attachments stay fixed, but extending a via to a new layer
-    // requires that its copper also fits on that layer.
-    return isViaPositionClearOfPads(
-      srj,
-      route,
-      position,
-      viaRadius,
-      [targetZ],
-      connMap,
-    )
-  }
-  if (
-    (startsAtExistingTransition && !canReuseTransition(spanStartIndex)) ||
-    (endsAtExistingTransition && !canReuseTransition(spanEndIndex))
-  ) {
-    return false
-  }
+  const viaRadius = route.viaDiameter / 2
   const rotationPair =
     TERMINAL_ESCAPE_ROTATION_PAIRS[
       directionVariant % SAFE_TRACE_LAYER_DIRECTION_VARIANT_COUNT
     ]!
 
+  let relocatedVia = false
   const getTerminalEscape = (endpointSide: "start" | "end") => {
     const endpoint = endpointSide === "start" ? first : last
     const pad = getRouteEndpointPad(srj, route, endpoint, connMap)
@@ -3593,82 +3537,81 @@ export const applySafeTraceLayerMoveForError = (
       rotateDirection(tangent, rotation),
       viaRadius,
     )
-    // This variant describes a terminal escape ray. If it reaches the board
-    // edge before clearing its own pad, it cannot supply a via on that ray.
     if (
       !escape ||
-      !isViaInsideBounds(
-        escape,
-        viaRadius + (srj.minBoardEdgeClearance ?? 0),
-        srj.bounds,
-      )
+      !isViaInsideBounds(escape, viaRadius, srj.bounds) ||
+      getPointToObstacleDistance(escape, pad) + POSITION_EPSILON < viaRadius
     ) {
       return undefined
     }
-    return escape
+    if (!adjustViaClearance) return escape
+    const clearEscape = findPadClearanceViaPosition(
+      srj,
+      route,
+      escape,
+      viaRadius,
+      [segment.z, targetZ],
+      connMap,
+    )
+    relocatedVia ||= clearEscape !== undefined && clearEscape !== escape
+    return clearEscape
   }
 
-  const preferredStart = movesStartTerminal
+  const startEscape = movesStartTerminal
     ? getTerminalEscape("start")
-    : spanStart
-  const preferredEnd = movesEndTerminal ? getTerminalEscape("end") : spanEnd
-  if (!preferredStart || !preferredEnd) return false
-  const startVia = startsAtExistingTransition
-    ? spanStart
-    : findPadClearanceViaPosition(
-        srj,
-        route,
-        preferredStart,
-        viaRadius,
-        [segment.z, targetZ],
-        connMap,
-      )
-  const endVia = endsAtExistingTransition
-    ? spanEnd
-    : findPadClearanceViaPosition(
-        srj,
-        route,
-        preferredEnd,
-        viaRadius,
-        [segment.z, targetZ],
-        connMap,
-      )
-  if (!startVia || !endVia) return false
-  let hasTargetLayerSpan = !areSameXY(startVia, endVia)
-  for (
-    let index = spanStartIndex + 1;
-    !hasTargetLayerSpan && index < spanEndIndex;
-    index += 1
+    : undefined
+  const endEscape = movesEndTerminal ? getTerminalEscape("end") : undefined
+  if (
+    (movesStartTerminal && !startEscape) ||
+    (movesEndTerminal && !endEscape) ||
+    (adjustViaClearance && !relocatedVia)
   ) {
-    hasTargetLayerSpan = !areSameXY(originalPoints[index]!, startVia)
+    return false
   }
-  if (!hasTargetLayerSpan) return false
 
   const movedRoute: MutableRoute["route"] = []
   for (let index = 0; index < spanStartIndex; index += 1) {
     appendDistinctRoutePoint(movedRoute, originalPoints[index]!)
   }
 
-  // An endpoint remains an anchor even when it has no port metadata.
-  if (spanStartIndex === 0) {
+  const spanStart = originalPoints[spanStartIndex]!
+  const startsAtExistingTransition =
+    spanStartIndex > 0 &&
+    areSameXY(originalPoints[spanStartIndex - 1]!, spanStart)
+  const spanEnd = originalPoints[spanEndIndex]!
+  const endsAtExistingTransition =
+    spanEndIndex < originalPoints.length - 1 &&
+    areSameXY(originalPoints[spanEndIndex + 1]!, spanEnd)
+
+  if (movesStartTerminal) {
     appendDistinctRoutePoint(movedRoute, first)
-  }
-  if (!startsAtExistingTransition) {
+    appendDistinctRoutePoint(movedRoute, {
+      ...first,
+      ...startEscape!,
+      pcb_port_id: undefined,
+    })
+    appendDistinctRoutePoint(movedRoute, {
+      ...first,
+      ...startEscape!,
+      z: targetZ,
+      pcb_port_id: undefined,
+    })
+  } else {
+    if (!startsAtExistingTransition) {
+      appendDistinctRoutePoint(movedRoute, {
+        ...spanStart,
+        pcb_port_id: undefined,
+      })
+    }
     appendDistinctRoutePoint(movedRoute, {
       ...spanStart,
-      ...startVia,
+      z: targetZ,
       pcb_port_id: undefined,
     })
   }
-  appendDistinctRoutePoint(movedRoute, {
-    ...spanStart,
-    ...startVia,
-    z: targetZ,
-    pcb_port_id: undefined,
-  })
 
   const firstMovedIndex = spanStartIndex + 1
-  const lastMovedIndex = spanEndIndex - 1
+  const lastMovedIndex = movesEndTerminal ? spanEndIndex - 1 : spanEndIndex
   for (let index = firstMovedIndex; index <= lastMovedIndex; index += 1) {
     appendDistinctRoutePoint(movedRoute, {
       ...originalPoints[index]!,
@@ -3677,21 +3620,24 @@ export const applySafeTraceLayerMoveForError = (
     })
   }
 
-  appendDistinctRoutePoint(movedRoute, {
-    ...spanEnd,
-    ...endVia,
-    z: targetZ,
-    pcb_port_id: undefined,
-  })
-  if (!endsAtExistingTransition) {
+  if (movesEndTerminal) {
     appendDistinctRoutePoint(movedRoute, {
-      ...spanEnd,
-      ...endVia,
+      ...last,
+      ...endEscape!,
+      z: targetZ,
       pcb_port_id: undefined,
     })
-  }
-  if (spanEndIndex === originalPoints.length - 1) {
+    appendDistinctRoutePoint(movedRoute, {
+      ...last,
+      ...endEscape!,
+      pcb_port_id: undefined,
+    })
     appendDistinctRoutePoint(movedRoute, last)
+  } else if (!endsAtExistingTransition) {
+    appendDistinctRoutePoint(movedRoute, {
+      ...spanEnd,
+      pcb_port_id: undefined,
+    })
   }
 
   for (
@@ -4449,7 +4395,6 @@ export const applyTraceLayerCorridorForError = (
   normalDirectionSign: -1 | 1,
   tangentDirectionSign: -1 | 1,
   reverseEndpointOffsets = false,
-  connMap?: ConnectivityMap,
 ) => {
   if (!Number.isInteger(targetZ) || targetZ < 0 || targetZ >= srj.layerCount) {
     return false
@@ -4513,64 +4458,15 @@ export const applyTraceLayerCorridorForError = (
     projectOntoTangent(start) + corridorPitch * 0.5 * tangentDirectionSign
   const endTangentPosition =
     projectOntoTangent(end) + corridorPitch * tangentDirectionSign
-  const viaRadius = (route.viaDiameter ?? srj.minViaDiameter ?? 0.3) / 2
-  const startViaPosition = findPadClearanceViaPosition(
-    srj,
-    route,
-    pointOnAxes(startTangentPosition, startNormalOffset, start.z),
-    viaRadius,
-    [start.z, targetZ],
-    connMap,
-  )
-  const endViaPosition = findPadClearanceViaPosition(
-    srj,
-    route,
-    pointOnAxes(endTangentPosition, endNormalOffset, start.z),
-    viaRadius,
-    [start.z, targetZ],
-    connMap,
-  )
-  if (!startViaPosition || !endViaPosition) return false
-  const rootConnectionName = getRootConnectionName(route)
-  const existingVias = collectViaNodes(
-    routes.filter((existingRoute) =>
-      sharesNet(
-        rootConnectionName,
-        getRootConnectionName(existingRoute),
-        connMap,
-      ),
-    ),
-    srj.minViaDiameter ?? 0.3,
-  ).filter(
-    (via) =>
-      via.radius === viaRadius &&
-      via.zLayers.includes(start.z) &&
-      via.zLayers.includes(targetZ),
-  )
-  const joinOverlappingViaCopper = (position: Point): Point => {
-    let nearestVia: ViaNode | undefined
-    let nearestDistance = Infinity
-    for (const via of existingVias) {
-      const distance = Math.hypot(via.x - position.x, via.y - position.y)
-      if (distance < via.radius + viaRadius && distance < nearestDistance) {
-        nearestVia = via
-        nearestDistance = distance
-      }
-    }
-    // Reuse the existing drilled site when the planned same-net copper
-    // overlaps it. Its attached routes and already occupied layers stay fixed.
-    return nearestVia ? { x: nearestVia.x, y: nearestVia.y } : position
-  }
-  const startVia = { ...joinOverlappingViaCopper(startViaPosition), z: start.z }
-  const endVia = { ...joinOverlappingViaCopper(endViaPosition), z: start.z }
-  if (areSameXY(startVia, endVia)) return false
+  const startVia = pointOnAxes(startTangentPosition, startNormalOffset, start.z)
+  const endVia = pointOnAxes(endTangentPosition, endNormalOffset, start.z)
   const corridorStart = pointOnAxes(
-    projectOntoTangent(startVia),
+    startTangentPosition,
     corridorPitch * 2,
     targetZ,
   )
   const corridorEnd = pointOnAxes(
-    projectOntoTangent(endVia),
+    endTangentPosition,
     corridorPitch * 2,
     targetZ,
   )
@@ -4586,6 +4482,7 @@ export const applyTraceLayerCorridorForError = (
   ]
 
   const boardEdgeClearance = srj.minBoardEdgeClearance ?? 0
+  const viaRadius = (route.viaDiameter ?? srj.minViaDiameter ?? 0.3) / 2
   const traceRadius = route.traceThickness / 2
   if (
     [startVia, endVia].some(

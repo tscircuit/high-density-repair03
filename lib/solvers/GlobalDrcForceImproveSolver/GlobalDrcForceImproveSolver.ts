@@ -391,8 +391,6 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   }
 
   private getViaIssueCount(snapshot: DrcSnapshot) {
-    // Via-to-pad clearances are physical via constraints too. Excluding them
-    // lets a trace repair introduce illegal vias while appearing to improve DRC.
     return getViaDrcIssueCount(snapshot)
   }
 
@@ -729,48 +727,62 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
             ? Math.floor(layerVariant / this.srj.layerCount)
             : 0
           const changedRouteIndex = safeRouteIndexes[routeSide]!
-          const candidateRoutes = cloneRoutesForIndexes(bestRoutes, [
-            changedRouteIndex,
-          ])
-          const changed = applySafeTraceLayerMoveForError(
-            this.srj,
-            candidateRoutes,
-            error,
-            changedRouteIndex,
-            targetZ,
-            spanExpansion,
-            this.connMap,
-            directionVariant,
-          )
-          if (!changed) continue
+          // Compare both placements before accepting a direction. The helper
+          // skips the adjusted candidate when its via positions are unchanged.
+          let evaluatedDirection = false
+          for (const adjustViaClearance of [false, true]) {
+            const candidateRoutes = cloneRoutesForIndexes(bestRoutes, [
+              changedRouteIndex,
+            ])
+            const changed = applySafeTraceLayerMoveForError(
+              this.srj,
+              candidateRoutes,
+              error,
+              changedRouteIndex,
+              targetZ,
+              spanExpansion,
+              this.connMap,
+              directionVariant,
+              adjustViaClearance,
+            )
+            if (!changed) continue
 
-          const materializedCandidateRoutes = materializeRoutesForIndexes(
-            candidateRoutes,
-            [changedRouteIndex],
-          )
-          safeTraceLayerCandidateAttemptsThisStep += 1
-          this.candidateAttempts += 1
-          const candidateSnapshot = this.getSnapshot(
-            materializedCandidateRoutes,
-          )
-          const candidateViaIssueCount =
-            this.getViaIssueCount(candidateSnapshot)
-          const comparisonSnapshot =
-            bestTopologyCandidate?.snapshot ?? bestSnapshot
-          const comparisonViaIssueCount =
-            bestTopologyCandidate?.viaIssueCount ?? bestViaIssueCount
+            const materializedCandidateRoutes = materializeRoutesForIndexes(
+              candidateRoutes,
+              [changedRouteIndex],
+            )
+            evaluatedDirection = true
+            this.candidateAttempts += 1
+            const candidateSnapshot = this.getSnapshot(
+              materializedCandidateRoutes,
+            )
+            const candidateViaIssueCount =
+              this.getViaIssueCount(candidateSnapshot)
+            const comparisonSnapshot =
+              bestTopologyCandidate?.snapshot ?? bestSnapshot
+            const comparisonViaIssueCount =
+              bestTopologyCandidate?.viaIssueCount ?? bestViaIssueCount
 
-          if (
-            candidateViaIssueCount <= comparisonViaIssueCount &&
-            isDrcSnapshotCountBetter(candidateSnapshot, comparisonSnapshot)
-          ) {
-            bestTopologyCandidate = {
-              routes: materializedCandidateRoutes,
-              snapshot: candidateSnapshot,
-              viaIssueCount: candidateViaIssueCount,
-              usesViaInPad: false,
+            if (
+              candidateViaIssueCount <= comparisonViaIssueCount &&
+              (isDrcSnapshotCountBetter(
+                candidateSnapshot,
+                comparisonSnapshot,
+              ) ||
+                (bestTopologyCandidate !== undefined &&
+                  getRepairDrcIssueCount(candidateSnapshot) ===
+                    getRepairDrcIssueCount(comparisonSnapshot) &&
+                  candidateSnapshot.count < comparisonSnapshot.count))
+            ) {
+              bestTopologyCandidate = {
+                routes: materializedCandidateRoutes,
+                snapshot: candidateSnapshot,
+                viaIssueCount: candidateViaIssueCount,
+                usesViaInPad: false,
+              }
             }
           }
+          if (evaluatedDirection) safeTraceLayerCandidateAttemptsThisStep += 1
         }
         if (traceErrorKey) {
           this.safeTraceLayerCursorByErrorId.set(
@@ -814,7 +826,6 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
             variant.normalDirectionSign,
             variant.tangentDirectionSign,
             variant.reverseEndpointOffsets,
-            this.connMap,
           )
           if (!changed) continue
 
