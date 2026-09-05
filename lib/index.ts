@@ -4,8 +4,11 @@ export {
   setGlobalDrcForceImproveSolverVisualizer,
 } from "./solvers/GlobalDrcForceImproveSolver"
 export { AutoroutingDrcEngine } from "./drc"
-export { repairFinePitchPadEscapes } from "./solvers/GlobalDrcForceImproveSolver/repairFinePitchPadEscapes"
-export type { FinePitchPadEscapeResult } from "./solvers/GlobalDrcForceImproveSolver/repairFinePitchPadEscapes"
+export { FinePitchPadEscapeSolver } from "./solvers/GlobalDrcForceImproveSolver/FinePitchPadEscapeSolver"
+export type {
+  FinePitchPadEscapeResult,
+  FinePitchPadEscapeSolverParams,
+} from "./solvers/GlobalDrcForceImproveSolver/FinePitchPadEscapeSolver"
 export type {
   AutoroutingDrcEngineOptions,
   AutoroutingDrcEngineRunStats,

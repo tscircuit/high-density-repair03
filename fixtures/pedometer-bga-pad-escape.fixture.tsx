@@ -1,5 +1,7 @@
 import { InteractiveGraphics } from "graphics-debug/react"
 import { useMemo } from "react"
+import { GenericSolverDebugger } from "@tscircuit/solver-utils/react"
+import { FinePitchPadEscapeSolver } from "../lib"
 import {
   createPedometerPadEscapeRepro,
   getPedometerPadEscapeGraphics,
@@ -7,6 +9,10 @@ import {
 
 export default function PedometerBgaPadEscapeFixture() {
   const repro = useMemo(createPedometerPadEscapeRepro, [])
+  const stepSolver = useMemo(
+    () => new FinePitchPadEscapeSolver(repro.solver.params),
+    [repro],
+  )
   return (
     <div
       style={{
@@ -42,6 +48,8 @@ export default function PedometerBgaPadEscapeFixture() {
           </div>
         ))}
       </div>
+      <h3>Step through the shared repair</h3>
+      <GenericSolverDebugger solver={stepSolver} />
     </div>
   )
 }

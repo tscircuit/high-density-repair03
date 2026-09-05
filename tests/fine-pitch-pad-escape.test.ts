@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import {
   AutoroutingDrcEngine,
-  repairFinePitchPadEscapes,
+  FinePitchPadEscapeSolver,
   type DrcEvaluator,
   type HighDensityRoute,
   type SimpleRouteJson,
@@ -75,12 +75,14 @@ test("repairs a fine-pitch channel while preserving terminals, vias and fixed co
   expect(
     Array.isArray(initial) ? initial.length : initial.errors.length,
   ).toBeGreaterThan(0)
-  const result = repairFinePitchPadEscapes({
+  const solver = new FinePitchPadEscapeSolver({
     srj,
     routes: input,
     drcEvaluator,
     routeIndexByTraceId: new Map([["trace_0", 0]]),
   })
+  solver.solve()
+  const result = solver.getOutput()
   expect(result.remainingErrors).toHaveLength(0)
   expect(result.acceptedCandidateCount).toBeGreaterThan(0)
   expect(result.routes[0]!.route[0]).toEqual(input[0]!.route[0])
@@ -91,24 +93,28 @@ test("repairs a fine-pitch channel while preserving terminals, vias and fixed co
 })
 
 test("does not repair a trace omitted from the movable trace map", () => {
-  const result = repairFinePitchPadEscapes({
+  const solver = new FinePitchPadEscapeSolver({
     srj,
     routes,
     drcEvaluator,
     routeIndexByTraceId: new Map(),
   })
+  solver.solve()
+  const result = solver.getOutput()
   expect(result.routes).toBe(routes)
   expect(result.attemptedCandidateCount).toBe(0)
   expect(result.remainingErrors.length).toBeGreaterThan(0)
 })
 
 test("does not run fine-pitch candidates without an explicit fine-pitch policy", () => {
-  const result = repairFinePitchPadEscapes({
+  const solver = new FinePitchPadEscapeSolver({
     srj: { ...srj, minTraceToPadEdgeClearance: undefined },
     routes,
     drcEvaluator,
     routeIndexByTraceId: new Map([["trace_0", 0]]),
   })
+  solver.solve()
+  const result = solver.getOutput()
   expect(result.routes).toBe(routes)
   expect(result.attemptedCandidateCount).toBe(0)
 })

@@ -12,6 +12,12 @@ The trace crosses `pcb_smtpad_34` with about -0.019 mm clearance against a
 required 0.05 mm. The shared repair moves the interior bends into the channel
 between pads, leaving the terminal positions and vias unchanged.
 
+The search runs in `FinePitchPadEscapeSolver`. Its constructor is inert;
+`step()` advances at most one DRC evaluation/candidate, and `getOutput()` is
+available after completion. The fixture includes a GenericSolverDebugger for
+pausing, stepping, and animating the search. The former bulk repair helper is
+replaced by this solver, not called from inside a single giant step.
+
 ## Visual reproduction
 
 Run `bun install` and `bun start`, then select `pedometer-bga-pad-escape` in

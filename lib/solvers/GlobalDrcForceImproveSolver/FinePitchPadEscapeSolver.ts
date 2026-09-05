@@ -1,3 +1,5 @@
+import { BaseSolver } from "@tscircuit/solver-utils"
+import type { GraphicsObject } from "graphics-debug"
 import type { SimpleRouteJson } from "../../types"
 import type { HighDensityRoute } from "../../types/high-density-types"
 import { mapZToLayerName } from "../../utils/mapZToLayerName"
@@ -20,6 +22,13 @@ export type FinePitchPadEscapeResult = {
   attemptedCandidateCount: number
   acceptedCandidateCount: number
   remainingErrors: DrcError[]
+}
+
+export type FinePitchPadEscapeSolverParams = {
+  srj: PadEscapeBoard
+  routes: HighDensityRoute[]
+  routeIndexByTraceId: ReadonlyMap<string, number>
+  drcEvaluator: DrcEvaluator
 }
 
 const evaluateErrors = (
@@ -258,104 +267,161 @@ const getFinePitchChannelAlignment = ({
  * evaluator must include all fixed copper when scoring each candidate.
  * Endpoints, port points, and via sites remain fixed.
  */
-export const repairFinePitchPadEscapes = ({
-  srj,
-  routes,
-  routeIndexByTraceId,
-  drcEvaluator,
-}: {
-  srj: PadEscapeBoard
-  routes: HighDensityRoute[]
-  routeIndexByTraceId: ReadonlyMap<string, number>
-  drcEvaluator: DrcEvaluator
-}): FinePitchPadEscapeResult => {
-  let currentRoutes = routes
-  let currentErrors = evaluateErrors(drcEvaluator, routes)
-  let attemptedCandidateCount = 0
-  let acceptedCandidateCount = 0
-  // Fine-pitch BGA escapes can contain several short points between the pad
-  // terminal and the first open routing channel. Moving only the terminal
-  // inside its own pad cannot clear a neighboring pad in that geometry, so
-  // shift the nearby non-via points as one connected detour and retain only a
-  // whole-board DRC improvement.
-  if (usesFinePitchPadClearance(srj)) {
-    for (
-      let pass = 0;
-      pass < MAX_LOCAL_PAD_DETOUR_PASSES && currentErrors.length > 0;
-      pass++
-    ) {
-      let acceptedOnPass = false
-      for (const error of currentErrors.filter(isObstacleTraceError)) {
-        if (typeof error.pcb_trace_id !== "string") continue
-        const routeIndex = routeIndexByTraceId.get(error.pcb_trace_id)
-        const conflictingObstacle = getErrorObstacle(srj, error)
-        if (routeIndex === undefined || !conflictingObstacle) continue
-        const route = currentRoutes[routeIndex]!
-        const nearestPoint = route.route.reduce<(typeof route.route)[number]>(
-          (nearest, point) =>
-            Math.hypot(
-              point.x - conflictingObstacle.center.x,
-              point.y - conflictingObstacle.center.y,
-            ) <
-            Math.hypot(
-              nearest.x - conflictingObstacle.center.x,
-              nearest.y - conflictingObstacle.center.y,
-            )
-              ? point
-              : nearest,
-          route.route[0]!,
-        )
-        const outwardAngle = Math.atan2(
-          nearestPoint.y - conflictingObstacle.center.y,
-          nearestPoint.x - conflictingObstacle.center.x,
-        )
-        let bestRoutes = currentRoutes
-        let bestErrors = currentErrors
-        const channelAlignment = getFinePitchChannelAlignment({
-          srj,
-          route,
-          conflictingObstacle,
-          nearestPoint,
-        })
-        if (channelAlignment) {
-          for (const pointWindowRadius of DETOUR_POINT_WINDOW_RADII) {
-            const candidateRoutes = createLocalPadDetourCandidate({
-              routes: currentRoutes,
-              routeIndex,
-              conflictingObstacle,
-              pointWindowRadius,
-              bounds: srj.bounds,
-              layerCount: srj.layerCount,
-              traceClearance: srj.minTraceToPadEdgeClearance ?? 0.1,
-              transformPoint: (point) => ({
-                x:
-                  channelAlignment.axis === "x"
-                    ? channelAlignment.coordinate
-                    : point.x,
-                y:
-                  channelAlignment.axis === "y"
-                    ? channelAlignment.coordinate
-                    : point.y,
-              }),
-            })
-            if (!candidateRoutes) continue
-            attemptedCandidateCount++
-            const candidateErrors = evaluateErrors(
-              drcEvaluator,
-              candidateRoutes,
-            )
-            if (isBetter(candidateErrors, bestErrors)) {
-              bestRoutes = candidateRoutes
-              bestErrors = candidateErrors
-            }
-            if (bestErrors.length === 0) break
-          }
-        }
-        for (const pointWindowRadius of DETOUR_POINT_WINDOW_RADII) {
-          if (bestErrors.length === 0) break
-          for (const distance of DETOUR_DISTANCE_CANDIDATES) {
-            for (const angleOffset of DETOUR_ANGLE_OFFSETS) {
-              const angle = outwardAngle + angleOffset
+export class FinePitchPadEscapeSolver extends BaseSolver {
+  private readonly search: Generator<
+    FinePitchPadEscapeResult,
+    FinePitchPadEscapeResult
+  >
+  private currentResult: FinePitchPadEscapeResult
+
+  constructor(readonly params: FinePitchPadEscapeSolverParams) {
+    super()
+    this.currentResult = {
+      routes: params.routes,
+      attemptedCandidateCount: 0,
+      acceptedCandidateCount: 0,
+      remainingErrors: [],
+    }
+    // Creating the iterator does no search or DRC work. Only _step advances it.
+    this.search = this.searchCandidates()
+  }
+
+  override getConstructorParams(): [FinePitchPadEscapeSolverParams] {
+    return [this.params]
+  }
+
+  override _step(): void {
+    const next = this.search.next()
+    this.currentResult = next.value
+    this.stats = {
+      attemptedCandidateCount: next.value.attemptedCandidateCount,
+      acceptedCandidateCount: next.value.acceptedCandidateCount,
+      remainingDrcIssueCount: next.value.remainingErrors.length,
+    }
+    this.progress = Math.min(0.99, this.iterations / this.MAX_ITERATIONS)
+    if (next.done) {
+      this.solved = true
+      this.progress = 1
+    }
+  }
+
+  override getOutput(): FinePitchPadEscapeResult {
+    if (!this.solved) {
+      throw new Error(
+        "FinePitchPadEscapeSolver: output requested before solved",
+      )
+    }
+    return this.currentResult
+  }
+
+  override visualize(): GraphicsObject {
+    return {
+      title: "Fine-pitch pad escape repair",
+      coordinateSystem: "cartesian",
+      rects: this.params.srj.obstacles.map((obstacle) => ({
+        center: obstacle.center,
+        width: obstacle.width,
+        height: obstacle.height,
+        fill: "rgba(255, 0, 0, 0.2)",
+        label: obstacle.obstacleId ?? obstacle.connectedTo[0],
+      })),
+      lines: this.currentResult.routes.flatMap((route) =>
+        route.route.slice(1).flatMap((point, index) => {
+          const previous = route.route[index]!
+          if (point.z !== previous.z) return []
+          return [
+            {
+              points: [previous, point],
+              strokeWidth: route.traceThickness,
+              strokeColor: point.z === 0 ? "red" : "rgba(0, 0, 255, 0.4)",
+              strokeDash: point.z === 0 ? undefined : [0.12, 0.08],
+              layer: `z${point.z}`,
+              label: route.connectionName,
+            },
+          ]
+        }),
+      ),
+      circles: this.currentResult.routes.flatMap((route) =>
+        route.vias.map((via) => ({
+          center: via,
+          radius: route.viaDiameter / 2,
+          fill: "blue",
+        })),
+      ),
+    }
+  }
+
+  private *searchCandidates(): Generator<
+    FinePitchPadEscapeResult,
+    FinePitchPadEscapeResult
+  > {
+    const { srj, routes, routeIndexByTraceId, drcEvaluator } = this.params
+    let currentRoutes = routes
+    let currentErrors = evaluateErrors(drcEvaluator, routes)
+    let attemptedCandidateCount = 0
+    let acceptedCandidateCount = 0
+    const getResult = (): FinePitchPadEscapeResult => ({
+      routes: currentRoutes,
+      attemptedCandidateCount,
+      acceptedCandidateCount,
+      remainingErrors: currentErrors,
+    })
+    const candidatesPerError =
+      DETOUR_POINT_WINDOW_RADII.length *
+      (1 + DETOUR_DISTANCE_CANDIDATES.length * DETOUR_ANGLE_OFFSETS.length)
+    this.MAX_ITERATIONS =
+      3 +
+      MAX_LOCAL_PAD_DETOUR_PASSES *
+        Math.max(1, currentErrors.length) *
+        (candidatesPerError + 1)
+    yield getResult()
+    // Fine-pitch BGA escapes can contain several short points between the pad
+    // terminal and the first open routing channel. Moving only the terminal
+    // inside its own pad cannot clear a neighboring pad in that geometry, so
+    // shift the nearby non-via points as one connected detour and retain only a
+    // whole-board DRC improvement.
+    if (usesFinePitchPadClearance(srj)) {
+      for (
+        let pass = 0;
+        pass < MAX_LOCAL_PAD_DETOUR_PASSES && currentErrors.length > 0;
+        pass++
+      ) {
+        let acceptedOnPass = false
+        for (const error of currentErrors.filter(isObstacleTraceError)) {
+          yield getResult()
+          if (typeof error.pcb_trace_id !== "string") continue
+          const routeIndex = routeIndexByTraceId.get(error.pcb_trace_id)
+          const conflictingObstacle = getErrorObstacle(srj, error)
+          if (routeIndex === undefined || !conflictingObstacle) continue
+          const route = currentRoutes[routeIndex]!
+          const nearestPoint = route.route.reduce<(typeof route.route)[number]>(
+            (nearest, point) =>
+              Math.hypot(
+                point.x - conflictingObstacle.center.x,
+                point.y - conflictingObstacle.center.y,
+              ) <
+              Math.hypot(
+                nearest.x - conflictingObstacle.center.x,
+                nearest.y - conflictingObstacle.center.y,
+              )
+                ? point
+                : nearest,
+            route.route[0]!,
+          )
+          const outwardAngle = Math.atan2(
+            nearestPoint.y - conflictingObstacle.center.y,
+            nearestPoint.x - conflictingObstacle.center.x,
+          )
+          let bestRoutes = currentRoutes
+          let bestErrors = currentErrors
+          const channelAlignment = getFinePitchChannelAlignment({
+            srj,
+            route,
+            conflictingObstacle,
+            nearestPoint,
+          })
+          if (channelAlignment) {
+            for (const pointWindowRadius of DETOUR_POINT_WINDOW_RADII) {
               const candidateRoutes = createLocalPadDetourCandidate({
                 routes: currentRoutes,
                 routeIndex,
@@ -365,11 +431,20 @@ export const repairFinePitchPadEscapes = ({
                 layerCount: srj.layerCount,
                 traceClearance: srj.minTraceToPadEdgeClearance ?? 0.1,
                 transformPoint: (point) => ({
-                  x: point.x + Math.cos(angle) * distance,
-                  y: point.y + Math.sin(angle) * distance,
+                  x:
+                    channelAlignment.axis === "x"
+                      ? channelAlignment.coordinate
+                      : point.x,
+                  y:
+                    channelAlignment.axis === "y"
+                      ? channelAlignment.coordinate
+                      : point.y,
                 }),
               })
-              if (!candidateRoutes) continue
+              if (!candidateRoutes) {
+                yield getResult()
+                continue
+              }
               attemptedCandidateCount++
               const candidateErrors = evaluateErrors(
                 drcEvaluator,
@@ -379,28 +454,60 @@ export const repairFinePitchPadEscapes = ({
                 bestRoutes = candidateRoutes
                 bestErrors = candidateErrors
               }
+              yield getResult()
+              if (bestErrors.length === 0) break
+            }
+          }
+          for (const pointWindowRadius of DETOUR_POINT_WINDOW_RADII) {
+            if (bestErrors.length === 0) break
+            for (const distance of DETOUR_DISTANCE_CANDIDATES) {
+              for (const angleOffset of DETOUR_ANGLE_OFFSETS) {
+                const angle = outwardAngle + angleOffset
+                const candidateRoutes = createLocalPadDetourCandidate({
+                  routes: currentRoutes,
+                  routeIndex,
+                  conflictingObstacle,
+                  pointWindowRadius,
+                  bounds: srj.bounds,
+                  layerCount: srj.layerCount,
+                  traceClearance: srj.minTraceToPadEdgeClearance ?? 0.1,
+                  transformPoint: (point) => ({
+                    x: point.x + Math.cos(angle) * distance,
+                    y: point.y + Math.sin(angle) * distance,
+                  }),
+                })
+                if (!candidateRoutes) {
+                  yield getResult()
+                  continue
+                }
+                attemptedCandidateCount++
+                const candidateErrors = evaluateErrors(
+                  drcEvaluator,
+                  candidateRoutes,
+                )
+                if (isBetter(candidateErrors, bestErrors)) {
+                  bestRoutes = candidateRoutes
+                  bestErrors = candidateErrors
+                }
+                yield getResult()
+                if (bestErrors.length === 0) break
+              }
               if (bestErrors.length === 0) break
             }
             if (bestErrors.length === 0) break
           }
-          if (bestErrors.length === 0) break
+          if (bestRoutes !== currentRoutes) {
+            currentRoutes = bestRoutes
+            currentErrors = bestErrors
+            acceptedCandidateCount++
+            acceptedOnPass = true
+          }
+          if (currentErrors.length === 0) break
         }
-        if (bestRoutes !== currentRoutes) {
-          currentRoutes = bestRoutes
-          currentErrors = bestErrors
-          acceptedCandidateCount++
-          acceptedOnPass = true
-        }
-        if (currentErrors.length === 0) break
+        if (!acceptedOnPass) break
       }
-      if (!acceptedOnPass) break
     }
-  }
 
-  return {
-    routes: currentRoutes,
-    attemptedCandidateCount,
-    acceptedCandidateCount,
-    remainingErrors: currentErrors,
+    return getResult()
   }
 }

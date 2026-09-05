@@ -5,7 +5,7 @@ import {
 } from "graphics-debug"
 import {
   AutoroutingDrcEngine,
-  repairFinePitchPadEscapes,
+  FinePitchPadEscapeSolver,
   type DrcEvaluator,
   type HighDensityRoute,
   type SimpleRouteJson,
@@ -37,13 +37,15 @@ export const createPedometerPadEscapeRepro = () => {
     )
   const initial = drcEvaluator({ hdRoutes: routes, traces: [] })
   const initialErrors = Array.isArray(initial) ? initial : initial.errors
-  const result = repairFinePitchPadEscapes({
+  const solver = new FinePitchPadEscapeSolver({
     srj,
     routes,
     drcEvaluator,
     routeIndexByTraceId: new Map([["trace_0", 0]]),
   })
-  return { srj, routes, initialErrors, result }
+  solver.solve()
+  const result = solver.getOutput()
+  return { srj, routes, initialErrors, result, solver }
 }
 
 type Repro = ReturnType<typeof createPedometerPadEscapeRepro>
