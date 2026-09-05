@@ -10,7 +10,7 @@ import { getDrcSnapshot } from "../lib/solvers/GlobalDrcForceImproveSolver/solve
 import { expectSrjRepairSnapshot } from "./fixtures/expectSrjRepairSnapshot"
 import input from "./fixtures/srj18-sample9-repair-input.json"
 
-test("repairs SRJ18 sample 9 with original pads and safe layer transitions", () => {
+test("repairs SRJ18 sample 9 with original pads and safe layer transitions", async () => {
   const { srj, hdRoutes } = structuredClone(input) as {
     srj: SimpleRouteJson
     hdRoutes: HighDensityRoute[]
@@ -47,5 +47,5 @@ test("repairs SRJ18 sample 9 with original pads and safe layer transitions", () 
   expect(
     getDrcSnapshot(srj, solver.getOutput(), undefined, connMap, engine).errors,
   ).toEqual([])
-  expectSrjRepairSnapshot(srj, hdRoutes, solver.getOutput(), import.meta.path)
+  await expectSrjRepairSnapshot(srj, hdRoutes, solver.getOutput(), import.meta.path)
 })

@@ -10,7 +10,7 @@ import {
 import { getDrcSnapshot } from "../lib/solvers/GlobalDrcForceImproveSolver/solverHelpers"
 import { expectSrjRepairSnapshot } from "./fixtures/expectSrjRepairSnapshot"
 
-test("repairs captured SRJ18 sample 5 without losing terminal connections", () => {
+test("repairs captured SRJ18 sample 5 without losing terminal connections", async () => {
   const { params } = JSON.parse(
     gunzipSync(
       readFileSync(
@@ -36,5 +36,5 @@ test("repairs captured SRJ18 sample 5 without losing terminal connections", () =
   expect(
     getDrcSnapshot(srj, solver.getOutput(), undefined, connMap, engine).errors,
   ).toEqual([])
-  expectSrjRepairSnapshot(srj, hdRoutes, solver.getOutput(), import.meta.path)
+  await expectSrjRepairSnapshot(srj, hdRoutes, solver.getOutput(), import.meta.path)
 })
