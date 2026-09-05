@@ -6,6 +6,14 @@ import { cloneRoutes } from "./solverHelpers"
 
 type Obstacle = SimpleRouteJson["obstacles"][number]
 type Point = { x: number; y: number }
+type PadEscapeBoard = Pick<
+  SimpleRouteJson,
+  | "bounds"
+  | "layerCount"
+  | "obstacles"
+  | "minTraceToPadEdgeClearance"
+  | "minViaEdgeToPadEdgeClearance"
+>
 
 export type FinePitchPadEscapeResult = {
   routes: HighDensityRoute[]
@@ -68,7 +76,7 @@ const isObstacleTraceError = (error: DrcError) => {
 }
 
 const getErrorObstacle = (
-  srj: SimpleRouteJson,
+  srj: PadEscapeBoard,
   error: DrcError,
 ): Obstacle | undefined => {
   return srj.obstacles.find((obstacle) => {
@@ -84,7 +92,7 @@ const getErrorObstacle = (
   })
 }
 
-const usesFinePitchPadClearance = (srj: SimpleRouteJson): boolean => {
+const usesFinePitchPadClearance = (srj: PadEscapeBoard): boolean => {
   const traceClearance = srj.minTraceToPadEdgeClearance
   const viaClearance = srj.minViaEdgeToPadEdgeClearance
   return (
@@ -192,7 +200,7 @@ const getFinePitchChannelAlignment = ({
   conflictingObstacle,
   nearestPoint,
 }: {
-  srj: SimpleRouteJson
+  srj: PadEscapeBoard
   route: HighDensityRoute
   conflictingObstacle: Obstacle
   nearestPoint: Point & { z: number }
@@ -256,7 +264,7 @@ export const repairFinePitchPadEscapes = ({
   routeIndexByTraceId,
   drcEvaluator,
 }: {
-  srj: SimpleRouteJson
+  srj: PadEscapeBoard
   routes: HighDensityRoute[]
   routeIndexByTraceId: ReadonlyMap<string, number>
   drcEvaluator: DrcEvaluator
