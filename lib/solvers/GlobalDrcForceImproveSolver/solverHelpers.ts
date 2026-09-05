@@ -4100,8 +4100,8 @@ const getViaDisplacementTarget = (params: {
     (obstacle) =>
       !obstacle.isCopperPour &&
       !obstacleSharesNet(via.rootConnectionName, obstacle, connMap) &&
-      getObstacleZLayers(obstacle, srj.layerCount).some((z) =>
-        z >= minZ && z <= maxZ,
+      getObstacleZLayers(obstacle, srj.layerCount).some(
+        (z) => z >= minZ && z <= maxZ,
       ),
   )
   const blockingObstacles = foreignObstacles.filter((obstacle) =>
@@ -4213,11 +4213,7 @@ export const applyViaOnlyDisplacementForTraceError = (
   }
   const center = { x: centerRecord.x, y: centerRecord.y }
   const segments = collectSegments(routes)
-  const segment = getNearestSegment(
-    segments,
-    center,
-    expectedTraceRouteIndex,
-  )
+  const segment = getNearestSegment(segments, center, expectedTraceRouteIndex)
   const viaOwnerIds = Array.isArray(error.pcb_trace_ids)
     ? error.pcb_trace_ids.filter(
         (id): id is string =>
@@ -4272,8 +4268,7 @@ export const applyViaOnlyDisplacementForTraceError = (
         ? (segmentX / segmentLength) * fallbackSign
         : 0
 
-  const requiredTraceDistance =
-    via.radius + segment.radius + requiredClearance
+  const requiredTraceDistance = via.radius + segment.radius + requiredClearance
   const requiredObstacleDistance =
     via.radius + getViaEdgeToPadEdgeClearance(srj)! + CLEARANCE_SLACK
   const initialTarget = {

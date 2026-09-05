@@ -32,11 +32,7 @@ export const findTraceClearanceViaPositions = (
       (segment) =>
         segment.z >= minZ &&
         segment.z <= maxZ &&
-        !sharesNet(
-          via.rootConnectionName,
-          segment.rootConnectionName,
-          connMap,
-        ),
+        !sharesNet(via.rootConnectionName, segment.rootConnectionName, connMap),
     )
     .map((segment) => ({
       segment,
