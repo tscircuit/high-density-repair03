@@ -24,5 +24,3 @@ export type {
   SingleLayerConnectionPoint,
   SimpleRouteJson,
 } from "./solvers/GlobalDrcForceImproveSolver"
-
-export { getPhysicalViaLayers } from "./utils/getPhysicalViaLayers"
