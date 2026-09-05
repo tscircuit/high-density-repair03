@@ -476,7 +476,10 @@ function extractViasFromRoutes(
                 y: segment.y,
                 outer_diameter: viaDiameter,
                 hole_diameter: viaDiameter * 0.5,
-                layers: [segment.from_layer, segment.to_layer] as LayerName[],
+                layers: (segment.layers ?? [
+                  segment.from_layer,
+                  segment.to_layer,
+                ]) as LayerName[],
               })
               viaLocations.add(locationKey)
             }

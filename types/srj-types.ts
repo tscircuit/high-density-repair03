@@ -111,6 +111,8 @@ export interface SimplifiedPcbTrace {
         to_layer: string
         from_layer: string
         via_diameter?: number
+        /** Explicit occupied copper layers; omitted preserves legacy endpoints. */
+        layers?: string[]
       }
     | {
         route_type: "jumper"

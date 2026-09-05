@@ -615,7 +615,10 @@ export class AutoroutingDrcEngine {
           x: routePoint.x,
           y: routePoint.y,
           diameter: routePoint.via_diameter ?? this.srj.minViaDiameter ?? 0.3,
-          layers: [routePoint.from_layer, routePoint.to_layer],
+          layers: routePoint.layers ?? [
+            routePoint.from_layer,
+            routePoint.to_layer,
+          ],
         })
       }
     }
