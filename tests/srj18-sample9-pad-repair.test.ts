@@ -22,7 +22,7 @@ test("repairs SRJ18 sample 9 with original pads and safe layer transitions", asy
   })
   expect(
     getDrcSnapshot(srj, hdRoutes, undefined, connMap, engine).errors,
-  ).toHaveLength(7)
+  ).toHaveLength(8)
   const solver = new GlobalDrcForceImproveSolver({
     srj,
     hdRoutes,

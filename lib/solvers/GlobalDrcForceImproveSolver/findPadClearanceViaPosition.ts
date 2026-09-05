@@ -59,14 +59,14 @@ const distanceToPad = (point: Point, pad: PadRegion) => {
   })
 }
 
-const createLine = (start: Point, end: Point): Line => ({
+export const createLine = (start: Point, end: Point): Line => ({
   kind: "line",
   start,
   end,
   bounds: getBoundsFromPoints([start, end])!,
 })
 
-const createCircle = (center: Point, radius: number): Circle => ({
+export const createCircle = (center: Point, radius: number): Circle => ({
   kind: "circle",
   center,
   radius,
@@ -99,7 +99,7 @@ const getPadBoundaries = (pad: PadRegion): Boundary[] => {
   ]
 }
 
-const boundaryProjections = (point: Point, boundary: Boundary): Point[] => {
+export const boundaryProjections = (point: Point, boundary: Boundary): Point[] => {
   if (boundary.kind === "circle") {
     const dx = point.x - boundary.center.x
     const dy = point.y - boundary.center.y
@@ -143,7 +143,7 @@ const lineCircleIntersections = (line: Line, circle: Circle): Point[] => {
     .map((t) => ({ x: line.start.x + dx * t, y: line.start.y + dy * t }))
 }
 
-const boundaryIntersections = (left: Boundary, right: Boundary): Point[] => {
+export const boundaryIntersections = (left: Boundary, right: Boundary): Point[] => {
   if (left.kind === "line" && right.kind === "circle") {
     return lineCircleIntersections(left, right)
   }
