@@ -492,11 +492,15 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         this.params.connMap,
         this.autoroutingDrcEngine,
       )
+      // Match the inner solver's staged scoring: via-pad issues are handled
+      // by the following phase, while via-pair/trace collisions stay guarded.
       const inputViaIssueCount = getViaDrcIssueCount(
         this.safeTraceLayerInputSnapshot!,
+        false,
       )
       const safeTraceLayerViaIssueCount = getViaDrcIssueCount(
         safeTraceLayerSnapshot,
+        false,
       )
       this.safeTraceLayerPhaseAccepted =
         safeTraceLayerViaIssueCount <= inputViaIssueCount &&
@@ -506,6 +510,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
           this.safeTraceLayerInputSnapshot!.count,
           this.safeTraceLayerInputSnapshot!.issueScore,
           inputViaIssueCount,
+          this.safeTraceLayerInputSnapshot!,
         )
       const acceptedRoutes = this.safeTraceLayerPhaseAccepted
         ? safeTraceLayerRoutes
