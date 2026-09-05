@@ -5,6 +5,7 @@ import type { HighDensityRoute } from "../../types/high-density-types"
 import { mapZToLayerName } from "../../utils/mapZToLayerName"
 import type { DrcError, DrcEvaluator } from "./types"
 import { cloneRoutes } from "./solverHelpers"
+import { getTerminalViaEscapeCandidates } from "./getTerminalViaEscapeCandidates"
 
 type Obstacle = SimpleRouteJson["obstacles"][number]
 type Point = { x: number; y: number }
@@ -15,6 +16,7 @@ type PadEscapeBoard = Pick<
   | "obstacles"
   | "minTraceToPadEdgeClearance"
   | "minViaEdgeToPadEdgeClearance"
+  | "minBoardEdgeClearance"
 >
 
 export type FinePitchPadEscapeResult = {
@@ -265,7 +267,8 @@ const getFinePitchChannelAlignment = ({
  * Repair short interior bends near fine-pitch pads using a bounded channel and
  * radial search. Only routes in routeIndexByTraceId are movable; the caller's
  * evaluator must include all fixed copper when scoring each candidate.
- * Endpoints, port points, and via sites remain fixed.
+ * Endpoints and port points remain fixed. If local detours are insufficient,
+ * try shortening terminal escapes by relocating existing vias outside pads.
  */
 export class FinePitchPadEscapeSolver extends BaseSolver {
   private readonly search: Generator<
@@ -315,16 +318,24 @@ export class FinePitchPadEscapeSolver extends BaseSolver {
   }
 
   override visualize(): GraphicsObject {
+    const layerColors: Record<string, string> = {
+      top: "red",
+      bottom: "blue",
+      inner1: "green",
+      inner2: "#d4a000",
+    }
     return {
       title: "Fine-pitch pad escape repair",
       coordinateSystem: "cartesian",
-      rects: this.params.srj.obstacles.map((obstacle) => ({
-        center: obstacle.center,
-        width: obstacle.width,
-        height: obstacle.height,
-        fill: "rgba(255, 0, 0, 0.2)",
-        label: obstacle.obstacleId ?? obstacle.connectedTo[0],
-      })),
+      rects: this.params.srj.obstacles
+        .filter((obstacle) => obstacle.shape !== "circle")
+        .map((obstacle) => ({
+          center: obstacle.center,
+          width: obstacle.width,
+          height: obstacle.height,
+          fill: "rgba(255, 0, 0, 0.2)",
+          label: obstacle.obstacleId ?? obstacle.connectedTo[0],
+        })),
       lines: this.currentResult.routes.flatMap((route) =>
         route.route.slice(1).flatMap((point, index) => {
           const previous = route.route[index]!
@@ -333,7 +344,10 @@ export class FinePitchPadEscapeSolver extends BaseSolver {
             {
               points: [previous, point],
               strokeWidth: route.traceThickness,
-              strokeColor: point.z === 0 ? "red" : "rgba(0, 0, 255, 0.4)",
+              strokeColor:
+                layerColors[
+                  mapZToLayerName(point.z, this.params.srj.layerCount)
+                ],
               strokeDash: point.z === 0 ? undefined : [0.12, 0.08],
               layer: `z${point.z}`,
               label: route.connectionName,
@@ -341,13 +355,23 @@ export class FinePitchPadEscapeSolver extends BaseSolver {
           ]
         }),
       ),
-      circles: this.currentResult.routes.flatMap((route) =>
-        route.vias.map((via) => ({
-          center: via,
-          radius: route.viaDiameter / 2,
-          fill: "blue",
-        })),
-      ),
+      circles: [
+        ...this.params.srj.obstacles
+          .filter((obstacle) => obstacle.shape === "circle")
+          .map((obstacle) => ({
+            center: obstacle.center,
+            radius: Math.min(obstacle.width, obstacle.height) / 2,
+            fill: "rgba(255, 0, 0, 0.2)",
+            label: obstacle.obstacleId ?? obstacle.connectedTo[0],
+          })),
+        ...this.currentResult.routes.flatMap((route) =>
+          route.vias.map((via) => ({
+            center: via,
+            radius: route.viaDiameter / 2,
+            fill: "blue",
+          })),
+        ),
+      ],
     }
   }
 
@@ -508,6 +532,49 @@ export class FinePitchPadEscapeSolver extends BaseSolver {
       }
     }
 
+    if (usesFinePitchPadClearance(srj)) {
+      const visitedRouteIndexes = new Set<number>()
+      // Each route has at most two endpoints, 81 via sites, eight retained
+      // anchors, layerCount layers and five bridge shapes to evaluate.
+      this.MAX_ITERATIONS +=
+        currentErrors.length * 2 * 81 * 8 * srj.layerCount * 5 + 1
+      for (const error of currentErrors.filter(isObstacleTraceError)) {
+        if (typeof error.pcb_trace_id !== "string") continue
+        const routeIndex = routeIndexByTraceId.get(error.pcb_trace_id)
+        const conflictingObstacle = getErrorObstacle(srj, error)
+        if (
+          routeIndex === undefined ||
+          !conflictingObstacle ||
+          visitedRouteIndexes.has(routeIndex)
+        ) {
+          continue
+        }
+        let bestRoutes = currentRoutes
+        let bestErrors = currentErrors
+        for (const candidateRoutes of getTerminalViaEscapeCandidates({
+          srj,
+          routes: currentRoutes,
+          routeIndex,
+          conflictingObstacle,
+        })) {
+          visitedRouteIndexes.add(routeIndex)
+          attemptedCandidateCount++
+          const candidateErrors = evaluateErrors(drcEvaluator, candidateRoutes)
+          if (isBetter(candidateErrors, bestErrors)) {
+            bestRoutes = candidateRoutes
+            bestErrors = candidateErrors
+          }
+          yield getResult()
+          if (bestErrors.length === 0) break
+        }
+        if (bestRoutes !== currentRoutes) {
+          currentRoutes = bestRoutes
+          currentErrors = bestErrors
+          acceptedCandidateCount++
+        }
+        if (currentErrors.length === 0) break
+      }
+    }
     return getResult()
   }
 }

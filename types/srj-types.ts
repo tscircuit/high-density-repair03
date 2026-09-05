@@ -66,6 +66,8 @@ export interface Obstacle {
   /** Optional owner used to identify adjacent pads on the same component. */
   componentId?: string
   type: "rect"
+  /** Physical pad shape; width and height still describe its bounds. */
+  shape?: "rect" | "circle"
   layers: string[]
   zLayers?: number[]
   center: { x: number; y: number }
