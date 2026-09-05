@@ -44,7 +44,8 @@ test("checks via-to-pad clearance on intermediate layers only within the span", 
 
   const via = traces[0]!.route[0]!
   if (via.route_type !== "via") throw new Error("Expected a via")
-  via.layers = ["top", "inner1", "inner2"]
+  via.from_layer = "inner2"
+  via.to_layer = "top"
   expect(new AutoroutingDrcEngine(srj).evaluate(traces).errors).toEqual(errors)
   srj.obstacles[0]!.layers = ["bottom"]
   expect(new AutoroutingDrcEngine(srj).evaluate(traces).errors).toEqual([])
