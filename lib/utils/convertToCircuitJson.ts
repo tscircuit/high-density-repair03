@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { getPhysicalViaLayers } from "./getPhysicalViaLayers"
 import type { AnyCircuitElement, PcbTrace, PcbVia } from "circuit-json"
 import type { Obstacle, SimpleRouteJson, SimplifiedPcbTrace } from "../types"
 import type { HighDensityRoute } from "../types/high-density-types"
@@ -56,7 +57,8 @@ function convertHdRouteToCircuitJsonTraces(
   hdRoute: HighDensityRoute,
   baseId: string,
   connectionName: string,
-  width = 0.1,
+  width: number,
+  layerCount: number,
 ): PcbTrace[] {
   const traces: PcbTrace[] = []
 
@@ -75,7 +77,7 @@ function convertHdRouteToCircuitJsonTraces(
             x: point.x,
             y: point.y,
             width,
-            layer: mapZToLayerName(point.z, 2),
+            layer: mapZToLayerName(point.z, layerCount),
             ...(isFirstPoint && (point as any).pcb_port_id
               ? { start_pcb_port_id: (point as any).pcb_port_id }
               : {}),
@@ -148,7 +150,7 @@ function convertHdRouteToCircuitJsonTraces(
               x: point.x,
               y: point.y,
               width,
-              layer: mapZToLayerName(point.z, 2),
+              layer: mapZToLayerName(point.z, layerCount),
               ...(isFirstPoint && (point as any).pcb_port_id
                 ? { start_pcb_port_id: (point as any).pcb_port_id }
                 : {}),
@@ -179,7 +181,7 @@ function convertHdRouteToCircuitJsonTraces(
             x: point.x,
             y: point.y,
             width,
-            layer: mapZToLayerName(point.z, 2),
+            layer: mapZToLayerName(point.z, layerCount),
             ...(isLastPoint && (point as any).pcb_port_id
               ? { end_pcb_port_id: (point as any).pcb_port_id }
               : {}),
@@ -454,7 +456,8 @@ function createPcbPadElements(srj: SimpleRouteJson): AnyCircuitElement[] {
  */
 function extractViasFromRoutes(
   routes: SimplifiedPcbTrace[] | HighDensityRoute[],
-  minViaDiameter = 0.3,
+  minViaDiameter: number,
+  srj: SimpleRouteJson,
 ): PcbVia[] {
   const vias: PcbVia[] = []
   const viaLocations = new Set<string>() // Track unique via locations
@@ -476,7 +479,13 @@ function extractViasFromRoutes(
                 y: segment.y,
                 outer_diameter: viaDiameter,
                 hole_diameter: viaDiameter * 0.5,
-                layers: [segment.from_layer, segment.to_layer] as LayerName[],
+                layers: getPhysicalViaLayers({
+                  layerCount: srj.layerCount,
+                  fromLayer: segment.from_layer,
+                  toLayer: segment.to_layer,
+                  allowBlindAndBuriedVias: srj.allowBlindAndBuriedVias,
+                  physicalLayers: segment.layers,
+                }) as LayerName[],
               })
               viaLocations.add(locationKey)
             }
@@ -498,8 +507,8 @@ function extractViasFromRoutes(
             Math.abs(prevPoint.x - currPoint.x) < 0.01 &&
             Math.abs(prevPoint.y - currPoint.y) < 0.01
           ) {
-            const fromLayer = mapZToLayerName(prevPoint.z, 2)
-            const toLayer = mapZToLayerName(currPoint.z, 2)
+            const fromLayer = mapZToLayerName(prevPoint.z, srj.layerCount)
+            const toLayer = mapZToLayerName(currPoint.z, srj.layerCount)
             const locationKey = `${currPoint.x},${currPoint.y},${fromLayer},${toLayer}`
 
             if (!viaLocations.has(locationKey)) {
@@ -511,7 +520,12 @@ function extractViasFromRoutes(
                 y: currPoint.y,
                 outer_diameter: viaDiameter,
                 hole_diameter: viaDiameter * 0.5,
-                layers: [fromLayer, toLayer] as LayerName[],
+                layers: getPhysicalViaLayers({
+                  layerCount: srj.layerCount,
+                  fromLayer,
+                  toLayer,
+                  allowBlindAndBuriedVias: srj.allowBlindAndBuriedVias,
+                }) as LayerName[],
               })
               viaLocations.add(locationKey)
             }
@@ -550,7 +564,7 @@ export function convertToCircuitJson(
   circuitJson.push(...createPcbPadElements(srjWithPointPairs))
 
   // Extract and add vias as independent pcb_via elements
-  circuitJson.push(...extractViasFromRoutes(routes, minViaDiameter))
+  circuitJson.push(...extractViasFromRoutes(routes, minViaDiameter, srjWithPointPairs))
 
   // Build a map of connection names to simplify lookups
   const connectionMap = new Map<string, string>()
@@ -583,6 +597,7 @@ export function convertToCircuitJson(
           `trace_${index}`,
           connectionMap.get(connectionName) || connectionName,
           minTraceWidth,
+          srjWithPointPairs.layerCount,
         )
         circuitJson.push(...(traces as AnyCircuitElement[]))
       })
