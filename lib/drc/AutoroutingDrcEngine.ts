@@ -117,6 +117,11 @@ export interface AutoroutingDrcEngineOptions {
    * Defaults to false so legacy callers receive the original error shape.
    */
   includeTraceViaOwnerMetadata?: boolean
+  /**
+   * Cache obstacle net membership when SRJ connectivity metadata is immutable.
+   * Defaults to false. Cannot be combined with a mutable connectivity map.
+   */
+  cacheStaticObstacleNetMembership?: boolean
 }
 
 export interface AutoroutingDrcEngineRunStats {
@@ -364,6 +369,7 @@ export class AutoroutingDrcEngine {
   private readonly canonicalNetByAlias = new Map<string, string>()
   private readonly connMapNetByCanonicalNet = new Map<string, string>()
   private readonly obstacles: StaticObstacle[]
+  private readonly staticObstacleNets?: Map<StaticObstacle, Set<string>>
   private readonly obstacleIndexesByLayer = new Map<
     string,
     SpatialHash<StaticObstacle>
@@ -412,8 +418,24 @@ export class AutoroutingDrcEngine {
       throw new Error("spatialCellSize must be a positive finite number")
     }
 
+    if (options.cacheStaticObstacleNetMembership && this.connMap) {
+      throw new Error(
+        "cacheStaticObstacleNetMembership cannot be combined with connMap",
+      )
+    }
+
     this.compileConnectionAliases()
     this.obstacles = this.compileStaticObstacles()
+    if (options.cacheStaticObstacleNetMembership) {
+      this.staticObstacleNets = new Map(
+        this.obstacles.map((obstacle): [StaticObstacle, Set<string>] => [
+          obstacle,
+          new Set(
+            obstacle.connectedTo.map((id): string => this.resolveNetId(id)),
+          ),
+        ]),
+      )
+    }
     this.indexStaticObstacles()
   }
 
@@ -654,7 +676,14 @@ export class AutoroutingDrcEngine {
     return indexes
   }
 
-  private obstacleSharesNet(netId: string, obstacle: StaticObstacle) {
+  private obstacleSharesNet(netId: string, obstacle: StaticObstacle): boolean {
+    if (this.staticObstacleNets) {
+      // Geometry collection already resolves a trace's net once. Resolve it
+      // again here, exactly as areConnected does, including alias collisions.
+      return this.staticObstacleNets
+        .get(obstacle)!
+        .has(this.resolveNetId(netId))
+    }
     return obstacle.connectedTo.some((connectedId) =>
       this.areConnected(netId, connectedId),
     )
