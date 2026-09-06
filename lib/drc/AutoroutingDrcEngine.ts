@@ -515,6 +515,13 @@ export class AutoroutingDrcEngine {
     Map<string, readonly StaticObstacle[]>
   >()
 
+  // An immutable segment that cleared every static obstacle remains clear
+  // while other routes change. Store only counts, never public error objects.
+  private readonly immutableStaticClearance = new WeakMap<
+    object,
+    { broadPhaseCandidateCount: number; exactCheckCount: number }
+  >()
+
   private readonly traceClearance: number
   private readonly viaClearance: number
   private readonly viaToPadClearance: number
@@ -1244,6 +1251,40 @@ export class AutoroutingDrcEngine {
     }
   }
 
+  private appendTraceObstacleErrors(
+    segment: TraceSegment,
+    errors: AutoroutingDrcError[],
+  ): void {
+    const key = this.cacheImmutableTraceGeometry
+      ? segment.geometryKey
+      : undefined
+    const cached = key ? this.immutableStaticClearance.get(key) : undefined
+    if (cached) {
+      this.lastRunStats.broadPhaseCandidateCount +=
+        cached.broadPhaseCandidateCount
+      this.lastRunStats.exactCheckCount += cached.exactCheckCount
+      return
+    }
+    const candidates = this.cacheImmutableTraceGeometry
+      ? this.getStaticObstacleCandidates(segment, segment.layer)
+      : (this.obstacleIndexesByLayer
+          .get(segment.layer)
+          ?.query(getSegmentBounds(segment)) ?? [])
+    const initialErrorCount = errors.length
+    const initialExactChecks = this.lastRunStats.exactCheckCount
+    for (const obstacle of candidates) {
+      this.lastRunStats.broadPhaseCandidateCount += 1
+      const error = this.checkTraceObstacle(segment, obstacle)
+      if (error) errors.push(error)
+    }
+    if (key && errors.length === initialErrorCount) {
+      this.immutableStaticClearance.set(key, {
+        broadPhaseCandidateCount: candidates.length,
+        exactCheckCount: this.lastRunStats.exactCheckCount - initialExactChecks,
+      })
+    }
+  }
+
   private checkViaObstacle(
     via: Via,
     obstacle: StaticObstacle,
@@ -1396,11 +1437,6 @@ export class AutoroutingDrcEngine {
               )
           : dynamicIndex.query(queryBounds)
         : []
-      const obstacleCandidates = this.cacheImmutableTraceGeometry
-        ? this.getStaticObstacleCandidates(segment, segment.layer)
-        : (this.obstacleIndexesByLayer.get(segment.layer)?.query(queryBounds) ??
-          [])
-
       for (const candidate of dynamicCandidates) {
         this.lastRunStats.broadPhaseCandidateCount += 1
         if (
@@ -1417,11 +1453,7 @@ export class AutoroutingDrcEngine {
         if (error) detectedTraceErrors.push(error)
       }
 
-      for (const obstacle of obstacleCandidates) {
-        this.lastRunStats.broadPhaseCandidateCount += 1
-        const error = this.checkTraceObstacle(segment, obstacle)
-        if (error) detectedTraceErrors.push(error)
-      }
+      this.appendTraceObstacleErrors(segment, detectedTraceErrors)
     }
 
     const detectedViaErrors = this.checkViaPairs(vias)
