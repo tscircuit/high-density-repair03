@@ -48,6 +48,7 @@ type Via = {
   x: number
   y: number
   diameter: number
+  holeDiameter: number
   layers: string[]
 }
 
@@ -102,6 +103,8 @@ export interface AutoroutingDrcEngineOptions {
   viaClearance?: number
   /** Copper-edge clearance used for via-to-pad checks. */
   viaToPadClearance?: number
+  /** Drill diameter used by Core's hole-edge-to-hole-edge via check. */
+  viaHoleDiameter?: number
   /**
    * Optional broad-phase cell size. The engine derives one from the board
    * bounds when this is omitted.
@@ -358,6 +361,7 @@ export class AutoroutingDrcEngine {
   private readonly traceClearance: number
   private readonly viaClearance: number
   private readonly viaToPadClearance: number
+  private readonly viaHoleDiameter: number
   private readonly cellSize: number
   private readonly connMap?: ConnectivityMap
   private readonly includeTraceViaOwnerMetadata: boolean
@@ -382,15 +386,24 @@ export class AutoroutingDrcEngine {
     private readonly srj: SimpleRouteJson,
     options: AutoroutingDrcEngineOptions = {},
   ) {
-    this.traceClearance = options.traceClearance ?? DEFAULT_TRACE_CLEARANCE
+    this.traceClearance =
+      options.traceClearance ??
+      this.srj.minTraceToPadEdgeClearance ??
+      DEFAULT_TRACE_CLEARANCE
     this.viaClearance = Math.max(
-      options.viaClearance ?? MIN_VIA_CLEARANCE,
+      options.viaClearance ??
+        this.srj.minViaHoleEdgeToViaHoleEdgeClearance ??
+        MIN_VIA_CLEARANCE,
       MIN_VIA_CLEARANCE,
     )
     this.viaToPadClearance =
       options.viaToPadClearance ??
       this.srj.minViaEdgeToPadEdgeClearance ??
       DEFAULT_VIA_TO_PAD_CLEARANCE
+    this.viaHoleDiameter =
+      options.viaHoleDiameter ??
+      this.srj.minViaHoleDiameter ??
+      (this.srj.minViaDiameter ?? 0.3) * 0.5
     this.connMap = options.connMap
     this.includeTraceViaOwnerMetadata =
       options.includeTraceViaOwnerMetadata ?? false
@@ -407,6 +420,9 @@ export class AutoroutingDrcEngine {
       this.viaToPadClearance < 0
     ) {
       throw new Error("viaToPadClearance must be a non-negative finite number")
+    }
+    if (!Number.isFinite(this.viaHoleDiameter) || this.viaHoleDiameter <= 0) {
+      throw new Error("viaHoleDiameter must be a positive finite number")
     }
     if (!Number.isFinite(this.cellSize) || this.cellSize <= 0) {
       throw new Error("spatialCellSize must be a positive finite number")
@@ -616,6 +632,7 @@ export class AutoroutingDrcEngine {
           x: routePoint.x,
           y: routePoint.y,
           diameter: routePoint.via_diameter ?? this.srj.minViaDiameter ?? 0.3,
+          holeDiameter: routePoint.via_hole_diameter ?? this.viaHoleDiameter,
           layers: getViaLayers(routePoint, this.srj.layerCount),
         })
       }
@@ -855,7 +872,8 @@ export class AutoroutingDrcEngine {
 
         const centerDistance = Math.hypot(viaA.x - viaB.x, viaA.y - viaB.y)
         if (centerDistance <= POSITION_EPSILON) continue
-        const gap = centerDistance - viaA.diameter / 2 - viaB.diameter / 2
+        const gap =
+          centerDistance - viaA.holeDiameter / 2 - viaB.holeDiameter / 2
         if (gap + DRC_EPSILON >= this.viaClearance) continue
 
         const sameNet = this.areConnected(viaA.netId, viaB.netId)

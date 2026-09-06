@@ -39,6 +39,7 @@ import {
   getNonViaPadDrcIssueCount,
   getRepairDrcIssueCount,
   getRepairDrcIssueScore,
+  hasNewDrcErrorIdentities,
   getTargetedClearanceSweepErrors,
   getTraceRouteIndexForError,
   getTraceRoutePairForError,
@@ -242,8 +243,10 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
               params.srj.minTraceToPadEdgeClearance ??
               RELAXED_DRC_OPTIONS.traceClearance,
             viaClearance:
-              params.srj.minTraceToPadEdgeClearance ??
+              params.srj.minViaHoleEdgeToViaHoleEdgeClearance ??
               RELAXED_DRC_OPTIONS.viaClearance,
+            viaHoleDiameter:
+              params.viaHoleDiameter ?? params.srj.minViaHoleDiameter,
             includeTraceViaOwnerMetadata:
               params.enableTraceViaOwnerTargeting ?? false,
           }))
@@ -433,7 +436,14 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         this.getReferenceDrcSnapshot(acceptedRoutes)
       this.referenceInputDrcIssueCount = referenceInputSnapshot.count
       this.referenceCandidateDrcIssueCount = referenceCandidateSnapshot.count
-      if (referenceCandidateSnapshot.count > referenceInputSnapshot.count) {
+      if (
+        referenceCandidateSnapshot.count > referenceInputSnapshot.count ||
+        (referenceCandidateSnapshot.count === referenceInputSnapshot.count &&
+          hasNewDrcErrorIdentities(
+            referenceCandidateSnapshot.errors,
+            referenceInputSnapshot.errors,
+          ))
+      ) {
         acceptedRoutes = this.guardedInputHdRoutes
         acceptedSnapshot = inputSnapshot
         this.referenceCandidateRolledBack = true
@@ -575,7 +585,14 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     let tracePairDetourAttemptedThisStep = false
     let acceptedCandidate = false
     let attemptedPeriodicLargeBoardBroadFallback = false
-    const activeRepairErrors = getLegacyFirstRepairErrors(centeredErrors)
+    const legacyFirstRepairErrors = getLegacyFirstRepairErrors(centeredErrors)
+    const hasDeferredViaPadErrors =
+      legacyFirstRepairErrors.length < centeredErrors.length
+    // Preserve legacy-first ordering, but keep independent via-pad errors in
+    // the round-robin queue so one stalled legacy error cannot starve them.
+    const activeRepairErrors = hasDeferredViaPadErrors
+      ? [...legacyFirstRepairErrors, ...centeredErrors.filter(isViaPadDrcError)]
+      : legacyFirstRepairErrors
     const sameNetViaError = this.enableTargetedErrorSweep
       ? activeRepairErrors.find(
           (error) =>

@@ -136,7 +136,7 @@ test("repairs legacy DRC errors before newly detected via-to-pad errors", () => 
   expect(getLegacyFirstRepairErrors([viaPadError])).toEqual([viaPadError])
 })
 
-test("does not spend the legacy repair budget on via-to-pad count changes", () => {
+test("accepts targeted via-to-pad reductions while preserving legacy priority", () => {
   const traceRouteIndexById = new Map<string, number>()
   const viaPadError = {
     type: "pcb_pad_pad_clearance_error",
@@ -165,7 +165,7 @@ test("does not spend the legacy repair budget on via-to-pad count changes", () =
   expect(getRepairDrcIssueScore(bestSnapshot)).toBe(1)
   expect(isDrcSnapshotCountBetter(fewerViaPadErrors, bestSnapshot)).toBe(false)
   expect(isBetterDrcSnapshot(fewerViaPadErrors, 0, 1, 1, 0, bestSnapshot)).toBe(
-    false,
+    true,
   )
   expect(isDrcSnapshotCountBetter(legacyClean, bestSnapshot)).toBe(true)
   expect(isDrcSnapshotCountBetter(fewerViaPadErrors, legacyClean)).toBe(false)

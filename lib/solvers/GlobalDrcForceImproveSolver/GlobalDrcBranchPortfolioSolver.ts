@@ -107,8 +107,10 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
               params.srj.minTraceToPadEdgeClearance ??
               RELAXED_DRC_OPTIONS.traceClearance,
             viaClearance:
-              params.srj.minTraceToPadEdgeClearance ??
+              params.srj.minViaHoleEdgeToViaHoleEdgeClearance ??
               RELAXED_DRC_OPTIONS.viaClearance,
+            viaHoleDiameter:
+              params.viaHoleDiameter ?? params.srj.minViaHoleDiameter,
             includeTraceViaOwnerMetadata:
               params.enableTraceViaOwnerTargeting ?? false,
           }))
@@ -565,7 +567,12 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         this.mixedReferenceCandidateDrcIssueCount =
           referenceCandidateSnapshot.count
         improvesReferenceDrc =
-          referenceCandidateSnapshot.count <= referenceInputSnapshot.count
+          referenceCandidateSnapshot.count <= referenceInputSnapshot.count &&
+          (referenceCandidateSnapshot.count < referenceInputSnapshot.count ||
+            !hasNewDrcErrorIdentities(
+              referenceCandidateSnapshot.errors,
+              referenceInputSnapshot.errors,
+            ))
       }
       this.mixedSafeTraceLayerPhaseAccepted =
         doesNotRegressLegacyDrc && improvesReferenceDrc

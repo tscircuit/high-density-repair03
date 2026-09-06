@@ -284,7 +284,8 @@ const createDrcSnapshot = (
           drcSrj.minTraceToPadEdgeClearance ??
           RELAXED_DRC_OPTIONS.traceClearance,
         viaClearance:
-          drcSrj.minTraceToPadEdgeClearance ?? RELAXED_DRC_OPTIONS.viaClearance,
+          drcSrj.minViaHoleEdgeToViaHoleEdgeClearance ??
+          RELAXED_DRC_OPTIONS.viaClearance,
       },
     )
 
@@ -4635,7 +4636,12 @@ export const isBetterDrcSnapshot = (
     (candidateIssueCount === bestIssueCount &&
       candidateIssueScore < bestIssueScore) ||
     (candidateIssueCount === bestIssueCount &&
-      candidateViaIssueCount < bestViaIssueCount)
+      candidateViaIssueCount < bestViaIssueCount) ||
+    (candidateIssueCount === bestIssueCount &&
+      candidateIssueScore === bestIssueScore &&
+      candidateViaIssueCount === bestViaIssueCount &&
+      bestSnapshot !== undefined &&
+      candidateSnapshot.count < bestSnapshot.count)
   )
 }
 
