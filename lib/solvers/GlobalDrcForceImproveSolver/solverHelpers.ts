@@ -1806,7 +1806,15 @@ const moveLocalObstacleSpanByTranslation = (
     obstacle,
     requiredDistance,
   )
-  if (pointIndexes.length === 0) return false
+  // A nearby bend can enter the clearance region while both endpoints of the
+  // colliding segment stay outside it. Moving that bend does not repair this
+  // segment and must not suppress its ordinary segment translation.
+  if (
+    !pointIndexes.includes(segment.startIndex) &&
+    !pointIndexes.includes(segment.endIndex)
+  ) {
+    return false
+  }
 
   return moveRoutePointIndexesByTranslation(
     route,
