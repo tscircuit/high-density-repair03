@@ -89,7 +89,7 @@ test("local pad repair moves the colliding segment before its neighboring bend",
       1,
     ),
   ).toBe(true)
-  expect(
-    getDrcSnapshot(srj, [route], undefined, undefined, engine).count,
-  ).toBe(0)
+  expect(getDrcSnapshot(srj, [route], undefined, undefined, engine).count).toBe(
+    0,
+  )
 })
