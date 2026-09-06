@@ -28,6 +28,7 @@ type WireRoutePoint = Extract<
 >
 
 type TraceSegment = {
+  geometryKey?: object
   kind: "trace_segment"
   order: number
   traceId: string
@@ -40,6 +41,7 @@ type TraceSegment = {
 }
 
 type Via = {
+  geometryKey?: object
   kind: "via"
   order: number
   viaId: string
@@ -66,6 +68,22 @@ type StaticObstacle = {
 }
 
 type DynamicCollidable = TraceSegment | Via
+
+type ViaRoutePoint = Extract<
+  SimplifiedPcbTrace["route"][number],
+  { route_type: "via" }
+>
+type ImmutableTraceGeometry = {
+  segments: Omit<TraceSegment, "order">[]
+  vias: {
+    locationKey: string
+    point: ViaRoutePoint
+    geometryKey: object
+    prepared?: Omit<Via, "order" | "viaId">
+  }[]
+  traceId: string
+  netId: string
+}
 
 export type AutoroutingDrcError = {
   type:
@@ -117,6 +135,19 @@ export interface AutoroutingDrcEngineOptions {
    * Defaults to false so legacy callers receive the original error shape.
    */
   includeTraceViaOwnerMetadata?: boolean
+  /**
+   * Cache obstacle net membership when SRJ connectivity metadata is immutable.
+   * Defaults to false. Cannot be combined with a mutable connectivity map.
+   */
+  cacheStaticObstacleNetMembership?: boolean
+  /**
+   * Reuse geometry, static queries and spatial cells for immutable SRJ metadata
+   * and trace objects. Traces must never be mutated after their first evaluation.
+   * Defaults to false; cannot be combined with a mutable connectivity map.
+   */
+  cacheImmutableTraceGeometry?: boolean
+  /** Skip full rectangle distance only when an axial AABB lower bound proves clearance. Defaults to false. */
+  useConservativeRectObstaclePrecheck?: boolean
 }
 
 export interface AutoroutingDrcEngineRunStats {
@@ -151,6 +182,39 @@ const getSegmentBounds = (segment: TraceSegment): Bounds =>
     },
     segment.width / 2,
   )
+
+// The axial gap between AABBs is a lower bound on centerline-to-rectangle
+// distance. Borderline and malformed values retain the original exact check.
+const hasConservativeAxialClearance = (
+  segment: TraceSegment,
+  bounds: Bounds,
+  traceClearance: number,
+): boolean => {
+  const threshold = segment.width / 2 + traceClearance - DRC_EPSILON
+  const separation = Math.max(
+    bounds.minX - Math.max(segment.start.x, segment.end.x),
+    Math.min(segment.start.x, segment.end.x) - bounds.maxX,
+    bounds.minY - Math.max(segment.start.y, segment.end.y),
+    Math.min(segment.start.y, segment.end.y) - bounds.maxY,
+  )
+  // The fast path is limited to coordinates within 10 metres of the origin.
+  // Outside that numerical domain, retain the original exact implementation.
+  // Its 1e-9 mm margin leaves ordinary PCB roundoff and equality on that path.
+  if (!(separation > threshold + 1e-9)) return false
+  return (
+    bounds.minX <= bounds.maxX &&
+    bounds.minY <= bounds.maxY &&
+    Number.isFinite(threshold) &&
+    Math.abs(segment.start.x) <= 10_000 &&
+    Math.abs(segment.start.y) <= 10_000 &&
+    Math.abs(segment.end.x) <= 10_000 &&
+    Math.abs(segment.end.y) <= 10_000 &&
+    Math.abs(bounds.minX) <= 10_000 &&
+    Math.abs(bounds.minY) <= 10_000 &&
+    Math.abs(bounds.maxX) <= 10_000 &&
+    Math.abs(bounds.maxY) <= 10_000
+  )
+}
 
 const getViaBounds = (via: Via): Bounds => {
   const radius = via.diameter / 2
@@ -193,6 +257,38 @@ class SpatialHash<T> {
         }
       }
     }
+  }
+
+  insertWithCellKeys(item: T, keys: readonly string[]): void {
+    for (const key of keys) {
+      const items = this.cells.get(key)
+      if (items) items.push(item)
+      else this.cells.set(key, [item])
+    }
+  }
+
+  getCellKeys(bounds: Bounds): string[] {
+    const minCellX = Math.floor(bounds.minX / this.cellSize)
+    const maxCellX = Math.floor(bounds.maxX / this.cellSize)
+    const minCellY = Math.floor(bounds.minY / this.cellSize)
+    const maxCellY = Math.floor(bounds.maxY / this.cellSize)
+    const keys: string[] = []
+    for (let cellX = minCellX; cellX <= maxCellX; cellX += 1) {
+      for (let cellY = minCellY; cellY <= maxCellY; cellY += 1) {
+        keys.push(getCellKey(cellX, cellY))
+      }
+    }
+    return keys
+  }
+
+  queryWithCellKeys(keys: readonly string[]): T[] {
+    const results = new Set<T>()
+    for (const key of keys) {
+      const items = this.cells.get(key)
+      if (!items) continue
+      for (const item of items) results.add(item)
+    }
+    return [...results]
   }
 
   query(bounds: Bounds): T[] {
@@ -355,6 +451,25 @@ const createTraceErrorMessage = (
  * `@tscircuit/checks` validation suite.
  */
 export class AutoroutingDrcEngine {
+  private readonly cacheImmutableTraceGeometry: boolean
+  private readonly useConservativeRectObstaclePrecheck: boolean
+  private readonly immutableTraceGeometry = new WeakMap<
+    SimplifiedPcbTrace,
+    ImmutableTraceGeometry
+  >()
+  private readonly immutableDynamicCellKeys = new WeakMap<
+    object,
+    readonly string[]
+  >()
+  private readonly immutableDynamicQueryCellKeys = new WeakMap<
+    object,
+    readonly string[]
+  >()
+  private readonly immutableStaticCandidates = new WeakMap<
+    object,
+    Map<string, readonly StaticObstacle[]>
+  >()
+
   private readonly traceClearance: number
   private readonly viaClearance: number
   private readonly viaToPadClearance: number
@@ -364,6 +479,7 @@ export class AutoroutingDrcEngine {
   private readonly canonicalNetByAlias = new Map<string, string>()
   private readonly connMapNetByCanonicalNet = new Map<string, string>()
   private readonly obstacles: StaticObstacle[]
+  private readonly staticObstacleNets?: Map<StaticObstacle, Set<string>>
   private readonly obstacleIndexesByLayer = new Map<
     string,
     SpatialHash<StaticObstacle>
@@ -382,6 +498,10 @@ export class AutoroutingDrcEngine {
     private readonly srj: SimpleRouteJson,
     options: AutoroutingDrcEngineOptions = {},
   ) {
+    this.cacheImmutableTraceGeometry =
+      options.cacheImmutableTraceGeometry ?? false
+    this.useConservativeRectObstaclePrecheck =
+      options.useConservativeRectObstaclePrecheck ?? false
     this.traceClearance = options.traceClearance ?? DEFAULT_TRACE_CLEARANCE
     this.viaClearance = Math.max(
       options.viaClearance ?? MIN_VIA_CLEARANCE,
@@ -412,8 +532,30 @@ export class AutoroutingDrcEngine {
       throw new Error("spatialCellSize must be a positive finite number")
     }
 
+    if (options.cacheStaticObstacleNetMembership && this.connMap) {
+      throw new Error(
+        "cacheStaticObstacleNetMembership cannot be combined with connMap",
+      )
+    }
+
+    if (this.cacheImmutableTraceGeometry && this.connMap) {
+      throw new Error(
+        "cacheImmutableTraceGeometry cannot be combined with connMap",
+      )
+    }
+
     this.compileConnectionAliases()
     this.obstacles = this.compileStaticObstacles()
+    if (options.cacheStaticObstacleNetMembership) {
+      this.staticObstacleNets = new Map(
+        this.obstacles.map((obstacle): [StaticObstacle, Set<string>] => [
+          obstacle,
+          new Set(
+            obstacle.connectedTo.map((id): string => this.resolveNetId(id)),
+          ),
+        ]),
+      )
+    }
     this.indexStaticObstacles()
   }
 
@@ -562,7 +704,113 @@ export class AutoroutingDrcEngine {
     }
   }
 
+  private getImmutableTraceGeometry(
+    trace: SimplifiedPcbTrace,
+  ): ImmutableTraceGeometry {
+    const cached = this.immutableTraceGeometry.get(trace)
+    if (cached) return cached
+    const netId = this.resolveNetId(trace.connection_name)
+    const pcbPortIds = getTracePortIds(trace)
+    const segments: ImmutableTraceGeometry["segments"] = []
+    for (let index = 0; index < trace.route.length - 1; index++) {
+      const start = trace.route[index]
+      const end = trace.route[index + 1]
+      if (
+        start?.route_type !== "wire" ||
+        end?.route_type !== "wire" ||
+        start.layer !== end.layer
+      )
+        continue
+      if (
+        Math.abs(start.x - end.x) <= POSITION_EPSILON &&
+        Math.abs(start.y - end.y) <= POSITION_EPSILON
+      )
+        continue
+      segments.push({
+        geometryKey: {},
+        kind: "trace_segment",
+        traceId: trace.pcb_trace_id,
+        netId,
+        start: { x: start.x, y: start.y },
+        end: { x: end.x, y: end.y },
+        width: getWireWidth(start, end),
+        layer: start.layer,
+        pcbPortIds,
+      })
+    }
+    const vias: ImmutableTraceGeometry["vias"] = []
+    for (const point of trace.route) {
+      if (point.route_type !== "via") continue
+      vias.push({
+        locationKey: `${point.x},${point.y},${point.from_layer},${point.to_layer}`,
+        point,
+        geometryKey: {},
+      })
+    }
+    const geometry = { segments, vias, traceId: trace.pcb_trace_id, netId }
+    this.immutableTraceGeometry.set(trace, geometry)
+    return geometry
+  }
+
+  private collectImmutableDynamicGeometry(traces: SimplifiedPcbTraces): {
+    segments: TraceSegment[]
+    vias: Via[]
+  } {
+    const segments: TraceSegment[] = []
+    const vias: Via[] = []
+    const viaLocations = new Set<string>()
+    for (const trace of traces) {
+      const geometry = this.getImmutableTraceGeometry(trace)
+      for (const segment of geometry.segments) {
+        segments.push({
+          geometryKey: segment.geometryKey,
+          kind: "trace_segment",
+          traceId: segment.traceId,
+          netId: segment.netId,
+          start: segment.start,
+          end: segment.end,
+          width: segment.width,
+          layer: segment.layer,
+          pcbPortIds: segment.pcbPortIds,
+          order: segments.length,
+        })
+      }
+      for (const event of geometry.vias) {
+        if (viaLocations.has(event.locationKey)) continue
+        viaLocations.add(event.locationKey)
+        // Global first-wins dedup and via IDs are recomputed on every call.
+        // Prepare layer metadata only after winning dedup, just like the default path.
+        const point = event.point
+        const prepared = (event.prepared ??= {
+          geometryKey: event.geometryKey,
+          kind: "via",
+          traceId: geometry.traceId,
+          netId: geometry.netId,
+          x: point.x,
+          y: point.y,
+          diameter: point.via_diameter ?? this.srj.minViaDiameter ?? 0.3,
+          layers: getViaLayers(point, this.srj.layerCount),
+        })
+        vias.push({
+          geometryKey: prepared.geometryKey,
+          kind: "via",
+          traceId: prepared.traceId,
+          netId: prepared.netId,
+          x: prepared.x,
+          y: prepared.y,
+          diameter: prepared.diameter,
+          layers: prepared.layers,
+          order: vias.length,
+          viaId: `via_${vias.length}`,
+        })
+      }
+    }
+    return { segments, vias }
+  }
+
   private collectDynamicGeometry(traces: SimplifiedPcbTraces) {
+    if (this.cacheImmutableTraceGeometry)
+      return this.collectImmutableDynamicGeometry(traces)
     const segments: TraceSegment[] = []
     const vias: Via[] = []
     const viaLocations = new Set<string>()
@@ -624,10 +872,107 @@ export class AutoroutingDrcEngine {
     return { segments, vias }
   }
 
+  private getImmutableDynamicCellKeys(
+    item: DynamicCollidable,
+    index: SpatialHash<DynamicCollidable>,
+  ): readonly string[] {
+    const key = item.geometryKey
+    if (!key)
+      throw new Error(
+        "Immutable spatial cache requires private entity identities",
+      )
+    let cells = this.immutableDynamicCellKeys.get(key)
+    if (!cells) {
+      const bounds =
+        item.kind === "trace_segment"
+          ? getSegmentBounds(item)
+          : getViaBounds(item)
+      cells = index.getCellKeys(expandBounds(bounds, this.traceClearance))
+      this.immutableDynamicCellKeys.set(key, cells)
+    }
+    return cells
+  }
+
+  private getImmutableDynamicQueryCellKeys(
+    segment: TraceSegment,
+    index: SpatialHash<DynamicCollidable>,
+    bounds: Bounds,
+  ): readonly string[] {
+    const key = segment.geometryKey
+    if (!key)
+      throw new Error(
+        "Immutable spatial cache requires private entity identities",
+      )
+    let cells = this.immutableDynamicQueryCellKeys.get(key)
+    if (!cells) {
+      // Query bounds are unexpanded; insertion cells separately include trace clearance.
+      cells = index.getCellKeys(bounds)
+      this.immutableDynamicQueryCellKeys.set(key, cells)
+    }
+    return cells
+  }
+
+  private getStaticObstacleCandidates(
+    item: DynamicCollidable,
+    layer: string,
+  ): readonly StaticObstacle[] {
+    const key = item.geometryKey
+    if (!key)
+      throw new Error(
+        "Immutable spatial cache requires private entity identities",
+      )
+    let byLayer = this.immutableStaticCandidates.get(key)
+    if (!byLayer) {
+      byLayer = new Map()
+      this.immutableStaticCandidates.set(key, byLayer)
+    }
+    let candidates = byLayer.get(layer)
+    if (!candidates) {
+      const bounds =
+        item.kind === "trace_segment"
+          ? getSegmentBounds(item)
+          : getViaBounds(item)
+      candidates = this.obstacleIndexesByLayer.get(layer)?.query(bounds) ?? []
+      byLayer.set(layer, candidates)
+    }
+    // Only internal loops read this private list; no result exposes its array.
+    return candidates
+  }
+
+  private buildImmutableDynamicIndexes(
+    segments: TraceSegment[],
+    vias: Via[],
+  ): Map<string, SpatialHash<DynamicCollidable>> {
+    const indexes = new Map<string, SpatialHash<DynamicCollidable>>()
+    const addToLayer = (layer: string, item: DynamicCollidable): void => {
+      let index = indexes.get(layer)
+      if (!index) {
+        index = new SpatialHash<DynamicCollidable>(this.cellSize)
+        indexes.set(layer, index)
+      }
+      // Buckets and current entities stay fresh; only immutable cell coordinates are reused.
+      index.insertWithCellKeys(
+        item,
+        this.getImmutableDynamicCellKeys(item, index),
+      )
+    }
+    for (const segment of segments) {
+      addToLayer(segment.layer, segment)
+    }
+    for (const via of vias) {
+      for (const layer of via.layers) {
+        addToLayer(layer, via)
+      }
+    }
+    return indexes
+  }
+
   private buildDynamicIndexes(
     segments: TraceSegment[],
     vias: Via[],
   ): Map<string, SpatialHash<DynamicCollidable>> {
+    if (this.cacheImmutableTraceGeometry)
+      return this.buildImmutableDynamicIndexes(segments, vias)
     const indexes = new Map<string, SpatialHash<DynamicCollidable>>()
     const addToLayer = (
       layer: string,
@@ -654,7 +999,14 @@ export class AutoroutingDrcEngine {
     return indexes
   }
 
-  private obstacleSharesNet(netId: string, obstacle: StaticObstacle) {
+  private obstacleSharesNet(netId: string, obstacle: StaticObstacle): boolean {
+    if (this.staticObstacleNets) {
+      // Geometry collection already resolves a trace's net once. Resolve it
+      // again here, exactly as areConnected does, including alias collisions.
+      return this.staticObstacleNets
+        .get(obstacle)!
+        .has(this.resolveNetId(netId))
+    }
     return obstacle.connectedTo.some((connectedId) =>
       this.areConnected(netId, connectedId),
     )
@@ -697,7 +1049,9 @@ export class AutoroutingDrcEngine {
       pcb_port_ids: [
         ...new Set([...segmentA.pcbPortIds, ...segmentB.pcbPortIds]),
       ],
-      center: getClosestPointBetweenSegments(segmentA, segmentB),
+      center: this.cacheImmutableTraceGeometry
+        ? { ...getClosestPointBetweenSegments(segmentA, segmentB) }
+        : getClosestPointBetweenSegments(segmentA, segmentB),
     }
   }
 
@@ -740,7 +1094,9 @@ export class AutoroutingDrcEngine {
       minimum_clearance: this.traceClearance,
       actual_clearance: gap,
       pcb_component_ids: [],
-      pcb_port_ids: segment.pcbPortIds,
+      pcb_port_ids: this.cacheImmutableTraceGeometry
+        ? [...segment.pcbPortIds]
+        : segment.pcbPortIds,
       center: getClosestPointBetweenSegmentAndPoint(segment, via),
     }
   }
@@ -753,6 +1109,17 @@ export class AutoroutingDrcEngine {
     this.lastRunStats.exactCheckCount += 1
 
     const obstacleBounds = getObstacleBounds(obstacle)
+    if (
+      this.useConservativeRectObstaclePrecheck &&
+      obstacle.radius === undefined &&
+      hasConservativeAxialClearance(
+        segment,
+        obstacleBounds,
+        this.traceClearance,
+      )
+    ) {
+      return undefined
+    }
     const shapeDistance =
       obstacle.radius === undefined
         ? segmentToBoundsMinDistance(segment.start, segment.end, obstacleBounds)
@@ -922,10 +1289,22 @@ export class AutoroutingDrcEngine {
 
     for (const segment of segments) {
       const queryBounds = getSegmentBounds(segment)
-      const dynamicCandidates =
-        dynamicIndexesByLayer.get(segment.layer)?.query(queryBounds) ?? []
-      const obstacleCandidates =
-        this.obstacleIndexesByLayer.get(segment.layer)?.query(queryBounds) ?? []
+      const dynamicIndex = dynamicIndexesByLayer.get(segment.layer)
+      const dynamicCandidates = dynamicIndex
+        ? this.cacheImmutableTraceGeometry
+          ? dynamicIndex.queryWithCellKeys(
+              this.getImmutableDynamicQueryCellKeys(
+                segment,
+                dynamicIndex,
+                queryBounds,
+              ),
+            )
+          : dynamicIndex.query(queryBounds)
+        : []
+      const obstacleCandidates = this.cacheImmutableTraceGeometry
+        ? this.getStaticObstacleCandidates(segment, segment.layer)
+        : (this.obstacleIndexesByLayer.get(segment.layer)?.query(queryBounds) ??
+          [])
 
       for (const candidate of dynamicCandidates) {
         this.lastRunStats.broadPhaseCandidateCount += 1
@@ -956,9 +1335,11 @@ export class AutoroutingDrcEngine {
       for (const via of vias) {
         const checkedObstacles = new Set<StaticObstacle>()
         for (const layer of via.layers) {
-          const obstacleCandidates =
-            this.obstacleIndexesByLayer.get(layer)?.query(getViaBounds(via)) ??
-            []
+          const obstacleCandidates = this.cacheImmutableTraceGeometry
+            ? this.getStaticObstacleCandidates(via, layer)
+            : (this.obstacleIndexesByLayer
+                .get(layer)
+                ?.query(getViaBounds(via)) ?? [])
           for (const obstacle of obstacleCandidates) {
             if (checkedObstacles.has(obstacle)) continue
             checkedObstacles.add(obstacle)
