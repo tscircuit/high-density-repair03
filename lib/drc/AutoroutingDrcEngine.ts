@@ -67,7 +67,9 @@ type StaticObstacle = {
   pcbPortId?: string
 }
 
-type DynamicCollidable = TraceSegment | Via
+type DynamicCollidable = (TraceSegment | Via) & {
+  lastDynamicQueryOrder?: number
+}
 
 type ViaRoutePoint = Extract<
   SimplifiedPcbTrace["route"][number],
@@ -148,6 +150,8 @@ export interface AutoroutingDrcEngineOptions {
   cacheImmutableTraceGeometry?: boolean
   /** Skip full rectangle distance only when an axial AABB lower bound proves clearance. Defaults to false. */
   useConservativeRectObstaclePrecheck?: boolean
+  /** Deduplicate fresh dynamic query results with per-evaluation markers. Requires immutable geometry caching; defaults to false. */
+  useTransientDynamicQueryMarkers?: boolean
 }
 
 export interface AutoroutingDrcEngineRunStats {
@@ -289,6 +293,24 @@ class SpatialHash<T> {
       for (const item of items) results.add(item)
     }
     return [...results]
+  }
+
+  queryWithCellKeysUsingOrder(
+    this: SpatialHash<DynamicCollidable>,
+    keys: readonly string[],
+    queryOrder: number,
+  ): DynamicCollidable[] {
+    const results: DynamicCollidable[] = []
+    for (const key of keys) {
+      const items = this.cells.get(key)
+      if (!items) continue
+      for (const item of items) {
+        if (item.lastDynamicQueryOrder === queryOrder) continue
+        item.lastDynamicQueryOrder = queryOrder
+        results.push(item)
+      }
+    }
+    return results
   }
 
   query(bounds: Bounds): T[] {
@@ -453,6 +475,7 @@ const createTraceErrorMessage = (
 export class AutoroutingDrcEngine {
   private readonly cacheImmutableTraceGeometry: boolean
   private readonly useConservativeRectObstaclePrecheck: boolean
+  private readonly useTransientDynamicQueryMarkers: boolean
   private readonly immutableTraceGeometry = new WeakMap<
     SimplifiedPcbTrace,
     ImmutableTraceGeometry
@@ -502,6 +525,8 @@ export class AutoroutingDrcEngine {
       options.cacheImmutableTraceGeometry ?? false
     this.useConservativeRectObstaclePrecheck =
       options.useConservativeRectObstaclePrecheck ?? false
+    this.useTransientDynamicQueryMarkers =
+      options.useTransientDynamicQueryMarkers ?? false
     this.traceClearance = options.traceClearance ?? DEFAULT_TRACE_CLEARANCE
     this.viaClearance = Math.max(
       options.viaClearance ?? MIN_VIA_CLEARANCE,
@@ -541,6 +566,15 @@ export class AutoroutingDrcEngine {
     if (this.cacheImmutableTraceGeometry && this.connMap) {
       throw new Error(
         "cacheImmutableTraceGeometry cannot be combined with connMap",
+      )
+    }
+
+    if (
+      this.useTransientDynamicQueryMarkers &&
+      !this.cacheImmutableTraceGeometry
+    ) {
+      throw new Error(
+        "useTransientDynamicQueryMarkers requires cacheImmutableTraceGeometry",
       )
     }
 
@@ -1292,13 +1326,23 @@ export class AutoroutingDrcEngine {
       const dynamicIndex = dynamicIndexesByLayer.get(segment.layer)
       const dynamicCandidates = dynamicIndex
         ? this.cacheImmutableTraceGeometry
-          ? dynamicIndex.queryWithCellKeys(
-              this.getImmutableDynamicQueryCellKeys(
-                segment,
-                dynamicIndex,
-                queryBounds,
-              ),
-            )
+          ? this.useTransientDynamicQueryMarkers
+            ? dynamicIndex.queryWithCellKeysUsingOrder(
+                this.getImmutableDynamicQueryCellKeys(
+                  segment,
+                  dynamicIndex,
+                  queryBounds,
+                ),
+                // Orders are unique across layers; entities are fresh each evaluation.
+                segment.order,
+              )
+            : dynamicIndex.queryWithCellKeys(
+                this.getImmutableDynamicQueryCellKeys(
+                  segment,
+                  dynamicIndex,
+                  queryBounds,
+                ),
+              )
           : dynamicIndex.query(queryBounds)
         : []
       const obstacleCandidates = this.cacheImmutableTraceGeometry
