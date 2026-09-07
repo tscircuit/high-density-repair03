@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { materializeRoutes } from "../lib/solvers/GlobalDrcForceImproveSolver/solverHelpers"
-import type { HighDensityRoute } from "../lib/types"
+import type { HighDensityRoute } from "../types/high-density-types"
 
 test("materializing routes preserves distinct nearby layer transitions", (): void => {
   const route: HighDensityRoute = {
