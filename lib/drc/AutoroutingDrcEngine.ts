@@ -71,8 +71,8 @@ type StaticObstacle = {
   width: number
   height: number
   radius?: number
-  localToWorld: Matrix
-  worldToLocal: Matrix
+  padToBoardTransform: Matrix
+  boardToPadTransform: Matrix
   layers: string[]
   pcbPortId?: string
 }
@@ -176,7 +176,7 @@ const getViaBounds = (via: Via): Bounds => {
 
 const getObstacleBounds = (obstacle: StaticObstacle): Bounds =>
   getBoundsFromPoints(
-    applyToPoints(obstacle.localToWorld, [
+    applyToPoints(obstacle.padToBoardTransform, [
       { x: -obstacle.width / 2, y: -obstacle.height / 2 },
       { x: obstacle.width / 2, y: -obstacle.height / 2 },
       { x: obstacle.width / 2, y: obstacle.height / 2 },
@@ -548,7 +548,7 @@ export class AutoroutingDrcEngine {
       const hasRotation =
         typeof obstacle.ccwRotationDegrees === "number" &&
         Number.isFinite(obstacle.ccwRotationDegrees)
-      const localToWorld = compose(
+      const padToBoardTransform = compose(
         translate(obstacle.center.x, obstacle.center.y),
         rotateDEG(hasRotation ? obstacle.ccwRotationDegrees! : 0),
       )
@@ -567,8 +567,8 @@ export class AutoroutingDrcEngine {
         y: obstacle.center.y,
         width: obstacle.width,
         height: obstacle.height,
-        localToWorld,
-        worldToLocal: inverse(localToWorld),
+        padToBoardTransform,
+        boardToPadTransform: inverse(padToBoardTransform),
         ...(isCircular
           ? { radius: Math.max(obstacle.width, obstacle.height) / 2 }
           : {}),
@@ -790,8 +790,8 @@ export class AutoroutingDrcEngine {
     const obstacleBounds = getObstacleLocalBounds(obstacle)
     const localSegment = {
       ...segment,
-      start: applyToPoint(obstacle.worldToLocal, segment.start),
-      end: applyToPoint(obstacle.worldToLocal, segment.end),
+      start: applyToPoint(obstacle.boardToPadTransform, segment.start),
+      end: applyToPoint(obstacle.boardToPadTransform, segment.end),
     }
     const shapeDistance =
       obstacle.radius === undefined
@@ -833,7 +833,7 @@ export class AutoroutingDrcEngine {
       center:
         obstacle.radius === undefined
           ? applyToPoint(
-              obstacle.localToWorld,
+              obstacle.padToBoardTransform,
               getClosestPointBetweenSegmentAndBounds(
                 localSegment,
                 obstacleBounds,
@@ -851,7 +851,7 @@ export class AutoroutingDrcEngine {
     this.lastRunStats.exactCheckCount += 1
 
     const obstacleBounds = getObstacleLocalBounds(obstacle)
-    const localVia = applyToPoint(obstacle.worldToLocal, via)
+    const localVia = applyToPoint(obstacle.boardToPadTransform, via)
     const pointToObstacleDistance =
       obstacle.radius === undefined
         ? Math.hypot(

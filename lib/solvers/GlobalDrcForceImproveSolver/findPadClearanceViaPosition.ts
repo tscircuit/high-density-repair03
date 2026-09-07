@@ -35,8 +35,8 @@ type PadRegion = {
   center: Point
   halfWidth: number
   halfHeight: number
-  localToWorld: Matrix
-  worldToLocal: Matrix
+  padToBoardTransform: Matrix
+  boardToPadTransform: Matrix
   circular: boolean
   clearance: number
   bounds: Bounds
@@ -51,7 +51,7 @@ const distanceToPad = (point: Point, pad: PadRegion) => {
   const dx = point.x - pad.center.x
   const dy = point.y - pad.center.y
   if (pad.circular) return Math.max(0, Math.hypot(dx, dy) - pad.halfWidth)
-  return pointToBoundsDistance(applyToPoint(pad.worldToLocal, point), {
+  return pointToBoundsDistance(applyToPoint(pad.boardToPadTransform, point), {
     minX: -pad.halfWidth,
     maxX: pad.halfWidth,
     minY: -pad.halfHeight,
@@ -83,7 +83,7 @@ const getPadBoundaries = (pad: PadRegion): Boundary[] => {
   const margin = pad.clearance + POSITION_EPSILON
   if (pad.circular) return [createCircle(pad.center, pad.halfWidth + margin)]
   const world = (x: number, y: number) =>
-    applyToPoint(pad.localToWorld, { x, y })
+    applyToPoint(pad.padToBoardTransform, { x, y })
   const { halfWidth: w, halfHeight: h } = pad
   return [
     createLine(world(-w, -h - margin), world(w, -h - margin)),
@@ -211,7 +211,7 @@ const getPadRegions = (
         !hasRotation &&
         obstacle.layers.length > 1 &&
         Math.abs(obstacle.width - obstacle.height) < 0.001
-      const localToWorld = compose(
+      const padToBoardTransform = compose(
         translate(obstacle.center.x, obstacle.center.y),
         rotateDEG(hasRotation ? obstacle.ccwRotationDegrees! : 0),
       )
@@ -225,7 +225,7 @@ const getPadRegions = (
       const clearance =
         viaRadius + (sameNet ? 0 : getViaEdgeToPadEdgeClearance(srj))
       const bounds = getBoundsFromPoints(
-        applyToPoints(localToWorld, [
+        applyToPoints(padToBoardTransform, [
           { x: -halfWidth, y: -halfHeight },
           { x: halfWidth, y: -halfHeight },
           { x: halfWidth, y: halfHeight },
@@ -237,8 +237,8 @@ const getPadRegions = (
         center: obstacle.center,
         halfWidth,
         halfHeight,
-        localToWorld,
-        worldToLocal: inverse(localToWorld),
+        padToBoardTransform,
+        boardToPadTransform: inverse(padToBoardTransform),
         circular,
         clearance,
         bounds: {
