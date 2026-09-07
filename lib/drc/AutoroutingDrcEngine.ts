@@ -474,6 +474,10 @@ const createTraceErrorMessage = (
  */
 export class AutoroutingDrcEngine {
   private readonly cacheImmutableTraceGeometry: boolean
+  private readonly immutableTracePairGeometry = new WeakMap<
+    object,
+    WeakMap<object, { gap: number; center?: Point }>
+  >()
   private readonly useConservativeRectObstaclePrecheck: boolean
   private readonly useTransientDynamicQueryMarkers: boolean
   private readonly immutableTraceGeometry = new WeakMap<
@@ -1060,15 +1064,34 @@ export class AutoroutingDrcEngine {
     if (this.areConnected(segmentA.netId, segmentB.netId)) return undefined
     this.lastRunStats.exactCheckCount += 1
 
-    const gap =
-      segmentToSegmentMinDistance(
-        segmentA.start,
-        segmentA.end,
-        segmentB.start,
-        segmentB.end,
-      ) -
-      segmentA.width / 2 -
-      segmentB.width / 2
+    // Cache only immutable geometry. Connectivity, IDs and public error objects
+    // are rebuilt for each evaluation; ordered weak keys do not retain candidates.
+    const keyA = this.cacheImmutableTraceGeometry
+      ? segmentA.geometryKey
+      : undefined
+    const keyB = this.cacheImmutableTraceGeometry
+      ? segmentB.geometryKey
+      : undefined
+    let byOther = keyA ? this.immutableTracePairGeometry.get(keyA) : undefined
+    let geometry = keyB ? byOther?.get(keyB) : undefined
+    const gap = geometry
+      ? geometry.gap
+      : segmentToSegmentMinDistance(
+          segmentA.start,
+          segmentA.end,
+          segmentB.start,
+          segmentB.end,
+        ) -
+        segmentA.width / 2 -
+        segmentB.width / 2
+    if (!geometry && keyA && keyB) {
+      geometry = { gap }
+      if (!byOther) {
+        byOther = new WeakMap()
+        this.immutableTracePairGeometry.set(keyA, byOther)
+      }
+      byOther.set(keyB, geometry)
+    }
     if (gap > this.traceClearance - DRC_EPSILON) return undefined
 
     const forwardId = `overlap_${segmentA.traceId}_${segmentB.traceId}`
@@ -1091,7 +1114,14 @@ export class AutoroutingDrcEngine {
         ...new Set([...segmentA.pcbPortIds, ...segmentB.pcbPortIds]),
       ],
       center: this.cacheImmutableTraceGeometry
-        ? { ...getClosestPointBetweenSegments(segmentA, segmentB) }
+        ? {
+            ...(geometry
+              ? (geometry.center ??= getClosestPointBetweenSegments(
+                  segmentA,
+                  segmentB,
+                ))
+              : getClosestPointBetweenSegments(segmentA, segmentB)),
+          }
         : getClosestPointBetweenSegments(segmentA, segmentB),
     }
   }
