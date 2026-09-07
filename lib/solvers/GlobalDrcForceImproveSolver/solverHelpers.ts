@@ -3096,7 +3096,7 @@ const deriveVias = (route: MutableRoute): MutableRoute["vias"] => {
       y: current.y,
     }
     const previousVia = vias.at(-1)
-    if (previousVia && areSameXY(previousVia, via)) continue
+    if (previousVia?.x === via.x && previousVia.y === via.y) continue
     vias.push(via)
   }
   return vias
@@ -3429,7 +3429,8 @@ const appendDistinctRoutePoint = (
   const previous = points.at(-1)
   if (
     previous &&
-    areSameXY(previous, point) &&
+    previous.x === point.x &&
+    previous.y === point.y &&
     previous.z === point.z &&
     previous.pcb_port_id === point.pcb_port_id
   ) {
