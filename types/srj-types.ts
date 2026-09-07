@@ -63,7 +63,7 @@ export interface SimpleRouteJson {
 
 export interface Obstacle {
   obstacleId?: string
-  type: "rect"
+  type: "rect" | "oval"
   layers: string[]
   zLayers?: number[]
   center: { x: number; y: number }
