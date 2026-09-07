@@ -82,7 +82,6 @@ export const convertHdRouteToSimplifiedRoute = (
         to_layer: mapZToLayerName(currentPoint.z, layerCount),
         ...(options?.viaDiameter ? { via_diameter: options.viaDiameter } : {}),
       })
-      continue
     }
 
     simplifiedRoute.push({
