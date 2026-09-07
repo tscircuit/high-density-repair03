@@ -3429,7 +3429,8 @@ const appendDistinctRoutePoint = (
   const previous = points.at(-1)
   if (
     previous &&
-    areSameXY(previous, point) &&
+    previous.x === point.x &&
+    previous.y === point.y &&
     previous.z === point.z &&
     previous.pcb_port_id === point.pcb_port_id
   ) {
