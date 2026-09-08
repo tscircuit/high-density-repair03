@@ -5,6 +5,7 @@ import {
 import type { ConnectivityMap } from "circuit-json-to-connectivity-map"
 import type { AutoroutingDrcEngine } from "../../drc"
 import { hasNewForeignCopperOverlap } from "./hasNewForeignCopperOverlap"
+import { hasNewViaPadOverlap } from "./hasNewViaPadOverlap"
 import { TraceSegmentMoveGuard } from "./TraceSegmentMoveGuard"
 import { RELAXED_DRC_OPTIONS } from "./drcPresets"
 import {
@@ -3974,6 +3975,7 @@ export const applySafeTraceLayerMoveForError = (
   }
 
   if (
+    hasNewViaPadOverlap(srj, route, { ...route, route: movedRoute }, connMap) ||
     hasNewForeignCopperOverlap(
       route,
       { ...route, route: movedRoute },
