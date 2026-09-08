@@ -6,6 +6,7 @@ This package contains a `GlobalDrcForceImproveSolver` for improving high-density
 
 ```bash
 bun install 
+bun install --cwd tests/fixtures/usb-terminal-clearance
 ```
 
 ## Develop

@@ -1,0 +1,12 @@
+{
+  "name": "usb-terminal-clearance-fixture",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "tscircuit": "0.0.2468",
+    "@tscircuit/core": "0.0.1871",
+    "@tscircuit/props": "0.0.646",
+    "@tscircuit/capacity-autorouter": "0.0.890",
+    "circuit-to-svg": "0.0.413"
+  }
+}
