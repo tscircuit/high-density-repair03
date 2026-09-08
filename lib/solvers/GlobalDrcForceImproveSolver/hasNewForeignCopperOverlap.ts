@@ -1,4 +1,7 @@
-import { segmentToSegmentMinDistance } from "@tscircuit/math-utils"
+import {
+  pointToSegmentDistance,
+  segmentToSegmentMinDistance,
+} from "@tscircuit/math-utils"
 import type { ConnectivityMap } from "circuit-json-to-connectivity-map"
 import type { HighDensityRoute } from "../../types/high-density-types"
 import { getRootConnectionName, sharesNet } from "./netUtils"
@@ -54,9 +57,25 @@ export const hasNewForeignCopperOverlap = (
   otherRoutes: readonly HighDensityRoute[],
   connMap?: ConnectivityMap,
 ): boolean => {
-  const previousCopper = new Set(getCopper(previousRoute).map(copperKey))
+  const previousCopper = getCopper(previousRoute)
+  const previousKeys = new Set(previousCopper.map(copperKey))
   const addedCopper = getCopper(candidateRoute).filter(
-    (copper) => !previousCopper.has(copperKey(copper)),
+    (copper) =>
+      !previousKeys.has(copperKey(copper)) &&
+      !previousCopper.some((previous) => {
+        if (previous.z !== copper.z || previous.radius < copper.radius) {
+          return false
+        }
+        // A split or narrowed segment can retain incoming copper without
+        // retaining its exact primitive key. Both endpoint discs must fit.
+        const margin = previous.radius - copper.radius
+        return (
+          pointToSegmentDistance(copper.start, previous.start, previous.end) <=
+            margin &&
+          pointToSegmentDistance(copper.end, previous.start, previous.end) <=
+            margin
+        )
+      }),
   )
   const root = getRootConnectionName(candidateRoute)
   for (const otherRoute of otherRoutes) {
