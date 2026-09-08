@@ -127,15 +127,15 @@ test("repairs the exact dataset01 circuit143 DRC chain without broad fallback", 
   expect(finalDrc.errors).toHaveLength(0)
   expect(solver.solved && finalDrc.errors.length > 0).toBe(false)
   expect(solver.stats.drcBranchPortfolioInitialDrcIssueCount).toBe(2)
-  expect(solver.stats.drcBranchPortfolioBaselineDrcIssueCount).toBe(1)
+  expect(solver.stats.drcBranchPortfolioBaselineDrcIssueCount).toBe(0)
   expect(solver.stats.finalDrcIssueCount).toBe(0)
   expect(solver.stats.drcBranchPortfolioBroadInitialDrcIssueCount).toBe(
     undefined,
   )
   expect(solver.stats.drcBranchPortfolioBroadBranchAttempted).toBe(false)
   expect(solver.stats.drcBranchPortfolioBroadBranchAccepted).toBe(false)
-  expect(solver.stats.drcBranchPortfolioSafeTraceLayerPhaseAttempted).toBe(true)
-  expect(solver.stats.drcBranchPortfolioSafeTraceLayerPhaseAccepted).toBe(true)
+  expect(solver.stats.drcBranchPortfolioSafeTraceLayerPhaseAttempted).toBe(false)
+  expect(solver.stats.drcBranchPortfolioSafeTraceLayerPhaseAccepted).toBe(false)
   expect(solver.stats.globalDrcForceImproveBroadForceAccepted).toBe(false)
   await expectSrjRepairSnapshot(
     srj,

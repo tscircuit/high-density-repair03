@@ -1,3 +1,10 @@
+import {
+  getMovingPointRectangleContact,
+  getPointRectangleSignedDistance,
+  type Rectangle,
+} from "./getMovingPointRectangleContact"
+import { getMovingPointSegmentContact } from "./getMovingPointSegmentContact"
+
 type Point = { x: number; y: number }
 
 type Segment = {
@@ -6,6 +13,10 @@ type Segment = {
   z: number
   traceRadius: number
   rootConnectionName: string
+  clearance?: number
+  pointAliases?: Point[]
+  rectangle?: Rectangle
+  sameNetRoots?: Set<string>
 }
 
 const cross = (ax: number, ay: number, bx: number, by: number): number =>
@@ -53,10 +64,10 @@ const segmentDistanceSquared = (
 }
 
 /**
- * A force step must not change trace ordering or worsen an existing copper
- * overlap. First-contact events prevent tunneling; a line search retains the
- * original separation up to the trace radii. Same-net copper and other layers
- * do not constrain movement. Points are checked together to preserve vias.
+ * A force step must not change trace ordering or worsen existing penetration.
+ * First-contact events preserve trace copper and via annulus clearance. Signed
+ * pad distances let an embedded via escape without moving deeper into copper.
+ * Points at a shared physical site are checked together before moving.
  */
 export class TraceSegmentMoveGuard {
   private readonly originalPoints = new Map<Point, Point>()
@@ -67,6 +78,7 @@ export class TraceSegmentMoveGuard {
   private readonly pendingUpdates = new Set<Segment>()
   private readonly cellSize: number
   private readonly maxTraceRadius: number
+  private readonly maxClearance: number
 
   constructor(
     segments: Segment[],
@@ -76,9 +88,18 @@ export class TraceSegmentMoveGuard {
       (maximum, segment) => Math.max(maximum, segment.traceRadius),
       0,
     )
+    this.maxClearance = segments.reduce(
+      (maximum, segment) => Math.max(maximum, segment.clearance ?? 0),
+      0,
+    )
     this.cellSize = Math.max(1, this.maxTraceRadius * 4)
     for (const segment of segments) {
-      for (const point of [segment.start, segment.end]) {
+      const points = new Set([
+        segment.start,
+        segment.end,
+        ...(segment.pointAliases ?? []),
+      ])
+      for (const point of points) {
         this.originalPoints.set(point, { x: point.x, y: point.y })
         const adjacent = this.segmentsByPoint.get(point) ?? []
         adjacent.push(segment)
@@ -162,6 +183,11 @@ export class TraceSegmentMoveGuard {
       obstacle: Segment
       minDistanceSquared: number
     }> = []
+    const rectanglePairs: Array<{
+      point: Point
+      rectangle: Rectangle
+      minDistance: number
+    }> = []
     let firstContact = Number.POSITIVE_INFINITY
     for (const segment of adjacent) {
       const moveStart = movedPoints.has(segment.start)
@@ -194,7 +220,8 @@ export class TraceSegmentMoveGuard {
         ay + (moveStart ? dy : 0),
         by + (moveEnd ? dy : 0),
       )
-      const searchRadius = segment.traceRadius + this.maxTraceRadius
+      const searchRadius =
+        segment.traceRadius + this.maxTraceRadius + this.maxClearance
       for (const obstacle of this.getNearbySegments(
         segment.z,
         minX - searchRadius,
@@ -202,10 +229,49 @@ export class TraceSegmentMoveGuard {
         minY - searchRadius,
         maxY + searchRadius,
       )) {
+        if (obstacle.rectangle) {
+          if (!segment.pointAliases) continue
+          const rectangle = obstacle.rectangle
+          let cached = this.pairClearance.get(segment)
+          if (!cached) {
+            cached = new Map()
+            this.pairClearance.set(segment, cached)
+          }
+          let minDistance = cached.get(obstacle)
+          if (minDistance === undefined) {
+            const originalDistance = getPointRectangleSignedDistance(
+              this.originalPoints.get(segment.start)!,
+              rectangle,
+            )
+            const clearance = obstacle.sameNetRoots?.has(
+              segment.rootConnectionName,
+            )
+              ? 0
+              : (obstacle.clearance ?? 0)
+            minDistance =
+              Math.min(segment.traceRadius + clearance, originalDistance) -
+              this.epsilon
+            cached.set(obstacle, minDistance)
+          }
+          rectanglePairs.push({ point: segment.start, rectangle, minDistance })
+          firstContact = Math.min(
+            firstContact,
+            getMovingPointRectangleContact(
+              segment.start,
+              { x: dx, y: dy },
+              rectangle,
+              minDistance,
+            ),
+          )
+          continue
+        }
         if (segment.rootConnectionName === obstacle.rootConnectionName) continue
         const c = obstacle.start
         const d = obstacle.end
-        const radius = segment.traceRadius + obstacle.traceRadius
+        const radius =
+          segment.traceRadius +
+          obstacle.traceRadius +
+          Math.max(segment.clearance ?? 0, obstacle.clearance ?? 0)
         if (
           radius > 0 &&
           Math.max(c.x, d.x) + radius >= minX &&
@@ -234,6 +300,42 @@ export class TraceSegmentMoveGuard {
             cached.set(obstacle, minDistanceSquared)
           }
           clearancePairs.push({ segment, obstacle, minDistanceSquared })
+          if (
+            segment.clearance !== undefined ||
+            obstacle.clearance !== undefined
+          ) {
+            const displacement = (point: Point): Point =>
+              movedPoints.has(point) ? { x: dx, y: dy } : { x: 0, y: 0 }
+            const contactRadius = Math.sqrt(minDistanceSquared)
+            for (const point of [segment.start, segment.end]) {
+              firstContact = Math.min(
+                firstContact,
+                getMovingPointSegmentContact(
+                  point,
+                  c,
+                  d,
+                  displacement(point),
+                  displacement(c),
+                  displacement(d),
+                  contactRadius,
+                ),
+              )
+            }
+            for (const point of [c, d]) {
+              firstContact = Math.min(
+                firstContact,
+                getMovingPointSegmentContact(
+                  point,
+                  segment.start,
+                  segment.end,
+                  displacement(point),
+                  displacement(segment.start),
+                  displacement(segment.end),
+                  contactRadius,
+                ),
+              )
+            }
+          }
         }
         if (
           Math.max(c.x, d.x) < minX ||
@@ -303,6 +405,15 @@ export class TraceSegmentMoveGuard {
     let scale =
       firstContact <= 1 ? Math.max(0, firstContact - this.epsilon / length) : 1
     const hasClearance = (t: number): boolean => {
+      for (const { point, rectangle, minDistance } of rectanglePairs) {
+        if (
+          getPointRectangleSignedDistance(
+            { x: point.x + dx * t, y: point.y + dy * t },
+            rectangle,
+          ) < minDistance
+        )
+          return false
+      }
       for (const { segment, obstacle, minDistanceSquared } of clearancePairs) {
         const a = movedPoints.has(segment.start)
           ? { x: segment.start.x + dx * t, y: segment.start.y + dy * t }
