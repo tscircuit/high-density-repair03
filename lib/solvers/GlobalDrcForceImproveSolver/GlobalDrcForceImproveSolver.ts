@@ -809,6 +809,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
               this.connMap,
               directionVariant,
               adjustViaClearance,
+              this.fixedObstacleRoutes,
             )
             if (!changed) continue
 

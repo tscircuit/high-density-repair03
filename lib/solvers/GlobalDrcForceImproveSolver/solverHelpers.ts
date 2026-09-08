@@ -4,6 +4,7 @@ import {
 } from "@tscircuit/math-utils"
 import type { ConnectivityMap } from "circuit-json-to-connectivity-map"
 import type { AutoroutingDrcEngine } from "../../drc"
+import { hasNewForeignCopperOverlap } from "./hasNewForeignCopperOverlap"
 import { TraceSegmentMoveGuard } from "./TraceSegmentMoveGuard"
 import { RELAXED_DRC_OPTIONS } from "./drcPresets"
 import {
@@ -3737,6 +3738,7 @@ export const applySafeTraceLayerMoveForError = (
   connMap?: ConnectivityMap,
   directionVariant = 0,
   adjustViaClearance = false,
+  fixedObstacleRoutes: HighDensityRoute[] = [],
 ) => {
   const errorType = getDrcErrorType(error)
   if (
@@ -3969,6 +3971,17 @@ export const applySafeTraceLayerMoveForError = (
     ) {
       return false
     }
+  }
+
+  if (
+    hasNewForeignCopperOverlap(
+      route,
+      { ...route, route: movedRoute },
+      [...routes, ...fixedObstacleRoutes],
+      connMap,
+    )
+  ) {
+    return false
   }
 
   route.route = movedRoute
