@@ -4,8 +4,13 @@ import {
 } from "@tscircuit/math-utils"
 import type { ConnectivityMap } from "circuit-json-to-connectivity-map"
 import type { AutoroutingDrcEngine } from "../../drc"
+import { TraceSegmentMoveGuard } from "./TraceSegmentMoveGuard"
 import { RELAXED_DRC_OPTIONS } from "./drcPresets"
-import { PREFERRED_VIA_TO_VIA_CLEARANCE, getDrcErrors } from "./getDrcErrors"
+import {
+  MIN_VIA_TO_VIA_CLEARANCE,
+  PREFERRED_VIA_TO_VIA_CLEARANCE,
+  getDrcErrors,
+} from "./getDrcErrors"
 import { convertToCircuitJson } from "../utils/convertToCircuitJson"
 import {
   getConnMapAwareSrj,
@@ -436,6 +441,125 @@ const collectSegments = (routes: MutableRoute[]): Segment[] =>
     collectSegmentsForRoute(route, routeIndex),
   )
 
+type ForceMoveGuard = {
+  guard: TraceSegmentMoveGuard
+  pointArrays: MutableRoute["route"][]
+  pointCounts: number[]
+  connMap?: ConnectivityMap
+  srj?: SimpleRouteJson
+}
+
+const forceMoveGuards = new WeakMap<MutableRoute[], ForceMoveGuard>()
+
+const getForceMoveGuard = (
+  routes: MutableRoute[],
+  connMap?: ConnectivityMap,
+  srj?: SimpleRouteJson,
+): TraceSegmentMoveGuard => {
+  const cached = forceMoveGuards.get(routes)
+  if (
+    cached &&
+    cached.pointCounts.length === routes.length &&
+    cached.pointCounts.every(
+      (count, index) =>
+        routes[index]!.route === cached.pointArrays[index] &&
+        routes[index]!.route.length === count,
+    )
+  ) {
+    return cached.guard
+  }
+  const connectivity = connMap ?? cached?.connMap
+  const scenario = srj ?? cached?.srj
+  const guard = new TraceSegmentMoveGuard([
+    ...collectSegments(routes).map((segment) => ({
+      start: segment.start,
+      end: segment.end,
+      z: segment.z,
+      traceRadius:
+        (routes[segment.routeIndex]!.route[segment.startIndex]!
+          .traceThickness ?? routes[segment.routeIndex]!.traceThickness) / 2,
+      rootConnectionName:
+        connectivity?.getNetConnectedToId(segment.rootConnectionName) ??
+        segment.rootConnectionName,
+    })),
+    ...collectViaNodes(routes).flatMap((via) => {
+      const route = routes[via.routeIndex]!
+      const point = route.route[via.pointIndexes[0]!]!
+      const minZ = Math.min(...via.zLayers)
+      const maxZ = Math.max(...via.zLayers)
+      return Array.from({ length: maxZ - minZ + 1 }, (_, index) => ({
+        start: point,
+        end: point,
+        z: minZ + index,
+        traceRadius: via.radius,
+        clearance: MIN_VIA_TO_VIA_CLEARANCE,
+        pointAliases: via.pointIndexes.map(
+          (pointIndex) => route.route[pointIndex]!,
+        ),
+        rootConnectionName:
+          connectivity?.getNetConnectedToId(via.rootConnectionName) ??
+          via.rootConnectionName,
+      }))
+    }),
+    ...(scenario?.obstacles ?? [])
+      .filter((obstacle) => !obstacle.isCopperPour)
+      .flatMap((obstacle) => {
+        const angle = ((obstacle.ccwRotationDegrees ?? 0) * Math.PI) / 180
+        const cos = Math.cos(angle)
+        const sin = Math.sin(angle)
+        const circular =
+          obstacle.ccwRotationDegrees === undefined &&
+          obstacle.layers.length > 1 &&
+          Math.abs(obstacle.width - obstacle.height) < 0.001
+        const halfWidth = circular
+          ? Math.max(obstacle.width, obstacle.height) / 2
+          : obstacle.width / 2
+        const halfHeight = circular ? halfWidth : obstacle.height / 2
+        const extentX = Math.abs(cos) * halfWidth + Math.abs(sin) * halfHeight
+        const extentY = Math.abs(sin) * halfWidth + Math.abs(cos) * halfHeight
+        const sameNetRoots = new Set(
+          obstacle.connectedTo.flatMap((id) => [
+            id,
+            connectivity?.getNetConnectedToId(id) ?? id,
+          ]),
+        )
+        return getObstacleZLayers(obstacle, scenario!.layerCount).map((z) => ({
+          start: {
+            x: obstacle.center.x - extentX,
+            y: obstacle.center.y - extentY,
+            z,
+          },
+          end: {
+            x: obstacle.center.x + extentX,
+            y: obstacle.center.y + extentY,
+            z,
+          },
+          z,
+          traceRadius: 0,
+          rootConnectionName: "",
+          clearance: getViaEdgeToPadEdgeClearance(scenario!),
+          rectangle: {
+            center: obstacle.center,
+            halfWidth,
+            halfHeight,
+            cos,
+            sin,
+            circular,
+          },
+          sameNetRoots,
+        }))
+      }),
+  ])
+  forceMoveGuards.set(routes, {
+    guard,
+    connMap: connectivity,
+    srj: scenario,
+    pointArrays: routes.map((route) => route.route),
+    pointCounts: routes.map((route) => route.route.length),
+  })
+  return guard
+}
+
 const getViaBounds = (via: ViaNode): Bounds2D => ({
   minX: via.x,
   minY: via.y,
@@ -639,7 +763,7 @@ export const getRectRepulsion = (
   }
 }
 
-const getRepulsionPointForError = (
+const getRepulsionObstacleForError = (
   srj: SimpleRouteJson,
   error: Record<string, unknown>,
   center: Point,
@@ -647,24 +771,33 @@ const getRepulsionPointForError = (
 ) => {
   const message = error.message
   if (typeof message !== "string" || !message.includes("pcb_")) {
-    return center
+    return undefined
   }
 
   const referencedPadIds = Array.isArray(error.pcb_pad_ids)
     ? error.pcb_pad_ids.filter((id): id is string => typeof id === "string")
     : []
-  const referencedObstacle = srj.obstacles.find(
+  const referencedObstacle = getNearestObstacleNearPoint(
+    srj,
+    center,
+    Number.POSITIVE_INFINITY,
     (obstacle) =>
       referencedPadIds.some((id) => obstacle.connectedTo.includes(id)) &&
       (obstacleFilter?.(obstacle) ?? true),
   )
-  if (referencedObstacle) return referencedObstacle.center
+  if (referencedObstacle) return referencedObstacle
 
-  return (
-    getNearestObstacleNearPoint(srj, center, 0.6, obstacleFilter)?.center ??
-    center
-  )
+  return getNearestObstacleNearPoint(srj, center, 0.6, obstacleFilter)
 }
+
+const getRepulsionPointForError = (
+  srj: SimpleRouteJson,
+  error: Record<string, unknown>,
+  center: Point,
+  obstacleFilter?: (obstacle: SimpleRouteJson["obstacles"][number]) => boolean,
+) =>
+  getRepulsionObstacleForError(srj, error, center, obstacleFilter)?.center ??
+  center
 
 const getCoincidentPointIndexes = (route: MutableRoute, pointIndex: number) => {
   const point = route.route[pointIndex]
@@ -1125,6 +1258,7 @@ const getRoutePointIndexesMinBoardClearance = (
 }
 
 const getSafeTranslationForPointIndexes = (
+  routes: MutableRoute[],
   srj: SimpleRouteJson,
   route: MutableRoute,
   pointIndexes: number[],
@@ -1136,13 +1270,18 @@ const getSafeTranslationForPointIndexes = (
     (left, right) => left - right,
   )
   if (sortedPointIndexes.length === 0) return undefined
-  const translation = clipPointIndexesTranslationAwayFromBoardEdge(
+  const boardTranslation = clipPointIndexesTranslationAwayFromBoardEdge(
     srj,
     route,
     sortedPointIndexes,
     dx,
     dy,
     featureRadius,
+  )
+  const translation = getForceMoveGuard(routes, undefined, srj).constrain(
+    sortedPointIndexes.map((index) => route.route[index]!),
+    boardTranslation.x,
+    boardTranslation.y,
   )
   if (
     Math.abs(translation.x) <= POSITION_EPSILON &&
@@ -1211,6 +1350,7 @@ const moveRoutePoint = (
   const pointIndexes = getMovableCoincidentPointIndexes(route, pointIndex)
   if (!pointIndexes) return false
   const translation = getSafeTranslationForPointIndexes(
+    routes,
     srj,
     route,
     pointIndexes,
@@ -1320,6 +1460,7 @@ const moveSegmentByTranslation = (
 
   const pointIndexes = [...new Set([...startIndexes, ...endIndexes])]
   const translation = getSafeTranslationForPointIndexes(
+    routes,
     srj,
     route,
     pointIndexes,
@@ -1345,6 +1486,7 @@ const moveSegmentByTranslation = (
 }
 
 const moveRoutePointIndexesByTranslation = (
+  routes: MutableRoute[],
   route: MutableRoute,
   pointIndexes: number[],
   dx: number,
@@ -1353,6 +1495,7 @@ const moveRoutePointIndexesByTranslation = (
   featureRadius: number,
 ) => {
   const translation = getSafeTranslationForPointIndexes(
+    routes,
     srj,
     route,
     pointIndexes,
@@ -1466,6 +1609,7 @@ const moveRouteByTranslationPreservingEndpointConnections = (
 
   const pointIndexes = route.route.map((_, pointIndex) => pointIndex)
   const translation = getSafeTranslationForPointIndexes(
+    routes,
     srj,
     route,
     pointIndexes,
@@ -1668,6 +1812,7 @@ const moveCollinearSegmentRunByTranslation = (
   if (!movablePointIndexes) return false
 
   return moveRoutePointIndexesByTranslation(
+    routes,
     route,
     movablePointIndexes,
     dx,
@@ -1805,6 +1950,7 @@ const moveLocalObstacleSpanByTranslation = (
   if (pointIndexes.length <= 2) return false
 
   return moveRoutePointIndexesByTranslation(
+    routes,
     route,
     pointIndexes,
     dx,
@@ -1839,6 +1985,47 @@ const getDirectionAwayFromPoint = (segment: Segment, point: Point) => {
             }
           : { x: 1, y: 0 },
   }
+}
+
+const insertGuardedDetourPoints = (
+  routes: MutableRoute[],
+  segment: Segment,
+  targetPoints: MutableRoute["route"],
+  srj: SimpleRouteJson,
+): boolean => {
+  const route = routes[segment.routeIndex]!
+  // Split the original segment before applying the displacement so inserted
+  // vertices obey the same first-contact constraint as existing vertices.
+  const points = targetPoints.map((target) => {
+    const projection = pointToSegmentProjection(target, segment)
+    return {
+      ...target,
+      x: projection.x,
+      y: projection.y,
+      pcb_port_id: undefined,
+    }
+  })
+  route.route.splice(segment.endIndex, 0, ...points)
+  let changed = false
+  for (let index = 0; index < points.length; index += 1) {
+    const point = points[index]!
+    const target = targetPoints[index]!
+    const translation = getSafeTranslationForPointIndexes(
+      routes,
+      srj,
+      route,
+      [segment.endIndex + index],
+      target.x - point.x,
+      target.y - point.y,
+      segment.radius,
+    )
+    if (!translation) continue
+    point.x += translation.x
+    point.y += translation.y
+    changed = true
+  }
+  if (!changed) route.route.splice(segment.endIndex, points.length)
+  return changed
 }
 
 const insertDetourPointAwayFromPoint = (
@@ -1908,8 +2095,7 @@ const insertDetourPointAwayFromPoint = (
     return false
   }
 
-  route.route.splice(segment.endIndex, 0, detourPoint)
-  return true
+  return insertGuardedDetourPoints(routes, segment, [detourPoint], srj)
 }
 
 const translateVia = (
@@ -1918,15 +2104,31 @@ const translateVia = (
   dx: number,
   dy: number,
   srj: SimpleRouteJson,
+  siteVias: ViaNode[] = [via],
 ) => {
   const route = routes[via.routeIndex]
   if (!route) return false
-  const translation = clipPointTranslationAwayFromBoardEdge(
+  // Earlier trace forces can move this via's points while the pass still holds
+  // its original descriptor. Clip and apply exactly the current-point movement.
+  const currentPoint = route.route[via.pointIndexes[0]!]
+  if (!currentPoint) return false
+  via.x = currentPoint.x
+  via.y = currentPoint.y
+  const boardTranslation = clipPointTranslationAwayFromBoardEdge(
     srj,
     via,
     dx,
     dy,
     via.radius,
+  )
+  const translation = getForceMoveGuard(routes, undefined, srj).constrain(
+    siteVias.flatMap((siteVia) =>
+      siteVia.pointIndexes.map(
+        (index) => routes[siteVia.routeIndex]!.route[index]!,
+      ),
+    ),
+    boardTranslation.x,
+    boardTranslation.y,
   )
   if (
     Math.abs(translation.x) <= POSITION_EPSILON &&
@@ -1957,11 +2159,14 @@ const translateVia = (
   via.x += translation.x
   via.y += translation.y
   clampToBounds(via, srj.bounds)
-  for (const pointIndex of via.pointIndexes) {
-    const point = route.route[pointIndex]
-    if (!point) continue
-    point.x = via.x
-    point.y = via.y
+  for (const siteVia of siteVias) {
+    siteVia.x = via.x
+    siteVia.y = via.y
+    for (const pointIndex of siteVia.pointIndexes) {
+      const point = routes[siteVia.routeIndex]!.route[pointIndex]!
+      point.x = via.x
+      point.y = via.y
+    }
   }
   return true
 }
@@ -2005,21 +2210,7 @@ const translateSameRootViaSite = (
   const representativeVia = siteVias.reduce((largest, candidate) =>
     candidate.radius > largest.radius ? candidate : largest,
   )
-  if (!translateVia(routes, representativeVia, dx, dy, srj)) return false
-
-  for (const candidate of siteVias) {
-    if (candidate === representativeVia) continue
-    candidate.x = representativeVia.x
-    candidate.y = representativeVia.y
-    const route = routes[candidate.routeIndex]!
-    for (const pointIndex of candidate.pointIndexes) {
-      const point = route.route[pointIndex]
-      if (!point) continue
-      point.x = representativeVia.x
-      point.y = representativeVia.y
-    }
-  }
-  return true
+  return translateVia(routes, representativeVia, dx, dy, srj, siteVias)
 }
 
 const moveVia = (
@@ -2271,8 +2462,7 @@ const moveSegmentAwayFromObstacle = (
     return false
   }
 
-  route.route.splice(segment.endIndex, 0, ...normalizedDetourPoints)
-  return true
+  return insertGuardedDetourPoints(routes, segment, normalizedDetourPoints, srj)
 }
 
 const getNearestSegment = (
@@ -2329,6 +2519,28 @@ const getNearestViaPair = (vias: ViaNode[], point: Point) => {
     .map(({ via }) => via)
 
   return nearest.length === 2 ? (nearest as [ViaNode, ViaNode]) : undefined
+}
+
+const moveViaAwayFromObstacle = (
+  routes: MutableRoute[],
+  via: ViaNode,
+  obstacle: SimpleRouteJson["obstacles"][number],
+  srj: SimpleRouteJson,
+): boolean => {
+  const repulsion = getRectRepulsion(
+    via,
+    obstacle,
+    via.radius + getViaEdgeToPadEdgeClearance(srj) + POSITION_EPSILON,
+  )
+  if (!repulsion) return false
+  const distance = Math.min(MAX_ERROR_MOVE, repulsion.penetration)
+  return moveVia(
+    routes,
+    via,
+    repulsion.direction.x * distance,
+    repulsion.direction.y * distance,
+    srj,
+  )
 }
 
 const moveViaAwayFromPoint = (
@@ -2651,7 +2863,30 @@ const pushSegmentSegmentPair = (
       : fallbackLength > POSITION_EPSILON
         ? (leftVectorX / fallbackLength) * fallbackSign
         : 0
-  const move = Math.min(BROAD_MAX_MOVE, penetration / 2)
+  const leftRoute = routes[left.routeIndex]!
+  const rightRoute = routes[right.routeIndex]!
+  const weights = [
+    getMovableCoincidentPointIndexes(leftRoute, left.startIndex)
+      ? 1 - candidate.leftT
+      : 0,
+    getMovableCoincidentPointIndexes(leftRoute, left.endIndex)
+      ? candidate.leftT
+      : 0,
+    getMovableCoincidentPointIndexes(rightRoute, right.startIndex)
+      ? 1 - candidate.rightT
+      : 0,
+    getMovableCoincidentPointIndexes(rightRoute, right.endIndex)
+      ? candidate.rightT
+      : 0,
+  ]
+  const contactResponse = weights.reduce((sum, weight) => sum + weight ** 2, 0)
+  if (contactResponse === 0) return false
+  // A vertex's contact weight also scales its contribution to separation.
+  // Normalize by that response while retaining the existing per-vertex cap.
+  const move = Math.min(
+    BROAD_MAX_MOVE / Math.max(...weights),
+    penetration / contactResponse,
+  )
   const movedLeft = moveSegmentByDistribution(
     routes,
     left,
@@ -2907,6 +3142,7 @@ const applyBroadRepulsionPass = (
   connMap?: ConnectivityMap,
   allowSameNetViaPairs = false,
 ): boolean => {
+  getForceMoveGuard(routes, connMap, srj)
   let changed = false
   const vias = collectViaNodes(routes)
   const segments = collectSegments(routes)
@@ -3007,6 +3243,7 @@ const applyBroadViaSegmentCleanupPass = (
   routes: MutableRoute[],
   connMap?: ConnectivityMap,
 ): boolean => {
+  getForceMoveGuard(routes, connMap, srj)
   let changed = false
   const vias = collectViaNodes(routes)
   const segments = collectSegments(routes)
@@ -4753,11 +4990,11 @@ export const applyDrcErrorForces = (
   allowSharedViaSiteMove = true,
   enableTraceViaOwnerTargeting = false,
 ) => {
+  getForceMoveGuard(routes, connMap, srj)
   let changed = false
-  const vias = collectViaNodes(routes)
-  const segments = collectSegments(routes)
-
   for (const error of errors) {
+    const vias = collectViaNodes(routes)
+    const segments = collectSegments(routes)
     const center = getErrorCenter(error)
     if (!center) continue
     let repulsionPoint = center
@@ -4811,9 +5048,18 @@ export const applyDrcErrorForces = (
       } else {
         const nearestVia = getNearestVia(vias, center, targetRouteIndex)
         if (nearestVia) {
+          const obstacle = isViaPadError
+            ? getRepulsionObstacleForError(srj, error, center)
+            : undefined
           changed =
-            moveViaAwayFromPoint(routes, nearestVia, repulsionPoint, srj) ||
-            changed
+            (obstacle
+              ? moveViaAwayFromObstacle(routes, nearestVia, obstacle, srj)
+              : moveViaAwayFromPoint(
+                  routes,
+                  nearestVia,
+                  repulsionPoint,
+                  srj,
+                )) || changed
         }
       }
       continue
@@ -4969,9 +5215,10 @@ export const applyDrcErrorForces = (
       changed = movedSegment || changed
     }
 
+    // Segment repair may insert a detour and shift every later via point index.
     const nearestVia = hasTargetedTraceViaMetadata
       ? undefined
-      : getNearestVia(vias, center)
+      : getNearestVia(collectViaNodes(routes), center)
     if (
       nearestVia &&
       Math.hypot(nearestVia.x - center.x, nearestVia.y - center.y) < 0.35

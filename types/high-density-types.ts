@@ -39,6 +39,7 @@ export type HighDensityIntraNodeRoute = {
     x: number
     y: number
     z: number
+    traceThickness?: number
     pcb_port_id?: string
     insideJumperPad?: boolean
     toNextSegmentType?: "through_obstacle"

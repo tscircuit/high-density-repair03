@@ -29,7 +29,7 @@ const getSegmentXAtY = (route: HighDensityRoute, y: number) => {
   return start.x + (end.x - start.x) * t
 }
 
-test("propagates a trace-pair displacement into a newly constrained via", () => {
+test("clears a trace-pair constraint without displacing the neighboring via", () => {
   const srj: SimpleRouteJson = {
     bounds: { minX: -2, minY: -3, maxX: 2, maxY: 3 },
     connections: ["net_a", "net_b", "net_c"].map((name) => ({
@@ -158,14 +158,5 @@ test("propagates a trace-pair displacement into a newly constrained via", () => 
   expect(solver.stats.globalDrcForceImproveBroadForceAccepted).toBe(false)
   expect(getSegmentXAtY(solver.getOutput()[0]!, 0.5)).toBeGreaterThan(0)
   expect(Math.max(...solver.getOutput()[2]!.route.map(({ x }) => x))).toBe(0.8)
-  expect(
-    solver
-      .getOutput()[2]!
-      .route.some(
-        (point, pointIndex, points) =>
-          point.x > 0.31 &&
-          points[pointIndex + 1]?.z !== point.z &&
-          points[pointIndex + 1]?.x === point.x,
-      ),
-  ).toBe(true)
+  expect(solver.getOutput()[2]).toEqual(hdRoutes[2])
 })
