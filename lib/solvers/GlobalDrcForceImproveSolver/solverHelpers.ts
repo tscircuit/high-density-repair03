@@ -3577,13 +3577,21 @@ export const applySafeTraceLayerMoveForError = (
   }
 
   const spanStart = originalPoints[spanStartIndex]!
+  const beforeSpan = originalPoints[spanStartIndex - 1]
+  // A nearby wire vertex is not an existing via. Keep the departure vertex
+  // unless the adjacent point is exactly the other layer of this transition.
   const startsAtExistingTransition =
-    spanStartIndex > 0 &&
-    areSameXY(originalPoints[spanStartIndex - 1]!, spanStart)
+    beforeSpan !== undefined &&
+    beforeSpan.z !== spanStart.z &&
+    beforeSpan.x === spanStart.x &&
+    beforeSpan.y === spanStart.y
   const spanEnd = originalPoints[spanEndIndex]!
+  const afterSpan = originalPoints[spanEndIndex + 1]
   const endsAtExistingTransition =
-    spanEndIndex < originalPoints.length - 1 &&
-    areSameXY(originalPoints[spanEndIndex + 1]!, spanEnd)
+    afterSpan !== undefined &&
+    afterSpan.z !== spanEnd.z &&
+    afterSpan.x === spanEnd.x &&
+    afterSpan.y === spanEnd.y
 
   if (movesStartTerminal) {
     appendDistinctRoutePoint(movedRoute, first)
