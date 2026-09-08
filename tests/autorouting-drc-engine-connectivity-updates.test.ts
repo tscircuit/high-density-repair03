@@ -4,7 +4,10 @@ import { AutoroutingDrcEngine } from "../lib"
 import type { SimpleRouteJson, SimplifiedPcbTraces } from "../lib/types"
 
 test("refreshes obstacle membership after connectivity changes between evaluations", (): void => {
-  const connMap = new ConnectivityMap({ signal_net: ["signal"], pad_net: ["pad"] })
+  const connMap = new ConnectivityMap({
+    signal_net: ["signal"],
+    pad_net: ["pad"],
+  })
   const srj: SimpleRouteJson = {
     layerCount: 2,
     minTraceWidth: 0.1,

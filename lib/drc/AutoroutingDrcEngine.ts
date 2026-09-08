@@ -194,7 +194,10 @@ const getObstacleLocalBounds = (obstacle: StaticObstacle): Bounds => ({
 type IndexedSpatialItem<T> = { item: T; visitedQuery: number }
 
 class SpatialHash<T> {
-  private readonly columns = new Map<number, Map<number, IndexedSpatialItem<T>[]>>()
+  private readonly columns = new Map<
+    number,
+    Map<number, IndexedSpatialItem<T>[]>
+  >()
   private readonly indexedItems = new Map<T, IndexedSpatialItem<T>>()
   private queryId = 0
 
@@ -400,7 +403,10 @@ export class AutoroutingDrcEngine {
   private readonly canonicalNetByAlias = new Map<string, string>()
   private readonly connMapNetByCanonicalNet = new Map<string, string>()
   private readonly obstacles: StaticObstacle[]
-  private readonly obstacleNetCache = new Map<StaticObstacle, Map<string, boolean>>()
+  private readonly obstacleNetCache = new Map<
+    StaticObstacle,
+    Map<string, boolean>
+  >()
   private readonly obstacleIndexesByLayer = new Map<
     string,
     SpatialHash<StaticObstacle>
