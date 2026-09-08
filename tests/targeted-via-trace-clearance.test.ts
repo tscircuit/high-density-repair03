@@ -94,11 +94,12 @@ test("opts into promoted via-owner targeting while retaining the legacy default"
       connectionName: "unrelated",
       route: [
         { x: -1, y: 1, z: 0 },
-        { x: 0.05, y: 0, z: 0 },
-        { x: 0.05, y: 0, z: 1 },
+        // Keep the distractor via clear of the owner trace itself.
+        { x: 0.05, y: 0.15, z: 0 },
+        { x: 0.05, y: 0.15, z: 1 },
         { x: 1, y: 1, z: 1 },
       ],
-      vias: [{ x: 0.05, y: 0 }],
+      vias: [{ x: 0.05, y: 0.15 }],
       traceThickness: 0.1,
       viaDiameter: 0.3,
     },

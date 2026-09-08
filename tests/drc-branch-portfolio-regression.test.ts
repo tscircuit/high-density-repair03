@@ -44,7 +44,8 @@ test("keeps the baseline when the broad candidate has more DRC errors", () => {
     obstacles: [
       {
         type: "rect",
-        center: { x: 5, y: 5 },
+        // Center the obstacle between the traces so outward repair preserves order.
+        center: { x: 5, y: 5.01 },
         width: 1,
         height: 0.2,
         layers: ["top"],

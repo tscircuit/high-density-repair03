@@ -2718,7 +2718,30 @@ const pushSegmentSegmentPair = (
       : fallbackLength > POSITION_EPSILON
         ? (leftVectorX / fallbackLength) * fallbackSign
         : 0
-  const move = Math.min(BROAD_MAX_MOVE, penetration / 2)
+  const leftRoute = routes[left.routeIndex]!
+  const rightRoute = routes[right.routeIndex]!
+  const weights = [
+    getMovableCoincidentPointIndexes(leftRoute, left.startIndex)
+      ? 1 - candidate.leftT
+      : 0,
+    getMovableCoincidentPointIndexes(leftRoute, left.endIndex)
+      ? candidate.leftT
+      : 0,
+    getMovableCoincidentPointIndexes(rightRoute, right.startIndex)
+      ? 1 - candidate.rightT
+      : 0,
+    getMovableCoincidentPointIndexes(rightRoute, right.endIndex)
+      ? candidate.rightT
+      : 0,
+  ]
+  const contactResponse = weights.reduce((sum, weight) => sum + weight ** 2, 0)
+  if (contactResponse === 0) return false
+  // A vertex's contact weight also scales its contribution to separation.
+  // Normalize by that response while retaining the existing per-vertex cap.
+  const move = Math.min(
+    BROAD_MAX_MOVE / Math.max(...weights),
+    penetration / contactResponse,
+  )
   const movedLeft = moveSegmentByDistribution(
     routes,
     left,
