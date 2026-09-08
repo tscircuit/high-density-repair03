@@ -379,6 +379,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       this.autoroutingDrcEngine,
     )
     if (
+      this.params.isValidCandidate?.(broadInputRoutes) === false ||
       !isDrcSnapshotCountBetter(this.broadInputSnapshot, this.baselineSnapshot!)
     ) {
       this.startSafeTraceLayerPhase(

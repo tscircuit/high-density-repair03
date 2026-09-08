@@ -46,6 +46,8 @@ export type GlobalDrcForceImproveSolverParams = {
    * than the solver input under the caller's final acceptance criteria.
    */
   referenceDrcEvaluator?: DrcEvaluator
+  /** Hard candidate feasibility checked independently of DRC ranking. */
+  isValidCandidate?: (routes: HighDensityRoute[]) => boolean
   /**
    * Reusable optimized evaluator for the autorouting hot path. A new engine is
    * created automatically when neither this nor `drcEvaluator` is provided.
