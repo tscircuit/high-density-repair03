@@ -24,8 +24,7 @@ export const getMovingPointSegmentContact = (
   radius: number,
 ): number => {
   let firstContact = Number.POSITIVE_INFINITY
-  const test = (t: number): boolean =>
-    t > 1e-12 && t <= Math.min(1, firstContact)
+  const test = (t: number): boolean => t >= 0 && t <= Math.min(1, firstContact)
   for (const [endpoint, movement] of [
     [start, startMove],
     [end, endMove],

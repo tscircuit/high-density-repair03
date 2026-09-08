@@ -68,7 +68,7 @@ export const getMovingPointRectangleContact = (
       enter = Math.max(enter, Math.min(a, b))
       exit = Math.min(exit, Math.max(a, b))
     }
-    return enter > 1e-12 && enter < exit ? enter : Number.POSITIVE_INFINITY
+    return enter < exit ? enter : Number.POSITIVE_INFINITY
   }
   const corners = [
     { x: -rectangle.halfWidth, y: -rectangle.halfHeight },

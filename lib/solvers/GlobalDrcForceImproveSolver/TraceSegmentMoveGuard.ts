@@ -248,9 +248,10 @@ export class TraceSegmentMoveGuard {
             )
               ? 0
               : (obstacle.clearance ?? 0)
-            minDistance =
-              Math.min(segment.traceRadius + clearance, originalDistance) -
-              this.epsilon
+            minDistance = Math.min(
+              segment.traceRadius + clearance,
+              originalDistance,
+            )
             cached.set(obstacle, minDistance)
           }
           rectanglePairs.push({ point: segment.start, rectangle, minDistance })
@@ -286,17 +287,18 @@ export class TraceSegmentMoveGuard {
           }
           let minDistanceSquared = cached.get(obstacle)
           if (minDistanceSquared === undefined) {
-            const originalDistance = Math.sqrt(
-              segmentDistanceSquared(
-                this.originalPoints.get(segment.start)!,
-                this.originalPoints.get(segment.end)!,
-                this.originalPoints.get(c)!,
-                this.originalPoints.get(d)!,
-              ),
+            const originalDistanceSquared = segmentDistanceSquared(
+              this.originalPoints.get(segment.start)!,
+              this.originalPoints.get(segment.end)!,
+              this.originalPoints.get(c)!,
+              this.originalPoints.get(d)!,
             )
-            minDistanceSquared =
-              Math.max(0, Math.min(radius, originalDistance) - this.epsilon) **
-              2
+            // Movement precision controls where a search stops; it must not
+            // reduce the physical copper separation accepted by that search.
+            minDistanceSquared = Math.min(
+              radius * radius,
+              originalDistanceSquared,
+            )
             cached.set(obstacle, minDistanceSquared)
           }
           clearancePairs.push({ segment, obstacle, minDistanceSquared })
