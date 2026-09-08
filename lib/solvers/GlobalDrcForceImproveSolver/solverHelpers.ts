@@ -4,6 +4,7 @@ import {
 } from "@tscircuit/math-utils"
 import type { ConnectivityMap } from "circuit-json-to-connectivity-map"
 import type { AutoroutingDrcEngine } from "../../drc"
+import { TraceSegmentMoveGuard } from "./TraceSegmentMoveGuard"
 import { RELAXED_DRC_OPTIONS } from "./drcPresets"
 import { PREFERRED_VIA_TO_VIA_CLEARANCE, getDrcErrors } from "./getDrcErrors"
 import { convertToCircuitJson } from "../utils/convertToCircuitJson"
@@ -435,6 +436,54 @@ const collectSegments = (routes: MutableRoute[]): Segment[] =>
   routes.flatMap((route, routeIndex) =>
     collectSegmentsForRoute(route, routeIndex),
   )
+
+type ForceMoveGuard = {
+  guard: TraceSegmentMoveGuard
+  pointArrays: MutableRoute["route"][]
+  pointCounts: number[]
+  connMap?: ConnectivityMap
+}
+
+const forceMoveGuards = new WeakMap<MutableRoute[], ForceMoveGuard>()
+
+const getForceMoveGuard = (
+  routes: MutableRoute[],
+  connMap?: ConnectivityMap,
+): TraceSegmentMoveGuard => {
+  const cached = forceMoveGuards.get(routes)
+  if (
+    cached &&
+    cached.pointCounts.length === routes.length &&
+    cached.pointCounts.every(
+      (count, index) =>
+        routes[index]!.route === cached.pointArrays[index] &&
+        routes[index]!.route.length === count,
+    )
+  ) {
+    return cached.guard
+  }
+  const connectivity = connMap ?? cached?.connMap
+  const guard = new TraceSegmentMoveGuard(
+    collectSegments(routes).map((segment) => ({
+      start: segment.start,
+      end: segment.end,
+      z: segment.z,
+      traceRadius:
+        (routes[segment.routeIndex]!.route[segment.startIndex]!.traceThickness ??
+          routes[segment.routeIndex]!.traceThickness) / 2,
+      rootConnectionName:
+        connectivity?.getNetConnectedToId(segment.rootConnectionName) ??
+        segment.rootConnectionName,
+    })),
+  )
+  forceMoveGuards.set(routes, {
+    guard,
+    connMap: connectivity,
+    pointArrays: routes.map((route) => route.route),
+    pointCounts: routes.map((route) => route.route.length),
+  })
+  return guard
+}
 
 const getViaBounds = (via: ViaNode): Bounds2D => ({
   minX: via.x,
@@ -1125,6 +1174,7 @@ const getRoutePointIndexesMinBoardClearance = (
 }
 
 const getSafeTranslationForPointIndexes = (
+  routes: MutableRoute[],
   srj: SimpleRouteJson,
   route: MutableRoute,
   pointIndexes: number[],
@@ -1136,13 +1186,18 @@ const getSafeTranslationForPointIndexes = (
     (left, right) => left - right,
   )
   if (sortedPointIndexes.length === 0) return undefined
-  const translation = clipPointIndexesTranslationAwayFromBoardEdge(
+  const boardTranslation = clipPointIndexesTranslationAwayFromBoardEdge(
     srj,
     route,
     sortedPointIndexes,
     dx,
     dy,
     featureRadius,
+  )
+  const translation = getForceMoveGuard(routes).constrain(
+    sortedPointIndexes.map((index) => route.route[index]!),
+    boardTranslation.x,
+    boardTranslation.y,
   )
   if (
     Math.abs(translation.x) <= POSITION_EPSILON &&
@@ -1211,6 +1266,7 @@ const moveRoutePoint = (
   const pointIndexes = getMovableCoincidentPointIndexes(route, pointIndex)
   if (!pointIndexes) return false
   const translation = getSafeTranslationForPointIndexes(
+    routes,
     srj,
     route,
     pointIndexes,
@@ -1320,6 +1376,7 @@ const moveSegmentByTranslation = (
 
   const pointIndexes = [...new Set([...startIndexes, ...endIndexes])]
   const translation = getSafeTranslationForPointIndexes(
+    routes,
     srj,
     route,
     pointIndexes,
@@ -1345,6 +1402,7 @@ const moveSegmentByTranslation = (
 }
 
 const moveRoutePointIndexesByTranslation = (
+  routes: MutableRoute[],
   route: MutableRoute,
   pointIndexes: number[],
   dx: number,
@@ -1353,6 +1411,7 @@ const moveRoutePointIndexesByTranslation = (
   featureRadius: number,
 ) => {
   const translation = getSafeTranslationForPointIndexes(
+    routes,
     srj,
     route,
     pointIndexes,
@@ -1466,6 +1525,7 @@ const moveRouteByTranslationPreservingEndpointConnections = (
 
   const pointIndexes = route.route.map((_, pointIndex) => pointIndex)
   const translation = getSafeTranslationForPointIndexes(
+    routes,
     srj,
     route,
     pointIndexes,
@@ -1668,6 +1728,7 @@ const moveCollinearSegmentRunByTranslation = (
   if (!movablePointIndexes) return false
 
   return moveRoutePointIndexesByTranslation(
+    routes,
     route,
     movablePointIndexes,
     dx,
@@ -1805,6 +1866,7 @@ const moveLocalObstacleSpanByTranslation = (
   if (pointIndexes.length <= 2) return false
 
   return moveRoutePointIndexesByTranslation(
+    routes,
     route,
     pointIndexes,
     dx,
@@ -1921,12 +1983,17 @@ const translateVia = (
 ) => {
   const route = routes[via.routeIndex]
   if (!route) return false
-  const translation = clipPointTranslationAwayFromBoardEdge(
+  const boardTranslation = clipPointTranslationAwayFromBoardEdge(
     srj,
     via,
     dx,
     dy,
     via.radius,
+  )
+  const translation = getForceMoveGuard(routes).constrain(
+    via.pointIndexes.map((index) => route.route[index]!),
+    boardTranslation.x,
+    boardTranslation.y,
   )
   if (
     Math.abs(translation.x) <= POSITION_EPSILON &&
@@ -2907,6 +2974,7 @@ const applyBroadRepulsionPass = (
   connMap?: ConnectivityMap,
   allowSameNetViaPairs = false,
 ): boolean => {
+  getForceMoveGuard(routes, connMap)
   let changed = false
   const vias = collectViaNodes(routes)
   const segments = collectSegments(routes)
@@ -3007,6 +3075,7 @@ const applyBroadViaSegmentCleanupPass = (
   routes: MutableRoute[],
   connMap?: ConnectivityMap,
 ): boolean => {
+  getForceMoveGuard(routes, connMap)
   let changed = false
   const vias = collectViaNodes(routes)
   const segments = collectSegments(routes)
@@ -4753,6 +4822,7 @@ export const applyDrcErrorForces = (
   allowSharedViaSiteMove = true,
   enableTraceViaOwnerTargeting = false,
 ) => {
+  getForceMoveGuard(routes, connMap)
   let changed = false
   const vias = collectViaNodes(routes)
   const segments = collectSegments(routes)
