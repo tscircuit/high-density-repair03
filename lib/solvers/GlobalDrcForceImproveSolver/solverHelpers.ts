@@ -1903,6 +1903,47 @@ const getDirectionAwayFromPoint = (segment: Segment, point: Point) => {
   }
 }
 
+const insertGuardedDetourPoints = (
+  routes: MutableRoute[],
+  segment: Segment,
+  targetPoints: MutableRoute["route"],
+  srj: SimpleRouteJson,
+): boolean => {
+  const route = routes[segment.routeIndex]!
+  // Split the original segment before applying the displacement so inserted
+  // vertices obey the same first-contact constraint as existing vertices.
+  const points = targetPoints.map((target) => {
+    const projection = pointToSegmentProjection(target, segment)
+    return {
+      ...target,
+      x: projection.x,
+      y: projection.y,
+      pcb_port_id: undefined,
+    }
+  })
+  route.route.splice(segment.endIndex, 0, ...points)
+  let changed = false
+  for (let index = 0; index < points.length; index += 1) {
+    const point = points[index]!
+    const target = targetPoints[index]!
+    const translation = getSafeTranslationForPointIndexes(
+      routes,
+      srj,
+      route,
+      [segment.endIndex + index],
+      target.x - point.x,
+      target.y - point.y,
+      segment.radius,
+    )
+    if (!translation) continue
+    point.x += translation.x
+    point.y += translation.y
+    changed = true
+  }
+  if (!changed) route.route.splice(segment.endIndex, points.length)
+  return changed
+}
+
 const insertDetourPointAwayFromPoint = (
   routes: MutableRoute[],
   segment: Segment,
@@ -1970,8 +2011,7 @@ const insertDetourPointAwayFromPoint = (
     return false
   }
 
-  route.route.splice(segment.endIndex, 0, detourPoint)
-  return true
+  return insertGuardedDetourPoints(routes, segment, [detourPoint], srj)
 }
 
 const translateVia = (
@@ -2338,8 +2378,12 @@ const moveSegmentAwayFromObstacle = (
     return false
   }
 
-  route.route.splice(segment.endIndex, 0, ...normalizedDetourPoints)
-  return true
+  return insertGuardedDetourPoints(
+    routes,
+    segment,
+    normalizedDetourPoints,
+    srj,
+  )
 }
 
 const getNearestSegment = (
