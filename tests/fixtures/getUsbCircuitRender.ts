@@ -11,6 +11,7 @@ export type UsbCircuitRender = {
       input: HighDensityRoute[]
       output: HighDensityRoute[]
       srj: SimpleRouteJson
+      netMap: Record<string, string[]>
     }>
   }>
 }

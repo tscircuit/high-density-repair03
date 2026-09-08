@@ -3,7 +3,7 @@ import "bun-match-svg"
 import { getUsbCircuitRender } from "./fixtures/getUsbCircuitRender"
 import { getTerminalViaGaps } from "./fixtures/getTerminalViaGaps"
 
-test("reproduces terminal-via clearance on a routed USB-C power circuit", async () => {
+test("honors terminal-via clearance on a routed USB-C power circuit", async () => {
   const { circuitJson, svg, phases } = await getUsbCircuitRender()
   expect(phases).toHaveLength(6)
   expect(phases.every((phase) => phase.solved)).toBe(true)
@@ -37,11 +37,10 @@ test("reproduces terminal-via clearance on a routed USB-C power circuit", async 
   expect(
     circuitJson.filter((element) => element.type === "pcb_trace").length,
   ).toBeGreaterThan(5)
-  // Repro baseline: the declared 0.1 mm gap is ignored for connected pads.
-  // The stacked fix replaces this assertion with the requested clearance.
+  // Measure the final native copper, not just the router's DRC count.
   for (const gapMm of getTerminalViaGaps(circuitJson)) {
-    expect(gapMm).toBeGreaterThanOrEqual(0)
-    expect(gapMm).toBeLessThan(0.000003)
+    expect(gapMm).toBeGreaterThanOrEqual(0.1)
+    expect(gapMm).toBeLessThan(0.10001)
   }
   await expect(svg).toMatchSvgSnapshot(import.meta.path)
 }, 30_000)

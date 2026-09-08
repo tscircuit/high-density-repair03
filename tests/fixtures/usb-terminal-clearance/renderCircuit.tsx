@@ -32,6 +32,7 @@ console.log(
         input: repair.params.hdRoutes,
         output: repair.getOutput(),
         srj: repair.params.srj,
+        netMap: repair.params.connMap?.netMap,
       })),
     })),
   }),

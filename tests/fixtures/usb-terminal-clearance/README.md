@@ -55,6 +55,13 @@ explicit 0.1 mm rule. The test measures the native polygon/rectangle pad outline
 against the final native via lands and verifies that terminal coordinates and
 PCB-port identities are preserved.
 
+The fix includes the configured via-edge clearance in both the terminal escape
+search and its final acceptance check. The final native connector and fuse
+clearances are now approximately 0.100001 mm. A second regression reuses the
+same real circuit's repair input and actual DRC error to cover the default,
+zero, non-default, and large clearances, diagonal escapes, and board-boundary
+rejection. It does not supply hand-authored traces or fabricated DRC errors.
+
 This repro isolates terminal escape placement. It is not a fabrication-ready
 USB product or a claim that every Pipeline 9 DRC problem is solved: the original
 wide VBUS trace also has a separate connector mechanical-hole contact, and other
