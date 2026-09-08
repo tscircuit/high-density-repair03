@@ -50,6 +50,33 @@ const copperKey = (copper: Copper): string => {
   return `${copper.z}:${copper.radius}:${endpoints}`
 }
 
+// A normalized terminal escape uses 11 scalar operations; the projected
+// point-to-segment distance uses 25, followed by two radius/comparison
+// subtractions. Bound their accumulated roundoff with gamma_40 = 40u/(1-40u).
+// The scale below is coordinate magnitude, never a PCB clearance tolerance.
+const unitRoundoff = Number.EPSILON / 2
+const containmentRoundoffFactor = (40 * unitRoundoff) / (1 - 40 * unitRoundoff)
+
+const isEndpointDiscContained = (
+  point: Point,
+  radius: number,
+  previous: Copper,
+): boolean => {
+  const margin = previous.radius - radius
+  const distance = pointToSegmentDistance(point, previous.start, previous.end)
+  if (distance <= margin) return true
+  const scale =
+    Math.abs(point.x) +
+    Math.abs(point.y) +
+    Math.abs(previous.start.x) +
+    Math.abs(previous.start.y) +
+    Math.abs(previous.end.x) +
+    Math.abs(previous.end.y) +
+    Math.abs(previous.radius) +
+    Math.abs(radius)
+  return distance - margin <= containmentRoundoffFactor * scale
+}
+
 /** A topology repair may retain incoming copper, but must not add a new short. */
 export const hasNewForeignCopperOverlap = (
   previousRoute: HighDensityRoute,
@@ -68,12 +95,9 @@ export const hasNewForeignCopperOverlap = (
         }
         // A split or narrowed segment can retain incoming copper without
         // retaining its exact primitive key. Both endpoint discs must fit.
-        const margin = previous.radius - copper.radius
         return (
-          pointToSegmentDistance(copper.start, previous.start, previous.end) <=
-            margin &&
-          pointToSegmentDistance(copper.end, previous.start, previous.end) <=
-            margin
+          isEndpointDiscContained(copper.start, copper.radius, previous) &&
+          isEndpointDiscContained(copper.end, copper.radius, previous)
         )
       }),
   )

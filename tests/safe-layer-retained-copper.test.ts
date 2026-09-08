@@ -7,14 +7,26 @@ import {
 } from "../lib/solvers/GlobalDrcForceImproveSolver/solverHelpers"
 
 test("safe layer moves retain existing split copper without adding foreign contacts", () => {
-  for (const offset of [{ x: 0, y: 0 }, { x: 13.7, y: -7.3 }]) {
+  for (const scenario of [0, 30, 45, 90].flatMap((angle) =>
+    [-1, 1].flatMap((side) =>
+      [{ x: 0, y: 0 }, { x: 13.7, y: -7.3 }].map((offset) => ({
+        angle,
+        side,
+        offset,
+      })),
+    ),
+  )) {
+    const { offset, side } = scenario
+    const angle = (scenario.angle * Math.PI) / 180
+    const cos = Math.cos(angle)
+    const sin = Math.sin(angle)
     const point = (
       x: number,
       y: number,
       z = 0,
     ): HighDensityRoute["route"][number] => ({
-      x: x + offset.x,
-      y: y + offset.y,
+      x: x * cos - y * sin + offset.x,
+      y: x * sin + y * cos + offset.y,
       z,
     })
     const route = (
@@ -32,7 +44,10 @@ test("safe layer moves retain existing split copper without adding foreign conta
       { ...point(-2, 0), pcb_port_id: "start" },
       { ...point(2, 0), pcb_port_id: "end" },
     ])
-    const foreign = route("foreign", [point(-1.95, -1), point(-1.95, 1)])
+    const foreign = route("foreign", [
+      point(side * 1.95, -1),
+      point(side * 1.95, 1),
+    ])
     const srj: SimpleRouteJson = {
       layerCount: 2,
       minTraceWidth: 0.1,
@@ -44,7 +59,7 @@ test("safe layer moves retain existing split copper without adding foreign conta
       },
       connections: [],
       obstacles: [-2, 2].map((x, i) => ({
-        type: "rect",
+        type: "oval",
         center: point(x, 0),
         width: 0.4,
         height: 0.4,
@@ -80,6 +95,12 @@ test("safe layer moves retain existing split copper without adding foreign conta
     expect(
       hasNewForeignCopperOverlap(moving, widened, [
         route("foreign", [point(-1, 0.11), point(1, 0.11)]),
+      ]),
+    ).toBe(true)
+    const displaced = route("signal", [point(-1, 1e-8), point(1, 1e-8)])
+    expect(
+      hasNewForeignCopperOverlap(moving, displaced, [
+        route("foreign", [point(-1, 0.100000005), point(1, 0.100000005)]),
       ]),
     ).toBe(true)
     const narrowed = route("signal", [point(-1, 0), point(1, 0)], 0.08)
