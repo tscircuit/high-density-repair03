@@ -34,6 +34,7 @@ import {
   cloneRoutesForIndexes,
   getCenteredErrors,
   getDrcSnapshot,
+  getForceMoveGuard,
   getTopologyRepairDrcSnapshot,
   getLegacyFirstRepairErrors,
   getNonViaPadDrcIssueCount,
@@ -175,6 +176,7 @@ const DIFFERENT_NET_VIA_PRIORITY_INTERVAL = 8
 
 export class GlobalDrcForceImproveSolver extends BaseSolver {
   readonly srj: SimpleRouteJson
+  readonly fixedObstacleRoutes: HighDensityRoute[]
   readonly inputHdRoutes: HighDensityRoute[]
   readonly guardedInputHdRoutes: HighDensityRoute[]
   readonly connMap?: ConnectivityMap
@@ -229,6 +231,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   constructor(params: GlobalDrcForceImproveSolverParams) {
     super()
     this.srj = params.srj
+    this.fixedObstacleRoutes = params.fixedObstacleRoutes ?? []
     this.inputHdRoutes = params.hdRoutes
     this.guardedInputHdRoutes = materializeRoutes(cloneRoutes(params.hdRoutes))
     this.connMap = params.connMap
@@ -284,6 +287,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       {
         srj: this.srj,
         hdRoutes: this.inputHdRoutes,
+        fixedObstacleRoutes: this.fixedObstacleRoutes,
         connMap: this.connMap,
         effort: this.effort,
         drcEvaluator: this.drcEvaluator,
@@ -356,6 +360,24 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       getDrcScaledMaxIterations(drcIssueCount, this.effort),
       getRouteComplexityMinIterations(this.inputHdRoutes.length, drcIssueCount),
     )
+  }
+
+  private cloneCandidateRoutes(
+    routes: HighDensityRoute[],
+    routeIndexes?: readonly number[],
+  ): HighDensityRoute[] {
+    const candidateRoutes = routeIndexes
+      ? cloneRoutesForIndexes(routes, routeIndexes)
+      : cloneRoutes(routes)
+    if (this.fixedObstacleRoutes.length > 0) {
+      getForceMoveGuard(
+        candidateRoutes,
+        this.connMap,
+        this.srj,
+        this.fixedObstacleRoutes,
+      )
+    }
+    return candidateRoutes
   }
 
   private getSnapshot(routes: HighDensityRoute[]) {
@@ -689,7 +711,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         error.pcb_via_ids.length === 1 &&
         candidateAttemptsThisStep < maxCandidateAttemptsThisStep
       ) {
-        const candidateRoutes = cloneRoutes(bestRoutes)
+        const candidateRoutes = this.cloneCandidateRoutes(bestRoutes)
         if (
           applyViaOnlyDisplacementForTraceError(
             this.srj,
@@ -774,7 +796,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           // skips the adjusted candidate when its via positions are unchanged.
           let evaluatedDirection = false
           for (const adjustViaClearance of [false, true]) {
-            const candidateRoutes = cloneRoutesForIndexes(bestRoutes, [
+            const candidateRoutes = this.cloneCandidateRoutes(bestRoutes, [
               changedRouteIndex,
             ])
             const changed = applySafeTraceLayerMoveForError(
@@ -858,7 +880,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           const originalZ = bestRoutes[changedRouteIndex]?.route[0]?.z
           if (originalZ === undefined) continue
           const targetZ = (originalZ + 1) % this.srj.layerCount
-          const candidateRoutes = cloneRoutesForIndexes(bestRoutes, [
+          const candidateRoutes = this.cloneCandidateRoutes(bestRoutes, [
             changedRouteIndex,
           ])
           const changed = applyTraceLayerCorridorForError(
@@ -948,7 +970,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
                 }
               : error
           if (variant.kind === "displacementChain") {
-            const chainCandidateRoutes = cloneRoutes(bestRoutes)
+            const chainCandidateRoutes = this.cloneCandidateRoutes(bestRoutes)
             const displacement = applyTracePairSegmentDisplacementForError(
               this.srj,
               chainCandidateRoutes,
@@ -971,7 +993,9 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
               chainIssueCount > 0 &&
               candidateAttemptsThisStep < maxCandidateAttemptsThisStep
             ) {
-              const propagatedRoutes = cloneRoutes(materializedChainRoutes)
+              const propagatedRoutes = this.cloneCandidateRoutes(
+                materializedChainRoutes,
+              )
               let propagated = false
               for (const chainError of chainSnapshot.errors) {
                 propagated =
@@ -1044,7 +1068,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
             if (chainIssueCount === 0) break
             continue
           }
-          const candidateRoutes = cloneRoutesForIndexes(bestRoutes, [
+          const candidateRoutes = this.cloneCandidateRoutes(bestRoutes, [
             changedRouteIndex,
           ])
           const changed =
@@ -1138,7 +1162,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         : []) {
         if (candidateAttemptsThisStep >= maxCandidateAttemptsThisStep) break
         if (traceRouteIndex === undefined) break
-        const candidateRoutes = cloneRoutesForIndexes(bestRoutes, [
+        const candidateRoutes = this.cloneCandidateRoutes(bestRoutes, [
           traceRouteIndex,
         ])
         const changed = applyTerminalViaRelocationForError(
@@ -1195,7 +1219,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       for (let targetZ = 0; targetZ < viaInPadLayerCount; targetZ += 1) {
         if (candidateAttemptsThisStep >= maxCandidateAttemptsThisStep) break
         if (traceRouteIndex === undefined) break
-        const candidateRoutes = cloneRoutesForIndexes(bestRoutes, [
+        const candidateRoutes = this.cloneCandidateRoutes(bestRoutes, [
           traceRouteIndex,
         ])
         const changed = applyViaInPadLayerMoveForError(
@@ -1258,7 +1282,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           for (let targetZ = 0; targetZ < this.srj.layerCount; targetZ += 1) {
             if (candidateAttemptsThisStep >= maxCandidateAttemptsThisStep) break
             const changedRouteIndex = traceRoutePair[routeSide]
-            const candidateRoutes = cloneRoutesForIndexes(bestRoutes, [
+            const candidateRoutes = this.cloneCandidateRoutes(bestRoutes, [
               changedRouteIndex,
             ])
             const changed = applyTracePairLayerMoveForError(
@@ -1332,7 +1356,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     }
 
     if (!acceptedCandidate && targetedSweepErrors.length >= 2) {
-      const candidateRoutes = cloneRoutes(bestRoutes)
+      const candidateRoutes = this.cloneCandidateRoutes(bestRoutes)
       let changed = false
       for (const error of targetedSweepErrors) {
         changed =
@@ -1401,7 +1425,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       for (const scale of getForceScalesForEffort(this.effort)) {
         if (candidateAttemptsThisStep >= maxCandidateAttemptsThisStep) break
 
-        const candidateRoutes = cloneRoutes(bestRoutes)
+        const candidateRoutes = this.cloneCandidateRoutes(bestRoutes)
         const changed = applyDrcErrorForces(
           this.srj,
           candidateRoutes,
@@ -1483,6 +1507,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           // Final cleanup here can perturb branch selection and trigger another
           // expensive broad attempt; direct/final broad outputs still clean up.
           false,
+          this.fixedObstacleRoutes,
         )
         if (broadCandidateRoutes === bestRoutes) continue
         const broadCandidateSnapshot = this.getSnapshot(broadCandidateRoutes)

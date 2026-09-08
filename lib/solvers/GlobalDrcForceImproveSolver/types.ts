@@ -38,6 +38,8 @@ export type DrcSnapshot = {
 export type GlobalDrcForceImproveSolverParams = {
   srj: SimpleRouteJson
   hdRoutes: HighDensityRoute[]
+  /** Immutable copper for force movement constraints, never returned or moved. */
+  fixedObstacleRoutes?: HighDensityRoute[]
   connMap?: ConnectivityMap
   effort?: number
   drcEvaluator?: DrcEvaluator

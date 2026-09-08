@@ -445,20 +445,24 @@ type ForceMoveGuard = {
   guard: TraceSegmentMoveGuard
   pointArrays: MutableRoute["route"][]
   pointCounts: number[]
+  fixedObstacleRoutes?: HighDensityRoute[]
   connMap?: ConnectivityMap
   srj?: SimpleRouteJson
 }
 
 const forceMoveGuards = new WeakMap<MutableRoute[], ForceMoveGuard>()
 
-const getForceMoveGuard = (
+export const getForceMoveGuard = (
   routes: MutableRoute[],
   connMap?: ConnectivityMap,
   srj?: SimpleRouteJson,
+  fixedObstacleRoutes?: HighDensityRoute[],
 ): TraceSegmentMoveGuard => {
   const cached = forceMoveGuards.get(routes)
   if (
     cached &&
+    (fixedObstacleRoutes === undefined ||
+      fixedObstacleRoutes === cached.fixedObstacleRoutes) &&
     cached.pointCounts.length === routes.length &&
     cached.pointCounts.every(
       (count, index) =>
@@ -470,20 +474,24 @@ const getForceMoveGuard = (
   }
   const connectivity = connMap ?? cached?.connMap
   const scenario = srj ?? cached?.srj
+  const fixedRoutes = fixedObstacleRoutes ?? cached?.fixedObstacleRoutes ?? []
+  const geometryRoutes = [...routes, ...fixedRoutes]
   const guard = new TraceSegmentMoveGuard([
-    ...collectSegments(routes).map((segment) => ({
+    ...collectSegments(geometryRoutes).map((segment) => ({
       start: segment.start,
       end: segment.end,
       z: segment.z,
       traceRadius:
-        (routes[segment.routeIndex]!.route[segment.startIndex]!
-          .traceThickness ?? routes[segment.routeIndex]!.traceThickness) / 2,
+        (geometryRoutes[segment.routeIndex]!.route[segment.startIndex]!
+          .traceThickness ??
+          geometryRoutes[segment.routeIndex]!.traceThickness) /
+        2,
       rootConnectionName:
         connectivity?.getNetConnectedToId(segment.rootConnectionName) ??
         segment.rootConnectionName,
     })),
-    ...collectViaNodes(routes).flatMap((via) => {
-      const route = routes[via.routeIndex]!
+    ...collectViaNodes(geometryRoutes).flatMap((via) => {
+      const route = geometryRoutes[via.routeIndex]!
       const point = route.route[via.pointIndexes[0]!]!
       const minZ = Math.min(...via.zLayers)
       const maxZ = Math.max(...via.zLayers)
@@ -552,6 +560,7 @@ const getForceMoveGuard = (
   ])
   forceMoveGuards.set(routes, {
     guard,
+    fixedObstacleRoutes: fixedRoutes,
     connMap: connectivity,
     srj: scenario,
     pointArrays: routes.map((route) => route.route),
@@ -3295,8 +3304,10 @@ export const applyBroadRepulsionForces = (
   connMap?: ConnectivityMap,
   allowSameNetViaPairs = false,
   runFinalViaSegmentCleanup = true,
+  fixedObstacleRoutes?: HighDensityRoute[],
 ) => {
   const mutableRoutes = cloneRoutes(routes)
+  getForceMoveGuard(mutableRoutes, connMap, srj, fixedObstacleRoutes)
   const maxPasses = Math.max(
     2,
     Math.round(BROAD_FORCE_PASSES * Math.max(1, effort) * passMultiplier),
