@@ -67,9 +67,9 @@ test("safe layer moves reject newly added wire and via shorts while retaining in
   for (const foreign of foreignCases) {
     const routes = cloneRoutes([moving, foreign])
     const before = structuredClone(routes)
-    expect(
-      applySafeTraceLayerMoveForError(srj, routes, error, 0, 1, 0),
-    ).toBe(false)
+    expect(applySafeTraceLayerMoveForError(srj, routes, error, 0, 1, 0)).toBe(
+      false,
+    )
     expect(routes).toEqual(before)
   }
   const fixed = foreignCases[0]!
@@ -89,9 +89,9 @@ test("safe layer moves reject newly added wire and via shorts while retaining in
     ),
   ).toBe(false)
   const sameNet = cloneRoutes([moving, { ...fixed, connectionName: "moving" }])
-  expect(
-    applySafeTraceLayerMoveForError(srj, sameNet, error, 0, 1, 0),
-  ).toBe(true)
+  expect(applySafeTraceLayerMoveForError(srj, sameNet, error, 0, 1, 0)).toBe(
+    true,
+  )
   const otherLayer = cloneRoutes([
     moving,
     route("foreign", [
@@ -99,9 +99,9 @@ test("safe layer moves reject newly added wire and via shorts while retaining in
       { x: 0, y: 1, z: 2 },
     ]),
   ])
-  expect(
-    applySafeTraceLayerMoveForError(srj, otherLayer, error, 0, 1, 0),
-  ).toBe(true)
+  expect(applySafeTraceLayerMoveForError(srj, otherLayer, error, 0, 1, 0)).toBe(
+    true,
+  )
   const existing = cloneRoutes([
     route("moving", [
       { x: -3, y: 0, z: 0 },
