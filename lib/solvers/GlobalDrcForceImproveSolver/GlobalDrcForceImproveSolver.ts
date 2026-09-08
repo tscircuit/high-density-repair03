@@ -995,7 +995,8 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
                 const propagatedViaIssueCount =
                   this.getViaIssueCount(propagatedSnapshot)
                 if (
-                  this.isValidCandidate?.(materializedPropagatedRoutes) !== false &&
+                  this.isValidCandidate?.(materializedPropagatedRoutes) !==
+                    false &&
                   isBetterDrcSnapshot(
                     propagatedSnapshot,
                     propagatedViaIssueCount,
