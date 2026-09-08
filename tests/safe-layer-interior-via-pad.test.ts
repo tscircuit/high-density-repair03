@@ -7,7 +7,10 @@ import {
 } from "../lib/solvers/GlobalDrcForceImproveSolver/solverHelpers"
 
 test("partial layer changes keep new interior vias outside pad copper", () => {
-  for (const offset of [{ x: 0, y: 0 }, { x: 17.3, y: -8.7 }]) {
+  for (const offset of [
+    { x: 0, y: 0 },
+    { x: 17.3, y: -8.7 },
+  ]) {
     const point = (x: number, z = 0): HighDensityRoute["route"][number] => ({
       x: x + offset.x,
       y: offset.y,
@@ -55,15 +58,15 @@ test("partial layer changes keep new interior vias outside pad copper", () => {
     for (const split of [1.8, 1.6]) {
       const routes = cloneRoutes([route(split)])
       const before = structuredClone(routes)
-      expect(
-        applySafeTraceLayerMoveForError(srj, routes, error, 0, 1, 0),
-      ).toBe(false)
+      expect(applySafeTraceLayerMoveForError(srj, routes, error, 0, 1, 0)).toBe(
+        false,
+      )
       expect(routes).toEqual(before)
     }
     const legal = cloneRoutes([route(1.54)])
-    expect(
-      applySafeTraceLayerMoveForError(srj, legal, error, 0, 1, 0),
-    ).toBe(true)
+    expect(applySafeTraceLayerMoveForError(srj, legal, error, 0, 1, 0)).toBe(
+      true,
+    )
     expect(legal[0]!.route[0]).toEqual(route(1.54).route[0]!)
     expect(legal[0]!.route.at(-1)).toEqual(route(1.54).route.at(-1)!)
     expect(hasNewViaPadOverlap(srj, route(1.54), legal[0]!)).toBe(false)

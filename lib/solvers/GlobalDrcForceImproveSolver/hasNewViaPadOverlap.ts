@@ -80,8 +80,7 @@ export const hasNewViaPadOverlap = (
           getRootConnectionName(candidateRoute),
           obstacle,
           connMap,
-        ) ||
-        obstacleSharesNet(candidateRoute.connectionName, obstacle, connMap)
+        ) || obstacleSharesNet(candidateRoute.connectionName, obstacle, connMap)
       const margin =
         radius +
         (sameNet

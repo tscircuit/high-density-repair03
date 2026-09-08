@@ -9,7 +9,10 @@ import {
 test("safe layer moves retain existing split copper without adding foreign contacts", () => {
   for (const scenario of [0, 30, 45, 90].flatMap((angle) =>
     [-1, 1].flatMap((side) =>
-      [{ x: 0, y: 0 }, { x: 13.7, y: -7.3 }].map((offset) => ({
+      [
+        { x: 0, y: 0 },
+        { x: 13.7, y: -7.3 },
+      ].map((offset) => ({
         angle,
         side,
         offset,
