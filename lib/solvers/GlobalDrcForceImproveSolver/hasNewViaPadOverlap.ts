@@ -47,9 +47,7 @@ export const hasNewViaPadOverlap = (
         old.y === via.y &&
         previousRoute.viaDiameter >= candidateRoute.viaDiameter,
     )
-    if (
-      existing.some((old) => old.minZ <= via.minZ && old.maxZ >= via.maxZ)
-    ) {
+    if (existing.some((old) => old.minZ <= via.minZ && old.maxZ >= via.maxZ)) {
       continue
     }
     for (const obstacle of srj.obstacles) {

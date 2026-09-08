@@ -66,9 +66,7 @@ test("partial layer changes keep new interior vias outside pad copper", () => {
     ).toBe(true)
     expect(legal[0]!.route[0]).toEqual(route(1.54).route[0]!)
     expect(legal[0]!.route.at(-1)).toEqual(route(1.54).route.at(-1)!)
-    expect(
-      hasNewViaPadOverlap(srj, route(1.54), legal[0]!),
-    ).toBe(false)
+    expect(hasNewViaPadOverlap(srj, route(1.54), legal[0]!)).toBe(false)
 
     const existing: HighDensityRoute = {
       ...route(1.8),
