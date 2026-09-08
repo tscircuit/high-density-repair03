@@ -24,9 +24,9 @@ test("collecting one root preserves via identity and observes changed routes", (
       collectViaNodes(routes).filter((via) => via.rootConnectionName === root),
     )
   }
-  expect(collectViaNodes(routes, 0.3, "left").map((via) => via.routeIndex)).toEqual([
-    0, 2,
-  ])
+  expect(
+    collectViaNodes(routes, 0.3, "left").map((via) => via.routeIndex),
+  ).toEqual([0, 2])
   routes[1]!.rootConnectionName = "left"
   routes[0]!.route[1]!.x += 0.1
   routes[0]!.route[2]!.x += 0.1

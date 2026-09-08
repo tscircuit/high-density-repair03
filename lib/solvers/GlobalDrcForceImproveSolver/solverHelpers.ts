@@ -932,14 +932,10 @@ const getPointOutlineClearance = (
     const end = outline[(index + 1) % outline.length]
     if (!start || !end) continue
     if (
-      point.x - Math.max(start.x, end.x) >
-        minDistance + COORDINATE_EPSILON ||
-      Math.min(start.x, end.x) - point.x >
-        minDistance + COORDINATE_EPSILON ||
-      point.y - Math.max(start.y, end.y) >
-        minDistance + COORDINATE_EPSILON ||
-      Math.min(start.y, end.y) - point.y >
-        minDistance + COORDINATE_EPSILON
+      point.x - Math.max(start.x, end.x) > minDistance + COORDINATE_EPSILON ||
+      Math.min(start.x, end.x) - point.x > minDistance + COORDINATE_EPSILON ||
+      point.y - Math.max(start.y, end.y) > minDistance + COORDINATE_EPSILON ||
+      Math.min(start.y, end.y) - point.y > minDistance + COORDINATE_EPSILON
     ) {
       continue
     }
