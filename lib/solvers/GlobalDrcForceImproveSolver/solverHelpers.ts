@@ -484,8 +484,7 @@ export const getForceMoveGuard = (
       traceRadius:
         (geometryRoutes[segment.routeIndex]!.route[segment.startIndex]!
           .traceThickness ??
-          geometryRoutes[segment.routeIndex]!.traceThickness) /
-        2,
+          geometryRoutes[segment.routeIndex]!.traceThickness) / 2,
       rootConnectionName:
         connectivity?.getNetConnectedToId(segment.rootConnectionName) ??
         segment.rootConnectionName,
