@@ -46,6 +46,8 @@ export interface SimpleRouteJson {
   minTraceWidth: number
   nominalTraceWidth?: number
   minViaDiameter?: number
+  /** Permit vias fully contained in connected SMT pads. Defaults to false. */
+  allowViaInPad?: boolean
   minBoardEdgeClearance?: number
   minTraceToPadEdgeClearance?: number
   minViaEdgeToPadEdgeClearance?: number
