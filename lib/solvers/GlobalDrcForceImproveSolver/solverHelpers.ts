@@ -688,7 +688,7 @@ export const getRectRepulsion = (
   }
 }
 
-const getRepulsionPointForError = (
+const getRepulsionObstacleForError = (
   srj: SimpleRouteJson,
   error: Record<string, unknown>,
   center: Point,
@@ -696,24 +696,33 @@ const getRepulsionPointForError = (
 ) => {
   const message = error.message
   if (typeof message !== "string" || !message.includes("pcb_")) {
-    return center
+    return undefined
   }
 
   const referencedPadIds = Array.isArray(error.pcb_pad_ids)
     ? error.pcb_pad_ids.filter((id): id is string => typeof id === "string")
     : []
-  const referencedObstacle = srj.obstacles.find(
+  const referencedObstacle = getNearestObstacleNearPoint(
+    srj,
+    center,
+    Number.POSITIVE_INFINITY,
     (obstacle) =>
       referencedPadIds.some((id) => obstacle.connectedTo.includes(id)) &&
       (obstacleFilter?.(obstacle) ?? true),
   )
-  if (referencedObstacle) return referencedObstacle.center
+  if (referencedObstacle) return referencedObstacle
 
-  return (
-    getNearestObstacleNearPoint(srj, center, 0.6, obstacleFilter)?.center ??
-    center
-  )
+  return getNearestObstacleNearPoint(srj, center, 0.6, obstacleFilter)
 }
+
+const getRepulsionPointForError = (
+  srj: SimpleRouteJson,
+  error: Record<string, unknown>,
+  center: Point,
+  obstacleFilter?: (obstacle: SimpleRouteJson["obstacles"][number]) => boolean,
+) =>
+  getRepulsionObstacleForError(srj, error, center, obstacleFilter)?.center ??
+  center
 
 const getCoincidentPointIndexes = (route: MutableRoute, pointIndex: number) => {
   const point = route.route[pointIndex]
@@ -2435,6 +2444,28 @@ const getNearestViaPair = (vias: ViaNode[], point: Point) => {
     .map(({ via }) => via)
 
   return nearest.length === 2 ? (nearest as [ViaNode, ViaNode]) : undefined
+}
+
+const moveViaAwayFromObstacle = (
+  routes: MutableRoute[],
+  via: ViaNode,
+  obstacle: SimpleRouteJson["obstacles"][number],
+  srj: SimpleRouteJson,
+): boolean => {
+  const repulsion = getRectRepulsion(
+    via,
+    obstacle,
+    via.radius + getViaEdgeToPadEdgeClearance(srj) + POSITION_EPSILON,
+  )
+  if (!repulsion) return false
+  const distance = Math.min(MAX_ERROR_MOVE, repulsion.penetration)
+  return moveVia(
+    routes,
+    via,
+    repulsion.direction.x * distance,
+    repulsion.direction.y * distance,
+    srj,
+  )
 }
 
 const moveViaAwayFromPoint = (
@@ -4942,8 +4973,13 @@ export const applyDrcErrorForces = (
       } else {
         const nearestVia = getNearestVia(vias, center, targetRouteIndex)
         if (nearestVia) {
+          const obstacle = isViaPadError
+            ? getRepulsionObstacleForError(srj, error, center)
+            : undefined
           changed =
-            moveViaAwayFromPoint(routes, nearestVia, repulsionPoint, srj) ||
+            (obstacle
+              ? moveViaAwayFromObstacle(routes, nearestVia, obstacle, srj)
+              : moveViaAwayFromPoint(routes, nearestVia, repulsionPoint, srj)) ||
             changed
         }
       }
