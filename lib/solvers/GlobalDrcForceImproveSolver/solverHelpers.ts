@@ -4847,10 +4847,9 @@ export const applyDrcErrorForces = (
 ) => {
   getForceMoveGuard(routes, connMap)
   let changed = false
-  const vias = collectViaNodes(routes)
-  const segments = collectSegments(routes)
-
   for (const error of errors) {
+    const vias = collectViaNodes(routes)
+    const segments = collectSegments(routes)
     const center = getErrorCenter(error)
     if (!center) continue
     let repulsionPoint = center
@@ -5062,9 +5061,10 @@ export const applyDrcErrorForces = (
       changed = movedSegment || changed
     }
 
+    // Segment repair may insert a detour and shift every later via point index.
     const nearestVia = hasTargetedTraceViaMetadata
       ? undefined
-      : getNearestVia(vias, center)
+      : getNearestVia(collectViaNodes(routes), center)
     if (
       nearestVia &&
       Math.hypot(nearestVia.x - center.x, nearestVia.y - center.y) < 0.35
