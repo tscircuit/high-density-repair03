@@ -47,19 +47,14 @@ export const sharesNet = (
   left: string,
   right: string | undefined,
   connMap?: ConnectivityMap,
-) => {
+): boolean => {
   if (!right) return false
   if (left === right) return true
-  if (connMap?.areIdsConnected(left, right)) return true
-
-  const leftNetId = getConnMapNetId(connMap, left)
-  const rightNetId = getConnMapNetId(connMap, right)
-  if (leftNetId && (leftNetId === right || leftNetId === rightNetId)) {
-    return true
-  }
-  if (rightNetId && (rightNetId === left || rightNetId === leftNetId)) {
-    return true
-  }
+  const leftNetId = connMap?.getNetConnectedToId(left)
+  const rightNetId = connMap?.getNetConnectedToId(right)
+  if (leftNetId && rightNetId && leftNetId === rightNetId) return true
+  if (left && leftNetId && leftNetId === right) return true
+  if (rightNetId && rightNetId === left) return true
 
   return false
 }
@@ -68,7 +63,19 @@ export const obstacleSharesNet = (
   rootConnectionName: string,
   obstacle: SimpleRouteJson["obstacles"][number],
   connMap?: ConnectivityMap,
-) =>
-  obstacle.connectedTo?.some((connectedTo) =>
-    sharesNet(rootConnectionName, connectedTo, connMap),
-  ) ?? false
+): boolean => {
+  const rootNetId = connMap?.getNetConnectedToId(rootConnectionName)
+  for (const connectedTo of obstacle.connectedTo ?? []) {
+    if (!connectedTo) continue
+    if (rootConnectionName === connectedTo) return true
+    const connectedNetId = connMap?.getNetConnectedToId(connectedTo)
+    if (
+      (rootNetId && connectedNetId && rootNetId === connectedNetId) ||
+      (rootConnectionName && rootNetId && rootNetId === connectedTo) ||
+      (connectedNetId && connectedNetId === rootConnectionName)
+    ) {
+      return true
+    }
+  }
+  return false
+}
