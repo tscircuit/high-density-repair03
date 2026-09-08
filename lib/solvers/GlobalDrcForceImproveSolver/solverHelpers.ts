@@ -348,12 +348,19 @@ export const getTopologyRepairDrcSnapshot = (
 export const collectViaNodes = (
   routes: HighDensityRoute[],
   defaultViaDiameter = 0.3,
+  rootConnectionName?: string,
 ): ViaNode[] => {
   const vias: ViaNode[] = []
 
   for (let routeIndex = 0; routeIndex < routes.length; routeIndex += 1) {
     const route = routes[routeIndex]
     if (!route) continue
+    if (
+      rootConnectionName !== undefined &&
+      getRootConnectionName(route) !== rootConnectionName
+    ) {
+      continue
+    }
     const seenIndexes = new Set<number>()
 
     for (let index = 0; index < route.route.length - 1; index += 1) {
@@ -924,6 +931,18 @@ const getPointOutlineClearance = (
     const start = outline[index]
     const end = outline[(index + 1) % outline.length]
     if (!start || !end) continue
+    if (
+      point.x - Math.max(start.x, end.x) >
+        minDistance + COORDINATE_EPSILON ||
+      Math.min(start.x, end.x) - point.x >
+        minDistance + COORDINATE_EPSILON ||
+      point.y - Math.max(start.y, end.y) >
+        minDistance + COORDINATE_EPSILON ||
+      Math.min(start.y, end.y) - point.y >
+        minDistance + COORDINATE_EPSILON
+    ) {
+      continue
+    }
     minDistance = Math.min(
       minDistance,
       pointToSegmentDistance(point, start, end),
@@ -1080,6 +1099,20 @@ const getSegmentBoardClearance = (
       const edgeStart = srj.outline[index]
       const edgeEnd = srj.outline[(index + 1) % srj.outline.length]
       if (!edgeStart || !edgeEnd) continue
+      // An edge whose bounding box is farther than the nearest edge cannot
+      // determine the segment's board clearance. Keep near ties exact.
+      if (
+        Math.min(start.x, end.x) - Math.max(edgeStart.x, edgeEnd.x) >
+          minDistance + COORDINATE_EPSILON ||
+        Math.min(edgeStart.x, edgeEnd.x) - Math.max(start.x, end.x) >
+          minDistance + COORDINATE_EPSILON ||
+        Math.min(start.y, end.y) - Math.max(edgeStart.y, edgeEnd.y) >
+          minDistance + COORDINATE_EPSILON ||
+        Math.min(edgeStart.y, edgeEnd.y) - Math.max(start.y, end.y) >
+          minDistance + COORDINATE_EPSILON
+      ) {
+        continue
+      }
       minDistance = Math.min(
         minDistance,
         segmentToSegmentMinDistance(start, end, edgeStart, edgeEnd),
@@ -2180,7 +2213,9 @@ const translateVia = (
 }
 
 const getSameRootViaSite = (routes: MutableRoute[], via: ViaNode) => {
-  const currentVias = collectViaNodes(routes)
+  const route = routes[via.routeIndex]
+  if (!route) return []
+  const currentVias = collectViaNodes(routes, 0.3, getRootConnectionName(route))
   const currentVia = currentVias.find(
     (candidate) =>
       candidate.routeIndex === via.routeIndex &&
