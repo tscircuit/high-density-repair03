@@ -191,28 +191,35 @@ const getObstacleLocalBounds = (obstacle: StaticObstacle): Bounds => ({
   maxY: obstacle.height / 2,
 })
 
-const getCellKey = (cellX: number, cellY: number) => `${cellX}:${cellY}`
+type IndexedSpatialItem<T> = { item: T; visitedQuery: number }
 
 class SpatialHash<T> {
-  private readonly cells = new Map<string, T[]>()
+  private readonly columns = new Map<number, Map<number, IndexedSpatialItem<T>[]>>()
+  private readonly indexedItems = new Map<T, IndexedSpatialItem<T>>()
+  private queryId = 0
 
   constructor(private readonly cellSize: number) {}
 
-  insert(item: T, bounds: Bounds) {
+  insert(item: T, bounds: Bounds): void {
     const minCellX = Math.floor(bounds.minX / this.cellSize)
     const maxCellX = Math.floor(bounds.maxX / this.cellSize)
     const minCellY = Math.floor(bounds.minY / this.cellSize)
     const maxCellY = Math.floor(bounds.maxY / this.cellSize)
-
+    let indexedItem = this.indexedItems.get(item)
+    if (!indexedItem) {
+      indexedItem = { item, visitedQuery: 0 }
+      this.indexedItems.set(item, indexedItem)
+    }
     for (let cellX = minCellX; cellX <= maxCellX; cellX += 1) {
+      let column = this.columns.get(cellX)
+      if (!column) {
+        column = new Map<number, IndexedSpatialItem<T>[]>()
+        this.columns.set(cellX, column)
+      }
       for (let cellY = minCellY; cellY <= maxCellY; cellY += 1) {
-        const key = getCellKey(cellX, cellY)
-        const items = this.cells.get(key)
-        if (items) {
-          items.push(item)
-        } else {
-          this.cells.set(key, [item])
-        }
+        const items = column.get(cellY)
+        if (items) items.push(indexedItem)
+        else column.set(cellY, [indexedItem])
       }
     }
   }
@@ -222,17 +229,24 @@ class SpatialHash<T> {
     const maxCellX = Math.floor(bounds.maxX / this.cellSize)
     const minCellY = Math.floor(bounds.minY / this.cellSize)
     const maxCellY = Math.floor(bounds.maxY / this.cellSize)
-    const results = new Set<T>()
-
+    const results: T[] = []
+    const queryId = ++this.queryId
+    // Keep the same cell and insertion order while deduplicating repeated
+    // cell hits without allocating a Set or string key for every query.
     for (let cellX = minCellX; cellX <= maxCellX; cellX += 1) {
+      const column = this.columns.get(cellX)
+      if (!column) continue
       for (let cellY = minCellY; cellY <= maxCellY; cellY += 1) {
-        const items = this.cells.get(getCellKey(cellX, cellY))
+        const items = column.get(cellY)
         if (!items) continue
-        for (const item of items) results.add(item)
+        for (const indexed of items) {
+          if (indexed.visitedQuery === queryId) continue
+          indexed.visitedQuery = queryId
+          results.push(indexed.item)
+        }
       }
     }
-
-    return [...results]
+    return results
   }
 }
 
@@ -386,6 +400,7 @@ export class AutoroutingDrcEngine {
   private readonly canonicalNetByAlias = new Map<string, string>()
   private readonly connMapNetByCanonicalNet = new Map<string, string>()
   private readonly obstacles: StaticObstacle[]
+  private readonly obstacleNetCache = new Map<StaticObstacle, Map<string, boolean>>()
   private readonly obstacleIndexesByLayer = new Map<
     string,
     SpatialHash<StaticObstacle>
@@ -689,10 +704,19 @@ export class AutoroutingDrcEngine {
     return indexes
   }
 
-  private obstacleSharesNet(netId: string, obstacle: StaticObstacle) {
-    return obstacle.connectedTo.some((connectedId) =>
+  private obstacleSharesNet(netId: string, obstacle: StaticObstacle): boolean {
+    let netResults = this.obstacleNetCache.get(obstacle)
+    const cached = netResults?.get(netId)
+    if (cached !== undefined) return cached
+    if (!netResults) {
+      netResults = new Map<string, boolean>()
+      this.obstacleNetCache.set(obstacle, netResults)
+    }
+    const connected = obstacle.connectedTo.some((connectedId) =>
       this.areConnected(netId, connectedId),
     )
+    netResults.set(netId, connected)
+    return connected
   }
 
   private checkTracePair(
@@ -957,6 +981,8 @@ export class AutoroutingDrcEngine {
     traces: SimplifiedPcbTraces,
     includeViaPadErrors: boolean,
   ): AutoroutingDrcResult {
+    // ConnectivityMap remains mutable between synchronous evaluations.
+    this.obstacleNetCache.clear()
     const { segments, vias } = this.collectDynamicGeometry(traces)
     const dynamicIndexesByLayer = this.buildDynamicIndexes(segments, vias)
     const detectedTraceErrors: AutoroutingDrcError[] = []
