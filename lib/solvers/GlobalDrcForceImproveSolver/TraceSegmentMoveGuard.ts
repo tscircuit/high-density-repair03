@@ -95,10 +95,18 @@ export class TraceSegmentMoveGuard {
       if (cell.size === 0) this.cells.delete(key)
     }
     const keys: string[] = []
-    const minX = Math.floor(Math.min(segment.start.x, segment.end.x) / this.cellSize)
-    const maxX = Math.floor(Math.max(segment.start.x, segment.end.x) / this.cellSize)
-    const minY = Math.floor(Math.min(segment.start.y, segment.end.y) / this.cellSize)
-    const maxY = Math.floor(Math.max(segment.start.y, segment.end.y) / this.cellSize)
+    const minX = Math.floor(
+      Math.min(segment.start.x, segment.end.x) / this.cellSize,
+    )
+    const maxX = Math.floor(
+      Math.max(segment.start.x, segment.end.x) / this.cellSize,
+    )
+    const minY = Math.floor(
+      Math.min(segment.start.y, segment.end.y) / this.cellSize,
+    )
+    const maxY = Math.floor(
+      Math.max(segment.start.y, segment.end.y) / this.cellSize,
+    )
     for (let x = minX; x <= maxX; x += 1) {
       for (let y = minY; y <= maxY; y += 1) {
         const key = `${segment.z}:${x}:${y}`
@@ -122,8 +130,16 @@ export class TraceSegmentMoveGuard {
     maxY: number,
   ): Set<Segment> {
     const nearby = new Set<Segment>()
-    for (let x = Math.floor(minX / this.cellSize); x <= Math.floor(maxX / this.cellSize); x += 1) {
-      for (let y = Math.floor(minY / this.cellSize); y <= Math.floor(maxY / this.cellSize); y += 1) {
+    for (
+      let x = Math.floor(minX / this.cellSize);
+      x <= Math.floor(maxX / this.cellSize);
+      x += 1
+    ) {
+      for (
+        let y = Math.floor(minY / this.cellSize);
+        y <= Math.floor(maxY / this.cellSize);
+        y += 1
+      ) {
         for (const segment of this.cells.get(`${z}:${x}:${y}`) ?? []) {
           nearby.add(segment)
         }

@@ -469,8 +469,8 @@ const getForceMoveGuard = (
       end: segment.end,
       z: segment.z,
       traceRadius:
-        (routes[segment.routeIndex]!.route[segment.startIndex]!.traceThickness ??
-          routes[segment.routeIndex]!.traceThickness) / 2,
+        (routes[segment.routeIndex]!.route[segment.startIndex]!
+          .traceThickness ?? routes[segment.routeIndex]!.traceThickness) / 2,
       rootConnectionName:
         connectivity?.getNetConnectedToId(segment.rootConnectionName) ??
         segment.rootConnectionName,
@@ -2378,12 +2378,7 @@ const moveSegmentAwayFromObstacle = (
     return false
   }
 
-  return insertGuardedDetourPoints(
-    routes,
-    segment,
-    normalizedDetourPoints,
-    srj,
-  )
+  return insertGuardedDetourPoints(routes, segment, normalizedDetourPoints, srj)
 }
 
 const getNearestSegment = (
