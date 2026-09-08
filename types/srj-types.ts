@@ -65,6 +65,8 @@ export interface SimpleRouteJson {
 
 export interface Obstacle {
   obstacleId?: string
+  /** Physical copper kind; unknown obstacles receive no via-in-pad permission. */
+  kind?: "smt_pad" | "plated_hole" | "via"
   type: "rect" | "oval"
   layers: string[]
   zLayers?: number[]
