@@ -370,6 +370,9 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       this.params.effort ?? 1,
       this.broadPassMultiplier,
       this.params.connMap,
+      false,
+      true,
+      this.params.fixedObstacleRoutes,
     )
     this.broadInputSnapshot = getDrcSnapshot(
       this.params.srj,
