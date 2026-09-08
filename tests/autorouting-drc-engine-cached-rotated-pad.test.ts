@@ -4,8 +4,8 @@ import type { SimpleRouteJson, SimplifiedPcbTrace } from "../types/srj-types"
 
 test("cached rotated pad geometry rejects contacts and retains clear traces in world coordinates", (): void => {
   for (const angle of [45, -30, 90]) {
-    const cosine = Math.cos(angle * Math.PI / 180)
-    const sine = Math.sin(angle * Math.PI / 180)
+    const cosine = Math.cos((angle * Math.PI) / 180)
+    const sine = Math.sin((angle * Math.PI) / 180)
     const point = (x: number, y: number): { x: number; y: number } => ({
       x: 12 + x * cosine - y * sine,
       y: -4 + x * sine + y * cosine,
@@ -26,15 +26,17 @@ test("cached rotated pad geometry rejects contacts and retains clear traces in w
       minTraceWidth: 0.1,
       bounds: { minX: 8, maxX: 16, minY: -8, maxY: 0 },
       connections: [],
-      obstacles: [{
-        type: "rect",
-        center: { x: 12, y: -4 },
-        width: 2,
-        height: 0.2,
-        ccwRotationDegrees: angle,
-        layers: ["top"],
-        connectedTo: ["pcb_smtpad_rotated", "pad-net"],
-      }],
+      obstacles: [
+        {
+          type: "rect",
+          center: { x: 12, y: -4 },
+          width: 2,
+          height: 0.2,
+          ccwRotationDegrees: angle,
+          layers: ["top"],
+          connectedTo: ["pcb_smtpad_rotated", "pad-net"],
+        },
+      ],
     }
     const control = new AutoroutingDrcEngine(srj)
     const cached = new AutoroutingDrcEngine(srj, {
