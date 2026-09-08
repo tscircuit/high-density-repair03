@@ -4979,8 +4979,12 @@ export const applyDrcErrorForces = (
           changed =
             (obstacle
               ? moveViaAwayFromObstacle(routes, nearestVia, obstacle, srj)
-              : moveViaAwayFromPoint(routes, nearestVia, repulsionPoint, srj)) ||
-            changed
+              : moveViaAwayFromPoint(
+                  routes,
+                  nearestVia,
+                  repulsionPoint,
+                  srj,
+                )) || changed
         }
       }
       continue
