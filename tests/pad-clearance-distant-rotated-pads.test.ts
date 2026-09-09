@@ -4,7 +4,10 @@ import { findPadClearanceViaPosition } from "../lib/solvers/GlobalDrcForceImprov
 import { hasNewViaPadOverlap } from "../lib/solvers/GlobalDrcForceImproveSolver/hasNewViaPadOverlap"
 
 test("distant pads preserve the nearest legal escape from rotated pad copper", (): void => {
-  for (const offset of [{ x: 0, y: 0 }, { x: 13.7, y: -7.3 }]) {
+  for (const offset of [
+    { x: 0, y: 0 },
+    { x: 13.7, y: -7.3 },
+  ]) {
     for (const angle of [0, 30, 45, 90]) {
       const srj: SimpleRouteJson = {
         bounds: {
@@ -39,9 +42,13 @@ test("distant pads preserve the nearest legal escape from rotated pad copper", (
         ],
         vias: [],
       }
-      const local = findPadClearanceViaPosition(srj, route, offset, 0.15, [
-        0, 1,
-      ])
+      const local = findPadClearanceViaPosition(
+        srj,
+        route,
+        offset,
+        0.15,
+        [0, 1],
+      )
       expect(local).toBeDefined()
       if (!local) throw new Error("Expected a legal escape outside the pad")
       const withDistantPads: SimpleRouteJson = {
