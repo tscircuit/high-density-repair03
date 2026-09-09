@@ -3380,15 +3380,19 @@ const rotateDirection = (direction: Point, eighthTurns: number) => {
   }
 }
 
-const getExternalViaPoint = (
-  endpoint: Point,
-  pad: SimpleRouteJson["obstacles"][number],
-  direction: Point,
-  viaRadius: number,
-) => {
+const getExternalViaPoint = ({
+  endpoint,
+  pad,
+  direction,
+  requiredDistance,
+}: {
+  endpoint: Point
+  pad: SimpleRouteJson["obstacles"][number]
+  direction: Point
+  requiredDistance: number
+}): Point | undefined => {
   let insideDistance = 0
-  let outsideDistance = Math.hypot(pad.width, pad.height) + viaRadius * 2
-  const requiredDistance = viaRadius + POSITION_EPSILON
+  let outsideDistance = Math.hypot(pad.width, pad.height) + requiredDistance * 2
   const pointAtDistance = (distance: number) => ({
     x: endpoint.x + direction.x * distance,
     y: endpoint.y + direction.y * distance,
@@ -3532,16 +3536,19 @@ export const applySafeTraceLayerMoveForError = (
     if (!pad || !tangent) return undefined
     const rotation =
       endpointSide === "start" ? rotationPair[0] : rotationPair[1]
-    const escape = getExternalViaPoint(
+    const requiredDistance =
+      viaRadius + getViaEdgeToPadEdgeClearance(srj) + POSITION_EPSILON
+    const escape = getExternalViaPoint({
       endpoint,
       pad,
-      rotateDirection(tangent, rotation),
-      viaRadius,
-    )
+      direction: rotateDirection(tangent, rotation),
+      requiredDistance,
+    })
     if (
       !escape ||
       !isViaInsideBounds(escape, viaRadius, srj.bounds) ||
-      getPointToObstacleDistance(escape, pad) + POSITION_EPSILON < viaRadius
+      getPointToObstacleDistance(escape, pad) + POSITION_EPSILON <
+        requiredDistance
     ) {
       return undefined
     }
