@@ -47,6 +47,14 @@ const projectToBounds = (point: Point, bounds: Bounds): Point => ({
   y: clamp(point.y, bounds.minY, bounds.maxY),
 })
 
+const mayIntersectPadClearance = (point: Point, pad: PadRegion): boolean =>
+  !(
+    point.x < pad.bounds.minX ||
+    point.x > pad.bounds.maxX ||
+    point.y < pad.bounds.minY ||
+    point.y > pad.bounds.maxY
+  )
+
 const distanceToPad = (point: Point, pad: PadRegion) => {
   const dx = point.x - pad.center.x
   const dy = point.y - pad.center.y
@@ -276,7 +284,11 @@ export const findPadClearanceViaPosition = (
   const pads = getPadRegions(srj, route, viaRadius, zLayers, connMap)
   const isFeasible = (point: Point) =>
     isPointInsideBounds(point, board) &&
-    pads.every((pad) => distanceToPad(point, pad) >= pad.clearance)
+    pads.every(
+      (pad) =>
+        !mayIntersectPadClearance(point, pad) ||
+        distanceToPad(point, pad) >= pad.clearance,
+    )
   const projected = projectToBounds(preferred, board)
   if (isFeasible(projected))
     return isPointInsideBounds(preferred, board) ? preferred : projected
@@ -285,7 +297,9 @@ export const findPadClearanceViaPosition = (
   // boxes conservatively connect rounded regions without enumerating the
   // boundaries of unrelated pads elsewhere on the board.
   const component = pads.filter(
-    (pad) => distanceToPad(projected, pad) < pad.clearance,
+    (pad) =>
+      mayIntersectPadClearance(projected, pad) &&
+      distanceToPad(projected, pad) < pad.clearance,
   )
   const included = new Set(component)
   for (let index = 0; index < component.length; index += 1) {
