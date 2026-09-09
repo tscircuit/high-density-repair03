@@ -796,7 +796,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           // skips the adjusted candidate when its via positions are unchanged.
           let evaluatedDirection = false
           for (const adjustViaClearance of [false, true]) {
-            const candidateRoutes = this.cloneCandidateRoutes(bestRoutes, [
+            const candidateRoutes = cloneRoutesForIndexes(bestRoutes, [
               changedRouteIndex,
             ])
             const changed = applySafeTraceLayerMoveForError(
