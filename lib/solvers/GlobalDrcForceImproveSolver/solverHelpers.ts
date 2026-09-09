@@ -2828,8 +2828,12 @@ const pushMovablesAwayFromObstacles = (
   connMap?: ConnectivityMap,
 ) => {
   let changed = false
-  const requiredTraceObstacleDistance =
-    srj.minTraceWidth / 2 + getTraceToPadEdgeClearance(srj) + CLEARANCE_SLACK
+  const traceObstacleMargin = getTraceToPadEdgeClearance(srj) + CLEARANCE_SLACK
+  const maximumTraceRadius = segments.reduce(
+    (maximum, segment) => Math.max(maximum, segment.radius),
+    0,
+  )
+  const traceObstacleSearchDistance = maximumTraceRadius + traceObstacleMargin
   const requiredViaObstacleDistance =
     (srj.minViaDiameter ?? 0.3) / 2 +
     getViaEdgeToPadEdgeClearance(srj)! +
@@ -2867,7 +2871,7 @@ const pushMovablesAwayFromObstacles = (
 
     const nearbySegmentIndexes = getSpatialCandidateIndexes(
       segmentSpatialIndex,
-      expandBounds2d(obstacleBounds, requiredTraceObstacleDistance),
+      expandBounds2d(obstacleBounds, traceObstacleSearchDistance),
       spatialCellSize,
     )
     for (const segmentIndex of nearbySegmentIndexes) {
@@ -2882,7 +2886,7 @@ const pushMovablesAwayFromObstacles = (
       const repulsion = getSegmentRectRepulsion(
         segment,
         obstacle,
-        requiredTraceObstacleDistance,
+        segment.radius + traceObstacleMargin,
       )
       if (!repulsion) continue
       const move = Math.min(BROAD_MAX_MOVE, repulsion.penetration)
