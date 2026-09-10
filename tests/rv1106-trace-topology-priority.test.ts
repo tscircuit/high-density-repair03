@@ -34,6 +34,10 @@ test("RV1106 trace topology repair with remaining same-net via errors", () => {
     enableSafeTraceLayerMoves: true,
     enablePostSolveClearanceRelaxation: false,
   })
+  expectSnapshot({
+    graphics: solver.visualize(),
+    name: "rv1106-trace-topology-input",
+  })
   solver.solve()
   expect(solver.solved).toBe(true)
   expect(solver.failed).toBe(false)
