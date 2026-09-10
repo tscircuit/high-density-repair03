@@ -14,7 +14,10 @@ import { expectSnapshot } from "./fixtures/rv1106-phased-repair/expectSnapshot"
 
 test("RV1106 via merge candidates retain the full phased board", async () => {
   const input = loadBoard()
-  const engine = new AutoroutingDrcEngine(input.srj, { ...RELAXED_DRC_OPTIONS, connMap: input.connMap })
+  const engine = new AutoroutingDrcEngine(input.srj, {
+    ...RELAXED_DRC_OPTIONS,
+    connMap: input.connMap,
+  })
   const before = getDrcSnapshot(
     input.srj,
     input.hdRoutes,
@@ -71,7 +74,11 @@ test("RV1106 via merge candidates retain the full phased board", async () => {
   solver.outputHdRoutes = bestRoutes
   const graphics = solver.visualize()
   graphics.title = `RV1106 full board: ${bestCount} repair03 DRC reports`
-  expectSnapshot({ graphics, name: "rv1106-via-merge-direction", relaxedDrcCount: bestCount })
+  expectSnapshot({
+    graphics,
+    name: "rv1106-via-merge-direction",
+    relaxedDrcCount: bestCount,
+  })
   const insideDetail = (point: { x: number; y: number }) =>
     point.x >= -8 && point.x <= -7 && point.y >= -2.7 && point.y <= -1.7
   expectSnapshot({
