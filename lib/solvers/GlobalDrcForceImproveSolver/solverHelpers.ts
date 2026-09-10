@@ -2524,25 +2524,36 @@ const tryCanonicalizeVia = (
   return false
 }
 
-const canonicalizeSameNetViaPair = (
-  routes: MutableRoute[],
-  left: ViaNode,
-  right: ViaNode,
-  srj: SimpleRouteJson,
-  connMap?: ConnectivityMap,
-) => {
+const canonicalizeSameNetViaPair = ({
+  routes,
+  left,
+  right,
+  srj,
+  connMap,
+  scale,
+}: {
+  routes: MutableRoute[]
+  left: ViaNode
+  right: ViaNode
+  srj: SimpleRouteJson
+  connMap?: ConnectivityMap
+  scale: number
+}) => {
   if (!sharesNet(left.rootConnectionName, right.rootConnectionName, connMap)) {
     return false
   }
-
-  const [viaToKeep, viaToMove] = !left.canCanonicalize
-    ? [left, right]
-    : !right.canCanonicalize
-      ? [right, left]
-      : left.routeIndex <= right.routeIndex
-        ? [left, right]
-        : [right, left]
-  return tryCanonicalizeVia(routes, viaToKeep, viaToMove, srj)
+  if (!left.canCanonicalize) {
+    return tryCanonicalizeVia(routes, left, right, srj)
+  }
+  if (!right.canCanonicalize) {
+    return tryCanonicalizeVia(routes, right, left, srj)
+  }
+  const leftRouteComesFirst = left.routeIndex <= right.routeIndex
+  const keepEarlierRoute = scale >= 0
+  if (leftRouteComesFirst === keepEarlierRoute) {
+    return tryCanonicalizeVia(routes, left, right, srj)
+  }
+  return tryCanonicalizeVia(routes, right, left, srj)
 }
 
 const pushViaSegmentPair = (
@@ -4790,13 +4801,14 @@ export const applyDrcErrorForces = (
           getDrcErrorType(error) === "pcb_via_clearance_error"
         changed =
           (shouldCanonicalizeSameNetViaPair
-            ? canonicalizeSameNetViaPair(
+            ? canonicalizeSameNetViaPair({
                 routes,
-                nearestViaPair[0],
-                nearestViaPair[1],
+                left: nearestViaPair[0],
+                right: nearestViaPair[1],
                 srj,
                 connMap,
-              )
+                scale,
+              })
             : pushViaViaPair(
                 routes,
                 nearestViaPair[0],
