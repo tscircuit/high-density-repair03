@@ -2,11 +2,7 @@ import { expect, test } from "bun:test"
 import { VisualizedGlobalDrcForceImproveSolver } from "../fixture-support/VisualizedGlobalDrcForceImproveSolver"
 import { expectSnapshot } from "./fixtures/rv1106-phased-repair/expectSnapshot"
 import { ConnectivityMap } from "circuit-json-to-connectivity-map"
-import {
-  GlobalDrcForceImproveSolver,
-  type HighDensityRoute,
-  type SimpleRouteJson,
-} from "../lib"
+import { type HighDensityRoute, type SimpleRouteJson } from "../lib"
 test("repairs a crossing while terminal-locked same-net vias remain", () => {
   const srj: SimpleRouteJson = {
     bounds: { minX: -5, minY: -5, maxX: 5, maxY: 5 },
@@ -78,6 +74,7 @@ test("repairs a crossing while terminal-locked same-net vias remain", () => {
   solver.solve()
   expect(solver.stats.initialDrcIssueCount).toBe(2)
   expect(solver.stats.finalDrcIssueCount).toBe(1)
+  expect(solver.getOutput().slice(2)).toEqual(hdRoutes.slice(2))
   for (const [index, route] of solver.getOutput().entries()) {
     expect(route.route[0]).toEqual(hdRoutes[index]!.route[0])
     expect(route.route.at(-1)).toEqual(hdRoutes[index]!.route.at(-1))
