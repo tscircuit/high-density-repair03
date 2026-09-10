@@ -77,7 +77,7 @@ test("repairs a crossing while terminal-locked same-net vias remain", () => {
   })
   solver.solve()
   expect(solver.stats.initialDrcIssueCount).toBe(2)
-  expect(solver.stats.finalDrcIssueCount).toBe(2)
+  expect(solver.stats.finalDrcIssueCount).toBe(1)
   for (const [index, route] of solver.getOutput().entries()) {
     expect(route.route[0]).toEqual(hdRoutes[index]!.route[0])
     expect(route.route.at(-1)).toEqual(hdRoutes[index]!.route.at(-1))
