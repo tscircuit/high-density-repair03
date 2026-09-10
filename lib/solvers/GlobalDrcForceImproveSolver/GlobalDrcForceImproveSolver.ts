@@ -55,6 +55,7 @@ import { applyTraceToPadClearanceRelaxation } from "./traceToPadClearanceRelaxat
 import { applyViaToPadClearanceRelaxation } from "./viaToPadClearanceRelaxation"
 import { RELAXED_DRC_OPTIONS } from "./drcPresets"
 import type {
+  DrcError,
   DrcEvaluator,
   DrcSnapshot,
   GlobalDrcForceImproveSolverParams,
@@ -576,13 +577,16 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     let acceptedCandidate = false
     let attemptedPeriodicLargeBoardBroadFallback = false
     const activeRepairErrors = getLegacyFirstRepairErrors(centeredErrors)
-    const sameNetViaError = this.enableTargetedErrorSweep
-      ? activeRepairErrors.find(
-          (error) =>
-            error.type === "pcb_via_clearance_error" &&
-            error.pcb_via_pair_net_relation === "same_net",
-        )
-      : undefined
+    const sameNetViaErrors = activeRepairErrors.filter(
+      (error) =>
+        error.type === "pcb_via_clearance_error" &&
+        error.pcb_via_pair_net_relation === "same_net",
+    )
+    let sameNetViaError: DrcError | undefined
+    if (this.enableTargetedErrorSweep && sameNetViaErrors.length > 0) {
+      sameNetViaError =
+        sameNetViaErrors[(this.iterations - 1) % sameNetViaErrors.length]
+    }
     const shouldPrioritizeDifferentNetVia =
       this.enableTargetedErrorSweep &&
       (this.iterations - 1) % DIFFERENT_NET_VIA_PRIORITY_INTERVAL === 0

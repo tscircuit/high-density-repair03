@@ -40,7 +40,7 @@ test("RV1106 targeted repair visits the remaining same-net via pairs", () => {
   expect(solver.solved).toBe(true)
   expect(solver.failed).toBe(false)
   expect(solver.stats.initialDrcIssueCount).toBe(147)
-  expect(after.count).toBe(141)
+  expect(after.count).toBe(129)
   expect(output).toHaveLength(input.hdRoutes.length)
   for (const [index, route] of output.entries()) {
     expect(route.connectionName).toBe(input.hdRoutes[index]!.connectionName)
