@@ -1,0 +1,44 @@
+<svg width="640" height="640" viewBox="0 0 640 640" xmlns="http://www.w3.org/2000/svg"><rect width="100%" height="100%" fill="white"/><g><polyline data-points="-1,0 1,0" data-type="line" data-label="a z0" points="264,320 376,320" fill="none" stroke="rgba(37, 99, 235, 0.42)" stroke-width="5.6000000000000005"/></g><g><polyline data-points="0,-1 0,1" data-type="line" data-label="b z0" points="320,376 320,264" fill="none" stroke="rgba(37, 99, 235, 0.42)" stroke-width="5.6000000000000005"/></g><g><polyline data-points="3,0 4,0" data-type="line" data-label="v1 z1" points="488,320 544,320" fill="none" stroke="rgba(220, 38, 38, 0.42)" stroke-width="5.6000000000000005"/></g><g><polyline data-points="3.15,0 4,0.15" data-type="line" data-label="v2 z1" points="496.4,320 544,311.6" fill="none" stroke="rgba(220, 38, 38, 0.42)" stroke-width="5.6000000000000005"/></g><g><rect data-type="rect" data-label="board bounds" data-x="0" data-y="0" x="40" y="40" width="560" height="560" fill="rgba(255, 255, 255, 0)" stroke="#0f172a" stroke-width="0.017857142857142856"/></g><circle data-type="circle" data-label="" data-x="3" data-y="0" cx="488" cy="320" r="8.4" fill="rgba(17, 24, 39, 0.5)" stroke="rgba(248, 250, 252, 0.5)" stroke-width="0.017857142857142856"/><circle data-type="circle" data-label="" data-x="3.15" data-y="0" cx="496.4" cy="320" r="8.4" fill="rgba(17, 24, 39, 0.5)" stroke="rgba(248, 250, 252, 0.5)" stroke-width="0.017857142857142856"/><circle data-type="circle" data-label="" data-x="0" data-y="0" cx="320" cy="320" r="12.32" fill="rgba(147, 51, 234, 0.38)" stroke="#7e22ce" stroke-width="0.017857142857142856"/><circle data-type="circle" data-label="" data-x="3.075" data-y="0" cx="492.20000000000005" cy="320" r="12.32" fill="rgba(147, 51, 234, 0.38)" stroke="#7e22ce" stroke-width="0.017857142857142856"/><g id="crosshair" style="display: none"><line id="crosshair-h" y1="0" y2="640" stroke="#666" stroke-width="0.5"/><line id="crosshair-v" x1="0" x2="640" stroke="#666" stroke-width="0.5"/><text id="coordinates" font-family="monospace" font-size="12" fill="#666"></text></g><script><![CDATA[
+              document.currentScript.parentElement.addEventListener('mousemove', (e) => {
+                const svg = e.currentTarget;
+                const rect = svg.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+                const crosshair = svg.getElementById('crosshair');
+                const h = svg.getElementById('crosshair-h');
+                const v = svg.getElementById('crosshair-v');
+                const coords = svg.getElementById('coordinates');
+                
+                crosshair.style.display = 'block';
+                h.setAttribute('x1', '0');
+                h.setAttribute('x2', '640');
+                h.setAttribute('y1', y);
+                h.setAttribute('y2', y);
+                v.setAttribute('x1', x);
+                v.setAttribute('x2', x);
+                v.setAttribute('y1', '0');
+                v.setAttribute('y2', '640');
+
+                // Calculate real coordinates using inverse transformation
+                const matrix = {"a":56,"c":0,"e":320,"b":0,"d":-56,"f":320};
+                // Manually invert and apply the affine transform
+                // Since we only use translate and scale, we can directly compute:
+                // x' = (x - tx) / sx
+                // y' = (y - ty) / sy
+                const sx = matrix.a;
+                const sy = matrix.d;
+                const tx = matrix.e; 
+                const ty = matrix.f;
+                const realPoint = {
+                  x: (x - tx) / sx,
+                  y: (y - ty) / sy // Flip y back since we used negative scale
+                }
+                
+                coords.textContent = `(${realPoint.x.toFixed(2)}, ${realPoint.y.toFixed(2)})`;
+                coords.setAttribute('x', (x + 5).toString());
+                coords.setAttribute('y', (y - 5).toString());
+              });
+              document.currentScript.parentElement.addEventListener('mouseleave', () => {
+                document.currentScript.parentElement.getElementById('crosshair').style.display = 'none';
+              });
+            ]]></script></svg>

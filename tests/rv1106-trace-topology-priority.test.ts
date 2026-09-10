@@ -16,10 +16,16 @@ test("RV1106 trace topology repair with remaining same-net via errors", () => {
     srj: SimpleRouteJson
     hdRoutes: HighDensityRoute[]
     netMap: ConnectivityMap["netMap"]
-  } = JSON.parse(gunzipSync(readFileSync(new URL(
-    "./fixtures/rv1106-phased-repair/trace-topology-input.json.gz",
-    import.meta.url,
-  ))).toString())
+  } = JSON.parse(
+    gunzipSync(
+      readFileSync(
+        new URL(
+          "./fixtures/rv1106-phased-repair/trace-topology-input.json.gz",
+          import.meta.url,
+        ),
+      ),
+    ).toString(),
+  )
   const solver = new VisualizedGlobalDrcForceImproveSolver({
     ...input,
     connMap: new ConnectivityMap(input.netMap),
