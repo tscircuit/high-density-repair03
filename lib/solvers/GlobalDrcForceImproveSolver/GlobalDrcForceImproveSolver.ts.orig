@@ -173,7 +173,6 @@ const SAFE_TRACE_LAYER_LOCAL_EXPANSIONS = [0, 1, 2] as const
 // Reserve occasional targeted slots for different-net via pairs without
 // letting them preempt the cheaper trace-topology search every iteration.
 const DIFFERENT_NET_VIA_PRIORITY_INTERVAL = 8
-const TRACE_TOPOLOGY_PRIORITY_INTERVAL = 2
 
 export class GlobalDrcForceImproveSolver extends BaseSolver {
   readonly srj: SimpleRouteJson
@@ -625,20 +624,16 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       !this.initialLowCountErrorsHaveMovableTraces &&
       bestIssueCount <= TRACE_LAYER_CORRIDOR_MAX_DRC_COUNT &&
       this.srj.layerCount > 1
-    const padTraceErrors = centeredErrors.filter(
-      (error) =>
-        error.type === "pcb_pad_trace_clearance_error" ||
-        ((this.enableSafeTraceLayerMoves ||
-          shouldTryTracePairTopology ||
-          shouldTryTraceLayerCorridor) &&
-          error.type === "pcb_trace_error"),
-    )
-    if (
-      prioritizedViaError &&
-      this.iterations % TRACE_TOPOLOGY_PRIORITY_INTERVAL !== 0
-    ) {
-      padTraceErrors.length = 0
-    }
+    const padTraceErrors = prioritizedViaError
+      ? []
+      : centeredErrors.filter(
+          (error) =>
+            error.type === "pcb_pad_trace_clearance_error" ||
+            ((this.enableSafeTraceLayerMoves ||
+              shouldTryTracePairTopology ||
+              shouldTryTraceLayerCorridor) &&
+              error.type === "pcb_trace_error"),
+        )
     const orderedPadTopologyErrors = padTraceErrors.map(
       (_, offset) =>
         padTraceErrors[
