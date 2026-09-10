@@ -2536,7 +2536,7 @@ const canonicalizeSameNetViaPair = ({
   srj: SimpleRouteJson
   connMap?: ConnectivityMap
   scale: number
-}) => {
+}): boolean => {
   if (!sharesNet(left.rootConnectionName, right.rootConnectionName, connMap)) {
     return false
   }
@@ -2546,6 +2546,7 @@ const canonicalizeSameNetViaPair = ({
   if (!right.canCanonicalize) {
     return tryCanonicalizeVia(routes, right, left, srj)
   }
+  // Reverse the preferred destination only when neither via is protected.
   const leftRouteComesFirst = left.routeIndex <= right.routeIndex
   const keepEarlierRoute = scale >= 0
   if (leftRouteComesFirst === keepEarlierRoute) {
