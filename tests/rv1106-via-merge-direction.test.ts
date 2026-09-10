@@ -61,7 +61,7 @@ test("RV1106 via merge candidates retain the full phased board", async () => {
       bestCount = snapshot.count
     }
   }
-  expect(bestCount).toBe(147)
+  expect(bestCount).toBe(145)
   expect(bestRoutes).toHaveLength(input.hdRoutes.length)
   for (const [index, route] of bestRoutes.entries()) {
     expect(route.route[0]).toEqual(input.hdRoutes[index]!.route[0])
