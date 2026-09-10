@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test"
 import { VisualizedGlobalDrcForceImproveSolver } from "../fixture-support/VisualizedGlobalDrcForceImproveSolver"
 import { AutoroutingDrcEngine } from "../lib"
+import { RELAXED_DRC_OPTIONS } from "../lib/solvers/GlobalDrcForceImproveSolver/drcPresets"
 import { getDrcSnapshot } from "../lib/solvers/GlobalDrcForceImproveSolver/solverHelpers"
 import { expectSnapshot } from "./fixtures/rv1106-phased-repair/expectSnapshot"
 import {
@@ -16,7 +17,10 @@ test("RV1106 targeted repair visits the remaining same-net via pairs", () => {
   expect(phases.remaining.traces).toEqual(phases.bootFlash.output)
   expect(phases.remaining.connections).toHaveLength(36)
   const input = loadBoard()
-  const engine = new AutoroutingDrcEngine(input.srj, { connMap: input.connMap })
+  const engine = new AutoroutingDrcEngine(input.srj, {
+    ...RELAXED_DRC_OPTIONS,
+    connMap: input.connMap,
+  })
   const solver = new VisualizedGlobalDrcForceImproveSolver({
     ...input,
     autoroutingDrcEngine: engine,
@@ -26,8 +30,20 @@ test("RV1106 targeted repair visits the remaining same-net via pairs", () => {
     enablePostSolveClearanceRelaxation: false,
   })
   const initial = solver.visualize()
+  const initialDrc = getDrcSnapshot(
+    input.srj,
+    input.hdRoutes,
+    undefined,
+    input.connMap,
+    engine,
+  )
+  expect(initialDrc.count).toBe(147)
   initial.title = "RV1106 targeted repair input: 147 reports"
-  expectSnapshot({ graphics: initial, name: "rv1106-via-priority-input" })
+  expectSnapshot({
+    graphics: initial,
+    name: "rv1106-via-priority-input",
+    relaxedDrcCount: initialDrc.count,
+  })
   solver.solve()
   const output = solver.getOutput()
   const after = getDrcSnapshot(
@@ -49,5 +65,9 @@ test("RV1106 targeted repair visits the remaining same-net via pairs", () => {
   }
   const graphics = solver.visualize()
   graphics.title = `RV1106 targeted repair output: ${after.count} reports`
-  expectSnapshot({ graphics, name: "rv1106-via-priority-output" })
+  expectSnapshot({
+    graphics,
+    name: "rv1106-via-priority-output",
+    relaxedDrcCount: after.count,
+  })
 })
