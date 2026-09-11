@@ -44,7 +44,7 @@ export const expectClearanceDetour = (
             : [],
           connections: [
             { name: "moving", pointsToConnect: [] },
-            { name: "foreign", pointsToConnect: [] },
+            ...(!isObstacle ? [{ name: "foreign", pointsToConnect: [] }] : []),
           ],
         }
         const moving: HighDensityRoute = {
@@ -102,7 +102,7 @@ export const expectClearanceDetour = (
             ),
           ).toBe(true)
           const output = materializeRoutes(candidate)
-          expect(getDrcSnapshot(srj, output).count).toBe(0)
+          expect(getDrcSnapshot(srj, output).errors).toEqual([])
           expect(
             getDrcSnapshot(srj, output, undefined, undefined, engine).count,
           ).toBe(0)
