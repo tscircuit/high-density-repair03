@@ -48,6 +48,7 @@ import { convertHdRouteToSimplifiedRoute } from "../../utils/convertHdRouteToSim
 import { mapZToLayerName } from "../../utils/mapZToLayerName"
 import { findPadClearanceViaPosition } from "./findPadClearanceViaPosition"
 import { findTraceClearanceViaPositions } from "./findTraceClearanceViaPositions"
+import { getTraceClearanceDetour } from "./getTraceClearanceDetour"
 
 const cloneRoute = (route: HighDensityRoute): MutableRoute => ({
   ...route,
@@ -4413,6 +4414,120 @@ export const applyTracePairLayerMoveForError = (
     { ...start },
     ...movedSpan,
     { ...end },
+  )
+  return true
+}
+
+/** Sizes a same-layer detour from the conflicting copper's full extent. */
+export const applyTraceClearanceDetourForError = (
+  srj: SimpleRouteJson,
+  routes: MutableRoute[],
+  error: Record<string, unknown>,
+  traceRouteIndexById: Map<string, number>,
+  routeIndex: number,
+  direction: -1 | 1,
+  connMap?: ConnectivityMap,
+): boolean => {
+  const center = getErrorCenter(error)
+  const route = routes[routeIndex]
+  const errorType = getDrcErrorType(error)
+  if (
+    !center ||
+    !route ||
+    (errorType !== "pcb_trace_error" &&
+      errorType !== "pcb_pad_trace_clearance_error" &&
+      errorType !== "pcb_via_trace_clearance_error")
+  ) {
+    return false
+  }
+
+  let segment: Segment | undefined
+  let blocker: Point[] | undefined
+  let blockerRadius = 0
+  if (isTraceObstacleDrcError(error)) {
+    const pair = getNearestTraceObstacleSegmentPair(
+      srj,
+      routes,
+      routeIndex,
+      center,
+      connMap,
+    )
+    if (!pair) return false
+    segment = pair.segment
+    const { obstacle } = pair
+    const angle = ((obstacle.ccwRotationDegrees ?? 0) * Math.PI) / 180
+    blocker = [-1, 1].flatMap((xSign) =>
+      [-1, 1].map((ySign) => ({
+        x: obstacle.center.x +
+          (xSign * obstacle.width * Math.cos(angle) - ySign * obstacle.height * Math.sin(angle)) / 2,
+        y: obstacle.center.y +
+          (xSign * obstacle.width * Math.sin(angle) + ySign * obstacle.height * Math.cos(angle)) / 2,
+      })),
+    )
+  } else {
+    segment = getNearestSegment(collectSegmentsForRoute(route, routeIndex), center)
+    if (!segment) return false
+    const pair = getTraceRoutePairForError(error, traceRouteIndexById)
+    const otherRouteIndex = pair?.find((index) => index !== routeIndex)
+    if (otherRouteIndex !== undefined) {
+      const other = getNearestSegment(
+        collectSegmentsForRoute(routes[otherRouteIndex]!, otherRouteIndex).filter(
+          (candidate) => candidate.z === segment!.z,
+        ),
+        center,
+      )
+      if (!other || sharesNet(segment.rootConnectionName, other.rootConnectionName, connMap)) {
+        return false
+      }
+      blocker = [other.start, other.end]
+      blockerRadius = other.radius
+    } else if (
+      typeof error.pcb_via_id === "string" ||
+      Array.isArray(error.pcb_via_ids)
+    ) {
+      const via = getNearestVia(
+        collectViaNodes(routes).filter(
+          (candidate) =>
+            candidate.zLayers.includes(segment!.z) &&
+            !sharesNet(candidate.rootConnectionName, segment!.rootConnectionName, connMap),
+        ),
+        center,
+      )
+      if (!via) return false
+      blocker = [via]
+      blockerRadius = via.radius
+    }
+  }
+  if (
+    !segment ||
+    !blocker ||
+    route.jumpers?.length ||
+    route.route[segment.startIndex]?.toNextSegmentType === "through_obstacle"
+  ) {
+    return false
+  }
+  const detour = getTraceClearanceDetour(
+    segment.start,
+    segment.end,
+    blocker,
+    segment.radius + blockerRadius + getTraceToPadEdgeClearance(srj) + CLEARANCE_SLACK,
+    direction,
+  )
+  if (!detour) return false
+  const points = [segment.start, ...detour, segment.end]
+  const requiredBoardClearance = segment.radius + (srj.minBoardEdgeClearance ?? 0)
+  for (let index = 1; index < points.length; index += 1) {
+    if (
+      getSegmentBoardClearance(srj, points[index - 1]!, points[index]!) <
+      requiredBoardClearance
+    ) {
+      return false
+    }
+  }
+  route.route.splice(
+    segment.endIndex,
+    0,
+    ...detour.map((point) => ({ ...point, z: segment!.z })),
   )
   return true
 }
