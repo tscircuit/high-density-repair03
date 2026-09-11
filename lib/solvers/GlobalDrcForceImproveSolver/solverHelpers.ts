@@ -3772,7 +3772,13 @@ export const applyTerminalViaRelocationForError = (
   connMap?: ConnectivityMap,
   viaHoleDiameter?: number,
 ) => {
-  if (getDrcErrorType(error) !== "pcb_pad_trace_clearance_error") return false
+  const errorType = getDrcErrorType(error)
+  if (
+    errorType !== "pcb_pad_trace_clearance_error" &&
+    errorType !== "pcb_trace_error"
+  ) {
+    return false
+  }
   const routeIndex = getTraceRouteIndexForError(error, traceRouteIndexById)
   if (routeIndex === undefined) return false
   const route = routes[routeIndex]
