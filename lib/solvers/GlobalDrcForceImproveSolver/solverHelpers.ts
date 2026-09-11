@@ -48,6 +48,7 @@ import { convertHdRouteToSimplifiedRoute } from "../../utils/convertHdRouteToSim
 import { mapZToLayerName } from "../../utils/mapZToLayerName"
 import { findPadClearanceViaPosition } from "./findPadClearanceViaPosition"
 import { findTraceClearanceViaPositions } from "./findTraceClearanceViaPositions"
+import { getTraceClearanceDetour } from "./getTraceClearanceDetour"
 
 const cloneRoute = (route: HighDensityRoute): MutableRoute => ({
   ...route,
@@ -3772,7 +3773,13 @@ export const applyTerminalViaRelocationForError = (
   connMap?: ConnectivityMap,
   viaHoleDiameter?: number,
 ) => {
-  if (getDrcErrorType(error) !== "pcb_pad_trace_clearance_error") return false
+  const errorType = getDrcErrorType(error)
+  if (
+    errorType !== "pcb_pad_trace_clearance_error" &&
+    errorType !== "pcb_trace_error"
+  ) {
+    return false
+  }
   const routeIndex = getTraceRouteIndexForError(error, traceRouteIndexById)
   if (routeIndex === undefined) return false
   const route = routes[routeIndex]
@@ -4409,6 +4416,167 @@ export const applyTracePairLayerMoveForError = (
     { ...end },
   )
   return true
+}
+
+/** Sizes a same-layer detour from the conflicting copper's full extent. */
+export const applyTraceClearanceDetourForError = (
+  srj: SimpleRouteJson,
+  routes: MutableRoute[],
+  error: Record<string, unknown>,
+  traceRouteIndexById: Map<string, number>,
+  routeIndex: number,
+  direction: -1 | 1,
+  connMap?: ConnectivityMap,
+): boolean => {
+  const center = getErrorCenter(error)
+  const route = routes[routeIndex]
+  const errorType = getDrcErrorType(error)
+  if (
+    !center ||
+    !route ||
+    (errorType !== "pcb_trace_error" &&
+      errorType !== "pcb_pad_trace_clearance_error" &&
+      errorType !== "pcb_via_trace_clearance_error")
+  ) {
+    return false
+  }
+
+  let segment: Segment | undefined
+  let blocker: Point[] | undefined
+  let blockerRadius = 0
+  if (isTraceObstacleDrcError(error)) {
+    const pair = getNearestTraceObstacleSegmentPair(
+      srj,
+      routes,
+      routeIndex,
+      center,
+      connMap,
+    )
+    if (!pair) return false
+    segment = pair.segment
+    const { obstacle } = pair
+    const angle = ((obstacle.ccwRotationDegrees ?? 0) * Math.PI) / 180
+    blocker = [-1, 1].flatMap((xSign) =>
+      [-1, 1].map((ySign) => ({
+        x:
+          obstacle.center.x +
+          (xSign * obstacle.width * Math.cos(angle) -
+            ySign * obstacle.height * Math.sin(angle)) /
+            2,
+        y:
+          obstacle.center.y +
+          (xSign * obstacle.width * Math.sin(angle) +
+            ySign * obstacle.height * Math.cos(angle)) /
+            2,
+      })),
+    )
+  } else {
+    segment = getNearestSegment(
+      collectSegmentsForRoute(route, routeIndex),
+      center,
+    )
+    if (!segment) return false
+    const pair = getTraceRoutePairForError(error, traceRouteIndexById)
+    const otherRouteIndex = pair?.find((index) => index !== routeIndex)
+    if (otherRouteIndex !== undefined) {
+      const other = getNearestSegment(
+        collectSegmentsForRoute(
+          routes[otherRouteIndex]!,
+          otherRouteIndex,
+        ).filter((candidate) => candidate.z === segment!.z),
+        center,
+      )
+      if (
+        !other ||
+        sharesNet(segment.rootConnectionName, other.rootConnectionName, connMap)
+      ) {
+        return false
+      }
+      blocker = [other.start, other.end]
+      blockerRadius = other.radius
+    } else if (
+      typeof error.pcb_via_id === "string" ||
+      Array.isArray(error.pcb_via_ids)
+    ) {
+      const via = getNearestVia(
+        collectViaNodes(routes).filter(
+          (candidate) =>
+            candidate.zLayers.includes(segment!.z) &&
+            !sharesNet(
+              candidate.rootConnectionName,
+              segment!.rootConnectionName,
+              connMap,
+            ),
+        ),
+        center,
+      )
+      if (!via) return false
+      blocker = [via]
+      blockerRadius = via.radius
+    }
+  }
+  if (
+    !segment ||
+    !blocker ||
+    route.jumpers?.length ||
+    route.route[segment.startIndex]?.toNextSegmentType === "through_obstacle"
+  ) {
+    return false
+  }
+  const clearance =
+    segment.radius +
+    blockerRadius +
+    getTraceToPadEdgeClearance(srj) +
+    CLEARANCE_SLACK
+  const requiredBoardClearance =
+    segment.radius + (srj.minBoardEdgeClearance ?? 0)
+  let startIndex = segment.startIndex
+  let endIndex = segment.endIndex
+  while (true) {
+    const start = route.route[startIndex]!
+    const end = route.route[endIndex]!
+    const detour = getTraceClearanceDetour(
+      start,
+      end,
+      blocker,
+      clearance,
+      direction,
+    )
+    if (detour) {
+      const points = [start, ...detour, end]
+      const isInsideBoard = points
+        .slice(1)
+        .every(
+          (point, index) =>
+            getSegmentBoardClearance(srj, points[index]!, point) >=
+            requiredBoardClearance,
+        )
+      if (isInsideBoard) {
+        route.route.splice(
+          startIndex + 1,
+          endIndex - startIndex - 1,
+          ...detour.map((point) => ({ ...point, z: start.z })),
+        )
+        return true
+      }
+    }
+
+    // Grow across existing vertices until both anchors clear the blocker.
+    // Ports, transitions and through-obstacle spans remain fixed boundaries.
+    const previous = route.route[startIndex - 1]
+    const next = route.route[endIndex + 1]
+    const canGrowStart =
+      !start.pcb_port_id &&
+      previous?.z === start.z &&
+      previous.toNextSegmentType !== "through_obstacle"
+    const canGrowEnd =
+      !end.pcb_port_id &&
+      next?.z === end.z &&
+      end.toNextSegmentType !== "through_obstacle"
+    if (!canGrowStart && !canGrowEnd) return false
+    if (canGrowStart) startIndex -= 1
+    if (canGrowEnd) endIndex += 1
+  }
 }
 
 /** Adds a same-layer dogleg around the exact conflict location for one trace. */
