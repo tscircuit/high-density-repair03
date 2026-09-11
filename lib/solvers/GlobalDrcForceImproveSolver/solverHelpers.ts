@@ -4523,8 +4523,11 @@ export const applyTraceClearanceDetourForError = (
   ) {
     return false
   }
-  const clearance = segment.radius + blockerRadius +
-    getTraceToPadEdgeClearance(srj) + CLEARANCE_SLACK
+  const clearance =
+    segment.radius +
+    blockerRadius +
+    getTraceToPadEdgeClearance(srj) +
+    CLEARANCE_SLACK
   const requiredBoardClearance =
     segment.radius + (srj.minBoardEdgeClearance ?? 0)
   let startIndex = segment.startIndex
@@ -4532,12 +4535,22 @@ export const applyTraceClearanceDetourForError = (
   while (true) {
     const start = route.route[startIndex]!
     const end = route.route[endIndex]!
-    const detour = getTraceClearanceDetour(start, end, blocker, clearance, direction)
+    const detour = getTraceClearanceDetour(
+      start,
+      end,
+      blocker,
+      clearance,
+      direction,
+    )
     if (detour) {
       const points = [start, ...detour, end]
-      const isInsideBoard = points.slice(1).every((point, index) =>
-        getSegmentBoardClearance(srj, points[index]!, point) >= requiredBoardClearance,
-      )
+      const isInsideBoard = points
+        .slice(1)
+        .every(
+          (point, index) =>
+            getSegmentBoardClearance(srj, points[index]!, point) >=
+            requiredBoardClearance,
+        )
       if (isInsideBoard) {
         route.route.splice(
           startIndex + 1,
@@ -4552,9 +4565,13 @@ export const applyTraceClearanceDetourForError = (
     // Ports, transitions and through-obstacle spans remain fixed boundaries.
     const previous = route.route[startIndex - 1]
     const next = route.route[endIndex + 1]
-    const canGrowStart = !start.pcb_port_id && previous?.z === start.z &&
+    const canGrowStart =
+      !start.pcb_port_id &&
+      previous?.z === start.z &&
       previous.toNextSegmentType !== "through_obstacle"
-    const canGrowEnd = !end.pcb_port_id && next?.z === end.z &&
+    const canGrowEnd =
+      !end.pcb_port_id &&
+      next?.z === end.z &&
       end.toNextSegmentType !== "through_obstacle"
     if (!canGrowStart && !canGrowEnd) return false
     if (canGrowStart) startIndex -= 1

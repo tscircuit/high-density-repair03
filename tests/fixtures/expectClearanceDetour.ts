@@ -1,4 +1,5 @@
 import { expect } from "bun:test"
+import { checkEachPcbTraceNonOverlapping } from "checks-reference"
 import { AutoroutingDrcEngine } from "../../lib"
 import {
   applyTraceClearanceDetourForError,
@@ -8,6 +9,8 @@ import {
 } from "../../lib/solvers/GlobalDrcForceImproveSolver/solverHelpers"
 import type { SimpleRouteJson } from "../../lib/types"
 import type { HighDensityRoute } from "../../lib/types/high-density-types"
+import { convertHdRouteToSimplifiedRoute } from "../../lib/utils/convertHdRouteToSimplifiedRoute"
+import { convertToCircuitJson } from "../../lib/utils/convertToCircuitJson"
 
 export const expectClearanceDetour = (
   kind: "pad" | "hole" | "trace" | "via",
@@ -102,7 +105,19 @@ export const expectClearanceDetour = (
             ),
           ).toBe(true)
           const output = materializeRoutes(candidate)
-          expect(getDrcSnapshot(srj, output).errors).toEqual([])
+          // Match the independent checker version pinned by the autorouter.
+          const circuitJson = convertToCircuitJson(srj, output.map((route) => ({
+            type: "pcb_trace" as const,
+            pcb_trace_id: route.connectionName,
+            connection_name: route.connectionName,
+            route: convertHdRouteToSimplifiedRoute(route.route, srj.layerCount, {
+              traceThickness: route.traceThickness,
+              viaDiameter: route.viaDiameter,
+            }),
+          })))
+          expect(checkEachPcbTraceNonOverlapping(circuitJson, {
+            minSpacing: srj.minTraceToPadEdgeClearance,
+          })).toEqual([])
           expect(
             getDrcSnapshot(srj, output, undefined, undefined, engine).count,
           ).toBe(0)
