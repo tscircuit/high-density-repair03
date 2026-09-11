@@ -106,18 +106,27 @@ export const expectClearanceDetour = (
           ).toBe(true)
           const output = materializeRoutes(candidate)
           // Match the independent checker version pinned by the autorouter.
-          const circuitJson = convertToCircuitJson(srj, output.map((route) => ({
-            type: "pcb_trace" as const,
-            pcb_trace_id: route.connectionName,
-            connection_name: route.connectionName,
-            route: convertHdRouteToSimplifiedRoute(route.route, srj.layerCount, {
-              traceThickness: route.traceThickness,
-              viaDiameter: route.viaDiameter,
+          const circuitJson = convertToCircuitJson(
+            srj,
+            output.map((route) => ({
+              type: "pcb_trace" as const,
+              pcb_trace_id: route.connectionName,
+              connection_name: route.connectionName,
+              route: convertHdRouteToSimplifiedRoute(
+                route.route,
+                srj.layerCount,
+                {
+                  traceThickness: route.traceThickness,
+                  viaDiameter: route.viaDiameter,
+                },
+              ),
+            })),
+          )
+          expect(
+            checkEachPcbTraceNonOverlapping(circuitJson, {
+              minClearance: srj.minTraceToPadEdgeClearance,
             }),
-          })))
-          expect(checkEachPcbTraceNonOverlapping(circuitJson, {
-            minSpacing: srj.minTraceToPadEdgeClearance,
-          })).toEqual([])
+          ).toEqual([])
           expect(
             getDrcSnapshot(srj, output, undefined, undefined, engine).count,
           ).toBe(0)
