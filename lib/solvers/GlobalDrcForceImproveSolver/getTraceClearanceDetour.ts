@@ -10,7 +10,10 @@ export const getTraceClearanceDetour = (
 ): Point[] | undefined => {
   const length = Math.hypot(end.x - start.x, end.y - start.y)
   if (length === 0 || blocker.length === 0 || clearance <= 0) return undefined
-  const tangent = { x: (end.x - start.x) / length, y: (end.y - start.y) / length }
+  const tangent = {
+    x: (end.x - start.x) / length,
+    y: (end.y - start.y) / length,
+  }
   const normal = { x: -tangent.y, y: tangent.x }
   const projected = blocker.map((point) => ({
     t: (point.x - start.x) * tangent.x + (point.y - start.y) * tangent.y,

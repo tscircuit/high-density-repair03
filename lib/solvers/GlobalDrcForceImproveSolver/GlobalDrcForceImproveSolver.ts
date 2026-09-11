@@ -1518,7 +1518,9 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           (primaryRouteIndex === undefined ? [] : [primaryRouteIndex])
         for (const routeIndex of routeIndexes) {
           for (const direction of [-1, 1] as const) {
-            const candidateRoutes = cloneRoutesForIndexes(bestRoutes, [routeIndex])
+            const candidateRoutes = cloneRoutesForIndexes(bestRoutes, [
+              routeIndex,
+            ])
             if (
               !applyTraceClearanceDetourForError(
                 this.srj,
@@ -1533,7 +1535,9 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
               continue
             }
             this.candidateAttempts += 1
-            const materialized = materializeRoutesForIndexes(candidateRoutes, [routeIndex])
+            const materialized = materializeRoutesForIndexes(candidateRoutes, [
+              routeIndex,
+            ])
             const snapshot = this.getSnapshot(materialized)
             if (
               snapshot.count < bestSnapshot.count &&

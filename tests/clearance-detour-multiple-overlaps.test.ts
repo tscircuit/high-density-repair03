@@ -20,7 +20,10 @@ test("repairs multiple large pad overlaps without changing endpoints or routing 
     minTraceWidth: 0.2,
     minViaDiameter: 0.3,
     minTraceToPadEdgeClearance: 0.1,
-    connections: routes.map((route) => ({ name: route.connectionName, pointsToConnect: [] })),
+    connections: routes.map((route) => ({
+      name: route.connectionName,
+      pointsToConnect: [],
+    })),
     obstacles: routes.map((_, index) => ({
       type: "rect",
       layers: ["top"],

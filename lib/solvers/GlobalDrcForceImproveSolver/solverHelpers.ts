@@ -4458,25 +4458,38 @@ export const applyTraceClearanceDetourForError = (
     const angle = ((obstacle.ccwRotationDegrees ?? 0) * Math.PI) / 180
     blocker = [-1, 1].flatMap((xSign) =>
       [-1, 1].map((ySign) => ({
-        x: obstacle.center.x +
-          (xSign * obstacle.width * Math.cos(angle) - ySign * obstacle.height * Math.sin(angle)) / 2,
-        y: obstacle.center.y +
-          (xSign * obstacle.width * Math.sin(angle) + ySign * obstacle.height * Math.cos(angle)) / 2,
+        x:
+          obstacle.center.x +
+          (xSign * obstacle.width * Math.cos(angle) -
+            ySign * obstacle.height * Math.sin(angle)) /
+            2,
+        y:
+          obstacle.center.y +
+          (xSign * obstacle.width * Math.sin(angle) +
+            ySign * obstacle.height * Math.cos(angle)) /
+            2,
       })),
     )
   } else {
-    segment = getNearestSegment(collectSegmentsForRoute(route, routeIndex), center)
+    segment = getNearestSegment(
+      collectSegmentsForRoute(route, routeIndex),
+      center,
+    )
     if (!segment) return false
     const pair = getTraceRoutePairForError(error, traceRouteIndexById)
     const otherRouteIndex = pair?.find((index) => index !== routeIndex)
     if (otherRouteIndex !== undefined) {
       const other = getNearestSegment(
-        collectSegmentsForRoute(routes[otherRouteIndex]!, otherRouteIndex).filter(
-          (candidate) => candidate.z === segment!.z,
-        ),
+        collectSegmentsForRoute(
+          routes[otherRouteIndex]!,
+          otherRouteIndex,
+        ).filter((candidate) => candidate.z === segment!.z),
         center,
       )
-      if (!other || sharesNet(segment.rootConnectionName, other.rootConnectionName, connMap)) {
+      if (
+        !other ||
+        sharesNet(segment.rootConnectionName, other.rootConnectionName, connMap)
+      ) {
         return false
       }
       blocker = [other.start, other.end]
@@ -4489,7 +4502,11 @@ export const applyTraceClearanceDetourForError = (
         collectViaNodes(routes).filter(
           (candidate) =>
             candidate.zLayers.includes(segment!.z) &&
-            !sharesNet(candidate.rootConnectionName, segment!.rootConnectionName, connMap),
+            !sharesNet(
+              candidate.rootConnectionName,
+              segment!.rootConnectionName,
+              connMap,
+            ),
         ),
         center,
       )
@@ -4506,30 +4523,43 @@ export const applyTraceClearanceDetourForError = (
   ) {
     return false
   }
-  const detour = getTraceClearanceDetour(
-    segment.start,
-    segment.end,
-    blocker,
-    segment.radius + blockerRadius + getTraceToPadEdgeClearance(srj) + CLEARANCE_SLACK,
-    direction,
-  )
-  if (!detour) return false
-  const points = [segment.start, ...detour, segment.end]
-  const requiredBoardClearance = segment.radius + (srj.minBoardEdgeClearance ?? 0)
-  for (let index = 1; index < points.length; index += 1) {
-    if (
-      getSegmentBoardClearance(srj, points[index - 1]!, points[index]!) <
-      requiredBoardClearance
-    ) {
-      return false
+  const clearance = segment.radius + blockerRadius +
+    getTraceToPadEdgeClearance(srj) + CLEARANCE_SLACK
+  const requiredBoardClearance =
+    segment.radius + (srj.minBoardEdgeClearance ?? 0)
+  let startIndex = segment.startIndex
+  let endIndex = segment.endIndex
+  while (true) {
+    const start = route.route[startIndex]!
+    const end = route.route[endIndex]!
+    const detour = getTraceClearanceDetour(start, end, blocker, clearance, direction)
+    if (detour) {
+      const points = [start, ...detour, end]
+      const isInsideBoard = points.slice(1).every((point, index) =>
+        getSegmentBoardClearance(srj, points[index]!, point) >= requiredBoardClearance,
+      )
+      if (isInsideBoard) {
+        route.route.splice(
+          startIndex + 1,
+          endIndex - startIndex - 1,
+          ...detour.map((point) => ({ ...point, z: start.z })),
+        )
+        return true
+      }
     }
+
+    // Grow across existing vertices until both anchors clear the blocker.
+    // Ports, transitions and through-obstacle spans remain fixed boundaries.
+    const previous = route.route[startIndex - 1]
+    const next = route.route[endIndex + 1]
+    const canGrowStart = !start.pcb_port_id && previous?.z === start.z &&
+      previous.toNextSegmentType !== "through_obstacle"
+    const canGrowEnd = !end.pcb_port_id && next?.z === end.z &&
+      end.toNextSegmentType !== "through_obstacle"
+    if (!canGrowStart && !canGrowEnd) return false
+    if (canGrowStart) startIndex -= 1
+    if (canGrowEnd) endIndex += 1
   }
-  route.route.splice(
-    segment.endIndex,
-    0,
-    ...detour.map((point) => ({ ...point, z: segment!.z })),
-  )
-  return true
 }
 
 /** Adds a same-layer dogleg around the exact conflict location for one trace. */
