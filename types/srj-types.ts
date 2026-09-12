@@ -4,6 +4,14 @@ export type PointId = string
 export type OffBoardConnectionId = string
 export type ObstacleId = string
 export type RootConnectionName = string
+export type CircuitJsonMetadata = {
+  pcb_smtpad_id?: string
+  pcb_plated_hole_id?: string
+  pcb_port_id?: string
+  pcb_via_id?: string
+  source_component_name?: string
+  source_port_name?: string
+}
 export type TerminalViaHint = {
   toLayer: string
   viaDiameter?: number
@@ -46,6 +54,10 @@ export interface SimpleRouteJson {
   minTraceWidth: number
   nominalTraceWidth?: number
   minViaDiameter?: number
+  minViaHoleDiameter?: number
+  minViaPadDiameter?: number
+  min_via_hole_diameter?: number
+  min_via_pad_diameter?: number
   /**
    * Enables blind and buried vias. Without it, autorouted vias span the
    * complete board stack, matching Core's physical-via model.
@@ -54,6 +66,8 @@ export interface SimpleRouteJson {
   minBoardEdgeClearance?: number
   minTraceToPadEdgeClearance?: number
   minViaEdgeToPadEdgeClearance?: number
+  minPadEdgeToPadEdgeClearance?: number
+  minViaHoleEdgeToViaHoleEdgeClearance?: number
   defaultObstacleMargin?: number
   obstacles: Obstacle[]
   connections: Array<SimpleRouteConnection>
@@ -68,6 +82,7 @@ export interface SimpleRouteJson {
 
 export interface Obstacle {
   obstacleId?: string
+  circuitJsonMetadata?: CircuitJsonMetadata
   type: "rect"
   layers: string[]
   zLayers?: number[]
@@ -116,6 +131,7 @@ export interface SimplifiedPcbTrace {
         to_layer: string
         from_layer: string
         via_diameter?: number
+        via_hole_diameter?: number
         /** Explicit copper layers; otherwise expand the inclusive from/to span. */
         layers?: string[]
       }
