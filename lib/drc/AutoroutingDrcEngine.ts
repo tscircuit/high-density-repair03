@@ -622,12 +622,14 @@ export class AutoroutingDrcEngine {
     for (const connection of this.srj.connections) {
       const canonicalNet =
         connection.netConnectionName ??
+        connection.__rootConnectionNames?.[0] ??
         connection.rootConnectionName ??
         connection.name
       const aliases = [
         connection.name,
         connection.rootConnectionName,
         connection.netConnectionName,
+        ...(connection.__rootConnectionNames ?? []),
         ...(connection.mergedConnectionNames ?? []),
         ...connection.pointsToConnect.flatMap((point) => [
           point.pointId,

@@ -25,6 +25,9 @@ export const getConnMapAwareSrj = (
       const netConnectionName =
         getConnMapNetId(connMap, connection.name) ??
         getConnMapNetId(connMap, connection.rootConnectionName) ??
+        connection.__rootConnectionNames
+          ?.map((name) => getConnMapNetId(connMap, name))
+          .find((netId) => netId !== undefined) ??
         connection.netConnectionName
 
       return netConnectionName
