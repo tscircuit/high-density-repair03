@@ -3,7 +3,6 @@ import { BaseSolver } from "../BaseSolver"
 import { AutoroutingDrcEngine } from "../../drc"
 import type { HighDensityRoute } from "../../types/high-density-types"
 import { GlobalDrcForceImproveSolver } from "./GlobalDrcForceImproveSolver"
-import { RELAXED_DRC_OPTIONS } from "./drcPresets"
 import { getDrcSnapshot } from "./drc-snapshot"
 import {
   applyBroadRepulsionForces,
@@ -103,12 +102,6 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         ? undefined
         : new AutoroutingDrcEngine(params.srj, {
             connMap: params.connMap,
-            traceClearance:
-              params.srj.minTraceToPadEdgeClearance ??
-              RELAXED_DRC_OPTIONS.traceClearance,
-            viaClearance:
-              params.srj.minTraceToPadEdgeClearance ??
-              RELAXED_DRC_OPTIONS.viaClearance,
             includeTraceViaOwnerMetadata:
               params.enableTraceViaOwnerTargeting ?? false,
           }))

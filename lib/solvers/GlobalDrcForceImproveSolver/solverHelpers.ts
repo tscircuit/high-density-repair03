@@ -5,7 +5,7 @@ import {
 import type { ConnectivityMap } from "circuit-json-to-connectivity-map"
 import type { AutoroutingDrcEngine } from "../../drc"
 import { RELAXED_DRC_OPTIONS } from "./drcPresets"
-import { PREFERRED_VIA_TO_VIA_CLEARANCE, getDrcErrors } from "./getDrcErrors"
+import { getDrcErrors } from "./getDrcErrors"
 import { convertToCircuitJson } from "../utils/convertToCircuitJson"
 import {
   getConnMapAwareSrj,
@@ -21,11 +21,12 @@ import {
   COORDINATE_EPSILON,
   MAX_ERROR_MOVE,
   POSITION_EPSILON,
-  PREFERRED_TRACE_TO_PAD_CLEARANCE,
   TRACE_PAD_REPAIR_MAX_MOVE,
   VIA_PAIR_REPAIR_MAX_MOVE,
+  getBoardEdgeClearance,
   getTraceToPadEdgeClearance,
   getViaEdgeToPadEdgeClearance,
+  getViaHoleEdgeToViaHoleEdgeClearance,
 } from "./solverConfig"
 import {
   clampToBounds,
@@ -143,7 +144,19 @@ const createSimplifiedTraces = (
               connection.nominalTraceWidth ??
               srj.nominalTraceWidth ??
               srj.minTraceWidth,
-            viaDiameter: hdRoute.route.viaDiameter ?? srj.minViaDiameter,
+            viaDiameter:
+              hdRoute.route.viaDiameter ??
+              srj.min_via_pad_diameter ??
+              srj.minViaPadDiameter ??
+              srj.minViaDiameter,
+            viaHoleDiameter:
+              hdRoute.route.viaHoleDiameter ??
+              srj.min_via_hole_diameter ??
+              srj.minViaHoleDiameter ??
+              (srj.min_via_pad_diameter ??
+                srj.minViaPadDiameter ??
+                srj.minViaDiameter ??
+                0.3) / 2,
             connectionPoints: connection.pointsToConnect,
           },
         ),
@@ -271,22 +284,7 @@ const createDrcSnapshot = (
 
   const drc =
     autoroutingDrcEngine?.evaluate(traces) ??
-    getDrcErrors(
-      convertToCircuitJson(
-        drcSrj,
-        traces,
-        drcSrj.minTraceWidth,
-        drcSrj.minViaDiameter,
-      ),
-      {
-        ...RELAXED_DRC_OPTIONS,
-        traceClearance:
-          drcSrj.minTraceToPadEdgeClearance ??
-          RELAXED_DRC_OPTIONS.traceClearance,
-        viaClearance:
-          drcSrj.minTraceToPadEdgeClearance ?? RELAXED_DRC_OPTIONS.viaClearance,
-      },
-    )
+    getDrcErrors(convertToCircuitJson(drcSrj, traces, drcSrj.minTraceWidth))
 
   const rawErrors = drc.errors as unknown as Array<Record<string, unknown>>
   const rawErrorsWithCenters = (
@@ -340,9 +338,18 @@ export const getTopologyRepairDrcSnapshot = (
 
 export const collectViaNodes = (
   routes: HighDensityRoute[],
-  defaultViaDiameter = 0.3,
+  srj: SimpleRouteJson,
 ): ViaNode[] => {
   const vias: ViaNode[] = []
+  const defaultViaDiameter =
+    srj.min_via_pad_diameter ??
+    srj.minViaPadDiameter ??
+    srj.minViaDiameter ??
+    0.3
+  const defaultViaHoleDiameter =
+    srj.min_via_hole_diameter ??
+    srj.minViaHoleDiameter ??
+    defaultViaDiameter / 2
 
   for (let routeIndex = 0; routeIndex < routes.length; routeIndex += 1) {
     const route = routes[routeIndex]
@@ -384,15 +391,21 @@ export const collectViaNodes = (
       const hasTaggedTerminal = endpointPointIndexes.some((pointIndex) =>
         Boolean(route.route[pointIndex]?.pcb_port_id),
       )
+      const transitionZLayers = uniquePointIndexes.map((i) => route.route[i]!.z)
+      const minZ = Math.min(...transitionZLayers)
+      const maxZ = Math.max(...transitionZLayers)
 
       vias.push({
         routeIndex,
         rootConnectionName: getRootConnectionName(route),
         pointIndexes: uniquePointIndexes,
-        zLayers: [...new Set(uniquePointIndexes.map((i) => route.route[i]!.z))],
+        zLayers: srj.allowBlindAndBuriedVias
+          ? Array.from({ length: maxZ - minZ + 1 }, (_, z) => minZ + z)
+          : Array.from({ length: srj.layerCount }, (_, z) => z),
         x: current.x,
         y: current.y,
         radius: (route.viaDiameter ?? defaultViaDiameter) / 2,
+        holeRadius: (route.viaHoleDiameter ?? defaultViaHoleDiameter) / 2,
         movable: endpointPointIndexes.length === 0,
         canCanonicalize:
           endpointPointIndexes.length === 0 || !hasTaggedTerminal,
@@ -481,17 +494,30 @@ const getBroadSpatialInteractionDistance = (
 ) => {
   const maxViaRadius = vias.reduce(
     (currentMax, via) => Math.max(currentMax, via.radius),
-    (srj.minViaDiameter ?? 0.3) / 2,
+    (srj.min_via_pad_diameter ??
+      srj.minViaPadDiameter ??
+      srj.minViaDiameter ??
+      0.3) / 2,
   )
   const maxSegmentRadius = segments.reduce(
     (currentMax, segment) => Math.max(currentMax, segment.radius),
     srj.minTraceWidth / 2,
   )
-  const traceClearance =
-    (RELAXED_DRC_OPTIONS.traceClearance ?? 0.1) + CLEARANCE_SLACK
+  const maxViaHoleRadius = vias.reduce(
+    (currentMax, via) => Math.max(currentMax, via.holeRadius),
+    (srj.min_via_hole_diameter ??
+      srj.minViaHoleDiameter ??
+      (srj.min_via_pad_diameter ??
+        srj.minViaPadDiameter ??
+        srj.minViaDiameter ??
+        0.3) / 2) / 2,
+  )
+  const traceClearance = getTraceToPadEdgeClearance(srj) + CLEARANCE_SLACK
 
   return Math.max(
-    maxViaRadius * 2 + PREFERRED_VIA_TO_VIA_CLEARANCE + CLEARANCE_SLACK,
+    maxViaHoleRadius * 2 +
+      getViaHoleEdgeToViaHoleEdgeClearance(srj) +
+      CLEARANCE_SLACK,
     maxViaRadius + maxSegmentRadius + traceClearance,
     maxSegmentRadius * 2 + traceClearance,
     maxSegmentRadius + getTraceToPadEdgeClearance(srj) + CLEARANCE_SLACK,
@@ -643,20 +669,23 @@ const getRepulsionPointForError = (
   center: Point,
   obstacleFilter?: (obstacle: SimpleRouteJson["obstacles"][number]) => boolean,
 ) => {
-  const message = error.message
-  if (typeof message !== "string" || !message.includes("pcb_")) {
-    return center
-  }
-
-  const referencedPadIds = Array.isArray(error.pcb_pad_ids)
-    ? error.pcb_pad_ids.filter((id): id is string => typeof id === "string")
-    : []
+  const referencedPadIds = [
+    ...(Array.isArray(error.pcb_pad_ids)
+      ? error.pcb_pad_ids.filter((id): id is string => typeof id === "string")
+      : []),
+    ...(typeof error.pcb_pad_id === "string" ? [error.pcb_pad_id] : []),
+  ]
   const referencedObstacle = srj.obstacles.find(
     (obstacle) =>
       referencedPadIds.some((id) => obstacle.connectedTo.includes(id)) &&
       (obstacleFilter?.(obstacle) ?? true),
   )
   if (referencedObstacle) return referencedObstacle.center
+
+  const message = error.message
+  if (typeof message !== "string" || !message.includes("pcb_")) {
+    return center
+  }
 
   return (
     getNearestObstacleNearPoint(srj, center, 0.6, obstacleFilter)?.center ??
@@ -964,13 +993,7 @@ const getSegmentBoardClearance = (
 const getBoardEdgeProximityThreshold = (
   srj: SimpleRouteJson,
   featureRadius: number,
-) =>
-  featureRadius +
-  Math.max(
-    PREFERRED_TRACE_TO_PAD_CLEARANCE,
-    srj.defaultObstacleMargin ?? 0,
-    RELAXED_DRC_OPTIONS.traceClearance ?? 0.1,
-  )
+) => featureRadius + getBoardEdgeClearance(srj)
 
 const moveReducesClearanceIntoBoardEdgeZone = (
   currentClearance: number,
@@ -1964,8 +1987,12 @@ const translateVia = (
   return true
 }
 
-const getSameRootViaSite = (routes: MutableRoute[], via: ViaNode) => {
-  const currentVias = collectViaNodes(routes)
+const getSameRootViaSite = (
+  routes: MutableRoute[],
+  via: ViaNode,
+  srj: SimpleRouteJson,
+) => {
+  const currentVias = collectViaNodes(routes, srj)
   const currentVia = currentVias.find(
     (candidate) =>
       candidate.routeIndex === via.routeIndex &&
@@ -1990,7 +2017,7 @@ const translateSameRootViaSite = (
   dy: number,
   srj: SimpleRouteJson,
 ) => {
-  const siteVias = getSameRootViaSite(routes, via)
+  const siteVias = getSameRootViaSite(routes, via, srj)
   if (
     siteVias.length === 0 ||
     siteVias.some(
@@ -2028,7 +2055,7 @@ const moveVia = (
   srj: SimpleRouteJson,
 ) =>
   via.movable &&
-  getSameRootViaSite(routes, via).length <= 1 &&
+  getSameRootViaSite(routes, via, srj).length <= 1 &&
   translateVia(routes, via, dx, dy, srj)
 
 const moveSegmentAwayFromPoint = (
@@ -2444,9 +2471,9 @@ const pushViaViaPair = (
   }
 
   const requiredDistance =
-    left.radius +
-    right.radius +
-    PREFERRED_VIA_TO_VIA_CLEARANCE +
+    left.holeRadius +
+    right.holeRadius +
+    getViaHoleEdgeToViaHoleEdgeClearance(srj) +
     CLEARANCE_SLACK
   const separationX = left.x - right.x
   const separationY = left.y - right.y
@@ -2553,6 +2580,7 @@ const pushViaSegmentPair = (
   moveDivisor = 2,
   translateSharedViaSite = false,
 ) => {
+  if (!via.zLayers.includes(segment.z)) return false
   if (sharesNet(via.rootConnectionName, segment.rootConnectionName, connMap))
     return false
 
@@ -2563,7 +2591,7 @@ const pushViaSegmentPair = (
   const requiredDistance =
     via.radius +
     segment.radius +
-    (RELAXED_DRC_OPTIONS.traceClearance ?? 0.1) +
+    getTraceToPadEdgeClearance(srj) +
     CLEARANCE_SLACK
   const penetration = requiredDistance - distance
   if (penetration <= 0) return false
@@ -2628,7 +2656,7 @@ const pushSegmentSegmentPair = (
   const requiredDistance =
     left.radius +
     right.radius +
-    (RELAXED_DRC_OPTIONS.traceClearance ?? 0.1) +
+    getTraceToPadEdgeClearance(srj) +
     CLEARANCE_SLACK
   const penetration = requiredDistance - distance
   if (penetration <= 0) return false
@@ -2830,7 +2858,7 @@ const pushMovablesAwayFromObstacles = (
     srj.minTraceWidth / 2 + getTraceToPadEdgeClearance(srj) + CLEARANCE_SLACK
   const requiredViaObstacleDistance =
     (srj.minViaDiameter ?? 0.3) / 2 +
-    getViaEdgeToPadEdgeClearance(srj)! +
+    getViaEdgeToPadEdgeClearance(srj) +
     CLEARANCE_SLACK
 
   for (const obstacle of srj.obstacles) {
@@ -2846,6 +2874,12 @@ const pushMovablesAwayFromObstacles = (
       const via = vias[viaIndex]
       if (!via) continue
       if (obstacleSharesNet(via.rootConnectionName, obstacle, connMap)) continue
+      if (
+        !getObstacleZLayers(obstacle, srj.layerCount).some((z) =>
+          via.zLayers.includes(z),
+        )
+      )
+        continue
       const repulsion = getRectRepulsion(
         via,
         obstacle,
@@ -2906,7 +2940,7 @@ const applyBroadRepulsionPass = (
   allowSameNetViaPairs = false,
 ): boolean => {
   let changed = false
-  const vias = collectViaNodes(routes)
+  const vias = collectViaNodes(routes, srj)
   const segments = collectSegments(routes)
   const spatialInteractionDistance = getBroadSpatialInteractionDistance(
     srj,
@@ -3006,7 +3040,7 @@ const applyBroadViaSegmentCleanupPass = (
   connMap?: ConnectivityMap,
 ): boolean => {
   let changed = false
-  const vias = collectViaNodes(routes)
+  const vias = collectViaNodes(routes, srj)
   const segments = collectSegments(routes)
   const spatialInteractionDistance = getBroadSpatialInteractionDistance(
     srj,
@@ -3145,12 +3179,19 @@ export const getTargetedClearanceSweepErrors = (
 ) => {
   const maxErrors = Math.max(2, Math.round(12 * Math.max(1, effort)))
   return errors
-    .filter((error) => getDrcErrorType(error) === "pcb_trace_error")
+    .filter((error) =>
+      [
+        "pcb_trace_error",
+        "pcb_pad_trace_clearance_error",
+        "pcb_via_trace_clearance_error",
+      ].includes(getDrcErrorType(error) ?? ""),
+    )
     .slice(0, maxErrors)
 }
 
 const isViaDrcError = (error: Record<string, unknown>) =>
   getDrcErrorType(error) === "pcb_via_clearance_error" ||
+  typeof error.pcb_via_id === "string" ||
   Array.isArray(error.pcb_via_ids)
 
 export const getViaDrcIssueCount = (
@@ -3164,8 +3205,8 @@ export const getViaDrcIssueCount = (
 
 export const isViaPadDrcError = (error: Record<string, unknown>) =>
   getDrcErrorType(error) === "pcb_pad_pad_clearance_error" &&
-  Array.isArray(error.pcb_via_ids) &&
-  error.pcb_via_ids.length === 1
+  (typeof error.pcb_via_id === "string" ||
+    (Array.isArray(error.pcb_via_ids) && error.pcb_via_ids.length === 1))
 
 const getDrcErrorIdentity = (error: Record<string, unknown>) => {
   const identifiers = Object.entries(error)
@@ -3944,7 +3985,7 @@ export const applyTracePairSegmentDisplacementForError = (
   const minimumClearance = Number(error.minimum_clearance)
   const requiredClearance = Number.isFinite(minimumClearance)
     ? minimumClearance
-    : (RELAXED_DRC_OPTIONS.traceClearance ?? 0.1)
+    : getTraceToPadEdgeClearance(srj)
   const penetration =
     leftSegment.radius + rightSegment.radius + requiredClearance - distance
   if (penetration <= POSITION_EPSILON) return undefined
@@ -4113,7 +4154,12 @@ export const applyViaOnlyDisplacementForTraceError = (
   expectedTraceRouteIndex: number,
   connMap?: ConnectivityMap,
 ) => {
-  if (getDrcErrorType(error) !== "pcb_trace_error") return false
+  if (
+    getDrcErrorType(error) !== "pcb_trace_error" &&
+    getDrcErrorType(error) !== "pcb_via_trace_clearance_error"
+  ) {
+    return false
+  }
   const errorId =
     typeof error.pcb_trace_error_id === "string"
       ? error.pcb_trace_error_id.toLowerCase()
@@ -4145,7 +4191,7 @@ export const applyViaOnlyDisplacementForTraceError = (
     center,
     expectedTraceRouteIndex,
   )
-  const via = getNearestVia(collectViaNodes(routes), center)
+  const via = getNearestVia(collectViaNodes(routes, srj), center)
   if (
     !segment ||
     !via ||
@@ -4161,7 +4207,7 @@ export const applyViaOnlyDisplacementForTraceError = (
   const minimumClearance = Number(error.minimum_clearance)
   const requiredClearance = Number.isFinite(minimumClearance)
     ? minimumClearance
-    : (RELAXED_DRC_OPTIONS.traceClearance ?? 0.1)
+    : getTraceToPadEdgeClearance(srj)
   const penetration = via.radius + segment.radius + requiredClearance - distance
   if (penetration <= POSITION_EPSILON) return false
 
@@ -4440,9 +4486,7 @@ export const applyTraceLayerCorridorForError = (
 
   const corridorPitch =
     (route.viaDiameter ?? srj.minViaDiameter ?? 0.3) +
-    (srj.minTraceToPadEdgeClearance ??
-      RELAXED_DRC_OPTIONS.traceClearance ??
-      0.1)
+    getTraceToPadEdgeClearance(srj)
   const startNormalOffset =
     (reverseEndpointOffsets ? 1.25 : -0.75) * corridorPitch
   const endNormalOffset =
@@ -4474,7 +4518,7 @@ export const applyTraceLayerCorridorForError = (
     { ...end },
   ]
 
-  const boardEdgeClearance = srj.minBoardEdgeClearance ?? 0
+  const boardEdgeClearance = getBoardEdgeClearance(srj)
   const viaRadius = (route.viaDiameter ?? srj.minViaDiameter ?? 0.3) / 2
   const traceRadius = route.traceThickness / 2
   if (
@@ -4659,7 +4703,7 @@ export const applyDrcErrorForces = (
   enableTraceViaOwnerTargeting = false,
 ) => {
   let changed = false
-  const vias = collectViaNodes(routes)
+  const vias = collectViaNodes(routes, srj)
   const segments = collectSegments(routes)
 
   for (const error of errors) {
@@ -4667,7 +4711,41 @@ export const applyDrcErrorForces = (
     if (!center) continue
     let repulsionPoint = center
 
-    const viaIds = error.pcb_via_ids
+    if (
+      typeof error.pcb_trace_error_id === "string" &&
+      error.pcb_trace_error_id.startsWith("trace_too_close_to_board_")
+    ) {
+      const routeIndex = getTraceRouteIndexForError(error, traceRouteIndexById)
+      if (routeIndex === undefined) continue
+      const segment = getNearestSegment(segments, center, routeIndex)
+      const inwardNormal = getPointBoardInwardNormal(srj, center)
+      if (!segment || !inwardNormal) continue
+      const penetration =
+        segment.radius +
+        getBoardEdgeClearance(srj) -
+        getSegmentBoardClearance(srj, segment.start, segment.end)
+      if (penetration <= POSITION_EPSILON) continue
+      const move = Math.min(
+        MAX_ERROR_MOVE * Math.abs(scale),
+        penetration + CLEARANCE_SLACK,
+      )
+      changed =
+        moveSegmentByDistribution(
+          routes,
+          segment,
+          inwardNormal.x * move,
+          inwardNormal.y * move,
+          srj,
+          0.5,
+        ) || changed
+      continue
+    }
+
+    const viaIds = Array.isArray(error.pcb_via_ids)
+      ? error.pcb_via_ids
+      : typeof error.pcb_via_id === "string"
+        ? [error.pcb_via_id]
+        : undefined
     const isViaPairError = getDrcErrorType(error) === "pcb_via_clearance_error"
     const isViaPadError = isViaPadDrcError(error)
     const hasReportedViaIds = Array.isArray(viaIds) && viaIds.length > 0
