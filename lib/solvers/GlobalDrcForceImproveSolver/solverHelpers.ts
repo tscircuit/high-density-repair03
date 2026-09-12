@@ -2854,19 +2854,11 @@ const pushMovablesAwayFromObstacles = (
   connMap?: ConnectivityMap,
 ) => {
   let changed = false
-  const traceObstacleClearance = getTraceToPadEdgeClearance(srj)
-  const maximumTraceRadius = segments.reduce(
-    (maximum, segment) => Math.max(maximum, segment.radius),
-    0,
-  )
-  // Preserve the existing addition order for minimum-width traces. Even tiny
-  // rounding differences can change subsequent repair candidate selection.
-  const traceObstacleSearchDistance =
-    maximumTraceRadius + traceObstacleClearance + CLEARANCE_SLACK
-  const viaObstacleClearance = getViaEdgeToPadEdgeClearance(srj)
+  const requiredTraceObstacleDistance =
+    srj.minTraceWidth / 2 + getTraceToPadEdgeClearance(srj) + CLEARANCE_SLACK
   const requiredViaObstacleDistance =
-    vias.reduce((maximum, via) => Math.max(maximum, via.radius), 0) +
-    viaObstacleClearance +
+    (srj.minViaDiameter ?? 0.3) / 2 +
+    getViaEdgeToPadEdgeClearance(srj) +
     CLEARANCE_SLACK
 
   for (const obstacle of srj.obstacles) {
@@ -2891,7 +2883,7 @@ const pushMovablesAwayFromObstacles = (
       const repulsion = getRectRepulsion(
         via,
         obstacle,
-        via.radius + viaObstacleClearance + CLEARANCE_SLACK,
+        requiredViaObstacleDistance,
       )
       if (!repulsion) continue
       const move = Math.min(BROAD_MAX_MOVE, repulsion.penetration)
@@ -2907,7 +2899,7 @@ const pushMovablesAwayFromObstacles = (
 
     const nearbySegmentIndexes = getSpatialCandidateIndexes(
       segmentSpatialIndex,
-      expandBounds2d(obstacleBounds, traceObstacleSearchDistance),
+      expandBounds2d(obstacleBounds, requiredTraceObstacleDistance),
       spatialCellSize,
     )
     for (const segmentIndex of nearbySegmentIndexes) {
@@ -2922,7 +2914,7 @@ const pushMovablesAwayFromObstacles = (
       const repulsion = getSegmentRectRepulsion(
         segment,
         obstacle,
-        segment.radius + traceObstacleClearance + CLEARANCE_SLACK,
+        requiredTraceObstacleDistance,
       )
       if (!repulsion) continue
       const move = Math.min(BROAD_MAX_MOVE, repulsion.penetration)

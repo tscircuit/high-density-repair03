@@ -9,13 +9,26 @@ import { getUsbCircuitRender } from "./fixtures/getUsbCircuitRender"
 
 test("terminal escapes respect clearance and bounds on real USB routing input", async () => {
   const { phases } = await getUsbCircuitRender()
-  // CC2 routing repairs the already-routed connector-to-fuse VBUS connection.
-  const repair = phases[3]!.repairs[0]!
+  expect(phases).toHaveLength(6)
+  expect(phases.every((phase) => phase.solved)).toBe(true)
+  // CC1 routing exposes a real foreign-pad contact on the existing VBUS trace.
+  const repair = phases[2]!.repairs[0]!
   const connMap = new ConnectivityMap(repair.netMap)
   const snapshot = getDrcSnapshot(repair.srj, repair.input, undefined, connMap)
-  const error = snapshot.errors.find(
-    (error) => error.type === "pcb_trace_error",
-  )!
+  const error = snapshot.errors.find((error) => {
+    if (
+      error.type !== "pcb_trace_error" ||
+      typeof error.pcb_trace_id !== "string" ||
+      typeof error.message !== "string" ||
+      !error.message.includes("pcb_smtpad")
+    ) {
+      return false
+    }
+    const routeIndex = snapshot.traceRouteIndexById.get(error.pcb_trace_id)
+    return (
+      routeIndex !== undefined && repair.input[routeIndex]!.vias.length === 0
+    )
+  })!
   expect(error).toBeDefined()
   if (typeof error.pcb_trace_id !== "string")
     throw new Error("Missing real DRC trace identity")
@@ -23,7 +36,9 @@ test("terminal escapes respect clearance and bounds on real USB routing input", 
   expect(routeIndex).toBeDefined()
   const originalRoute = repair.input[routeIndex]!
   expect(originalRoute.vias).toHaveLength(0)
+  expect(originalRoute.traceThickness).toBe(0.8)
   const endpoints = [originalRoute.route[0]!, originalRoute.route.at(-1)!]
+  expect(endpoints.every((endpoint) => endpoint.pcb_port_id)).toBe(true)
   const terminalPads = endpoints.map(
     (endpoint) =>
       repair.srj.obstacles.find(
@@ -37,7 +52,7 @@ test("terminal escapes respect clearance and bounds on real USB routing input", 
 
   for (const clearanceMm of [undefined, 0, 0.1, 0.25, 4]) {
     for (const directionVariant of [0, 1]) {
-      const srj = { ...repair.srj, minViaEdgeToPadEdgeClearance: clearanceMm }
+      const srj = { ...repair.srj, minPadEdgeToPadEdgeClearance: clearanceMm }
       const routes = cloneRoutes(repair.input)
       expect(
         applySafeTraceLayerMoveForError(
@@ -69,6 +84,8 @@ test("terminal escapes respect clearance and bounds on real USB routing input", 
       }
       expect(moved.route[0]).toEqual(endpoints[0])
       expect(moved.route.at(-1)).toEqual(endpoints[1])
+      expect(moved.connectionName).toBe(originalRoute.connectionName)
+      expect(moved.traceThickness).toBe(originalRoute.traceThickness)
       expect(routes.filter((_, index) => index !== routeIndex)).toEqual(
         repair.input.filter((_, index) => index !== routeIndex),
       )
@@ -78,7 +95,7 @@ test("terminal escapes respect clearance and bounds on real USB routing input", 
   const routes = cloneRoutes(repair.input)
   expect(
     applySafeTraceLayerMoveForError(
-      { ...repair.srj, minViaEdgeToPadEdgeClearance: 100 },
+      { ...repair.srj, minPadEdgeToPadEdgeClearance: 100 },
       routes,
       error,
       routeIndex,
