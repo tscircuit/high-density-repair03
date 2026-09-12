@@ -226,12 +226,14 @@ function getDeclaredConnectionMap(srj: SimpleRouteJson): Map<string, string> {
   for (const connection of srj.connections) {
     const canonicalName =
       connection.netConnectionName ??
+      connection.__rootConnectionNames?.[0] ??
       connection.rootConnectionName ??
       connection.name
     const aliases = [
       connection.name,
       connection.rootConnectionName,
       connection.netConnectionName,
+      ...(connection.__rootConnectionNames ?? []),
       ...(connection.mergedConnectionNames ?? []),
       ...connection.pointsToConnect.flatMap((point) => [
         point.pointId,
@@ -261,6 +263,7 @@ function createSourceTraces(
   for (const connection of srj.connections) {
     const canonicalName =
       connection.netConnectionName ??
+      connection.__rootConnectionNames?.[0] ??
       connection.rootConnectionName ??
       connection.name
     const sourceTrace = sourceTraces.get(canonicalName) ?? {

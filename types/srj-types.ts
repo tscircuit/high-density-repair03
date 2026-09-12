@@ -99,6 +99,8 @@ export interface Obstacle {
 
 export interface SimpleRouteConnection {
   name: string
+  /** Declared source nets shared by branches of a split or merged connection. */
+  __rootConnectionNames?: string[]
   rootConnectionName?: string
   mergedConnectionNames?: string[]
   isOffBoard?: boolean
