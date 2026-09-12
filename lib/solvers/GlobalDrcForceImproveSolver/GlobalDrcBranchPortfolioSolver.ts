@@ -30,6 +30,13 @@ type PortfolioPhase =
   | "viaInPad"
   | "done"
 
+type PortfolioCandidate = {
+  routes: HighDensityRoute[]
+  snapshot: DrcSnapshot
+  solver?: GlobalDrcForceImproveSolver
+  safeTraceLayerPhaseAccepted: boolean
+}
+
 const LOW_COUNT_SAFE_TRACE_LAYER_MAX_DRC_ISSUES = 3
 
 export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
@@ -48,6 +55,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
   private broadInputSnapshot?: DrcSnapshot
   private broadSnapshot?: DrcSnapshot
   private broadSolver?: GlobalDrcForceImproveSolver
+  private preBroadCandidate?: PortfolioCandidate
   private safeTraceLayerInputRoutes?: HighDensityRoute[]
   private safeTraceLayerInputSnapshot?: DrcSnapshot
   private safeTraceLayerSolver?: GlobalDrcForceImproveSolver
@@ -505,16 +513,37 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
           inputViaIssueCount,
           this.safeTraceLayerInputSnapshot!,
         )
-      const acceptedRoutes = this.safeTraceLayerPhaseAccepted
+      let acceptedRoutes = this.safeTraceLayerPhaseAccepted
         ? safeTraceLayerRoutes
         : this.safeTraceLayerInputRoutes!
-      const acceptedSnapshot = this.safeTraceLayerPhaseAccepted
+      let acceptedSnapshot = this.safeTraceLayerPhaseAccepted
         ? safeTraceLayerSnapshot
         : this.safeTraceLayerInputSnapshot!
-      const acceptedSolver = this.safeTraceLayerPhaseAccepted
+      let acceptedSolver = this.safeTraceLayerPhaseAccepted
         ? this.safeTraceLayerSolver
         : this.portfolioSelectedSolver
+      if (
+        this.preBroadCandidate &&
+        !isDrcSnapshotCountBetter(
+          acceptedSnapshot,
+          this.preBroadCandidate.snapshot,
+        )
+      ) {
+        acceptedRoutes = this.preBroadCandidate.routes
+        acceptedSnapshot = this.preBroadCandidate.snapshot
+        acceptedSolver = this.preBroadCandidate.solver
+        this.safeTraceLayerPhaseAccepted =
+          this.preBroadCandidate.safeTraceLayerPhaseAccepted
+      }
       if (acceptedSnapshot.count > 0 && !this.broadInputSnapshot) {
+        // Broad repair starts again from the original input. Keep the accepted
+        // safe-layer result unless the later branch actually improves it.
+        this.preBroadCandidate = {
+          routes: acceptedRoutes,
+          snapshot: acceptedSnapshot,
+          solver: acceptedSolver,
+          safeTraceLayerPhaseAccepted: this.safeTraceLayerPhaseAccepted,
+        }
         this.startBroadBranch()
         return
       }
