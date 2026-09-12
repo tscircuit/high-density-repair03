@@ -5,6 +5,7 @@ import type { SimpleRouteJson, SimplifiedPcbTraces } from "../lib/types"
 test("checks via-to-pad clearance on intermediate layers only within the span", () => {
   const srj: SimpleRouteJson = {
     layerCount: 4,
+    allowBlindAndBuriedVias: true,
     minTraceWidth: 0.1,
     minViaDiameter: 0.3,
     bounds: { minX: -2, minY: -2, maxX: 2, maxY: 2 },

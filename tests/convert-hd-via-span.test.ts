@@ -5,6 +5,7 @@ import { convertToCircuitJson } from "../lib/utils/convertToCircuitJson"
 test("HD conversion expands a four-layer via span using the actual stack", () => {
   const srj: SimpleRouteJson = {
     layerCount: 4,
+    allowBlindAndBuriedVias: true,
     minTraceWidth: 0.1,
     bounds: { minX: -2, minY: -2, maxX: 2, maxY: 2 },
     obstacles: [],

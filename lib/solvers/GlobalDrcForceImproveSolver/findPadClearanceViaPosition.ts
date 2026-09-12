@@ -8,7 +8,6 @@ import {
   isPointInsideBounds,
   pointToSegmentClosestPoint,
   pointToBoundsDistance,
-  range,
 } from "@tscircuit/math-utils"
 import {
   applyToPoint,
@@ -24,8 +23,13 @@ import type { SimpleRouteJson } from "../../types"
 import type { HighDensityRoute } from "../../types/high-density-types"
 import type { Point } from "./internalTypes"
 import { getRootConnectionName, obstacleSharesNet } from "./netUtils"
-import { getViaEdgeToPadEdgeClearance, POSITION_EPSILON } from "./solverConfig"
+import {
+  getBoardEdgeClearance,
+  getViaEdgeToPadEdgeClearance,
+  POSITION_EPSILON,
+} from "./solverConfig"
 import { mapZToLayerName } from "../../utils/mapZToLayerName"
+import { getViaLayers } from "../../utils/getViaLayers"
 
 type Bounds = SimpleRouteJson["bounds"]
 type Line = { kind: "line"; start: Point; end: Point; bounds: Bounds }
@@ -193,8 +197,13 @@ const getPadRegions = (
   connMap?: ConnectivityMap,
 ): PadRegion[] => {
   const layers = new Set(
-    range(Math.min(...zLayers), Math.max(...zLayers) + 1).map((z) =>
-      mapZToLayerName(z, srj.layerCount),
+    getViaLayers(
+      {
+        from_layer: mapZToLayerName(Math.min(...zLayers), srj.layerCount),
+        to_layer: mapZToLayerName(Math.max(...zLayers), srj.layerCount),
+      },
+      srj.layerCount,
+      srj.allowBlindAndBuriedVias,
     ),
   )
   return srj.obstacles
@@ -264,7 +273,7 @@ export const findPadClearanceViaPosition = (
   zLayers: readonly number[],
   connMap?: ConnectivityMap,
 ): Point | undefined => {
-  const boardMargin = viaRadius + (srj.minBoardEdgeClearance ?? 0)
+  const boardMargin = viaRadius + getBoardEdgeClearance(srj)
   const board: Bounds = {
     minX: srj.bounds.minX + boardMargin,
     maxX: srj.bounds.maxX - boardMargin,

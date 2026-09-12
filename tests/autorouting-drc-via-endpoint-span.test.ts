@@ -3,7 +3,7 @@ import { AutoroutingDrcEngine } from "../lib/drc/AutoroutingDrcEngine"
 import type { SimpleRouteJson, SimplifiedPcbTraces } from "../lib/types"
 import { convertToCircuitJson } from "../lib/utils/convertToCircuitJson"
 
-test("DRC checks forward and reversed via endpoint spans identically", () => {
+test("DRC applies Core's physical-via policy to endpoint and explicit layers", () => {
   const srj: SimpleRouteJson = {
     layerCount: 4,
     minTraceWidth: 0.12,
@@ -54,6 +54,9 @@ test("DRC checks forward and reversed via endpoint spans identically", () => {
   }
   expect(engine.evaluate(declared).errors.length).toBeGreaterThan(0)
   via.from_layer = "inner2"
+  via.layers = ["top", "inner1", "inner2"]
+  expect(engine.evaluate(declared).errors.length).toBeGreaterThan(0)
+  srj.allowBlindAndBuriedVias = true
   expect(engine.evaluate(declared).errors).toEqual([])
   const json = convertToCircuitJson(srj, declared)
   const exportedVia = json.find((element) => element.type === "pcb_via")

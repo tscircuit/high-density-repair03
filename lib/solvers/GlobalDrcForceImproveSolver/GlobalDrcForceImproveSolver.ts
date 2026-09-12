@@ -53,7 +53,6 @@ import {
 } from "./solverHelpers"
 import { applyTraceToPadClearanceRelaxation } from "./traceToPadClearanceRelaxation"
 import { applyViaToPadClearanceRelaxation } from "./viaToPadClearanceRelaxation"
-import { RELAXED_DRC_OPTIONS } from "./drcPresets"
 import type {
   DrcEvaluator,
   DrcSnapshot,
@@ -240,12 +239,6 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         ? undefined
         : new AutoroutingDrcEngine(params.srj, {
             connMap: params.connMap,
-            traceClearance:
-              params.srj.minTraceToPadEdgeClearance ??
-              RELAXED_DRC_OPTIONS.traceClearance,
-            viaClearance:
-              params.srj.minTraceToPadEdgeClearance ??
-              RELAXED_DRC_OPTIONS.viaClearance,
             includeTraceViaOwnerMetadata:
               params.enableTraceViaOwnerTargeting ?? false,
           }))

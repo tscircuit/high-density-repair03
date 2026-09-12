@@ -27,5 +27,6 @@
     "noUnusedParameters": false,
     "noPropertyAccessFromIndexSignature": false
   },
-  "include": ["lib", "fixtures", "tests", "*.ts", "*.tsx"]
+  "include": ["lib", "fixtures", "tests", "*.ts", "*.tsx"],
+  "exclude": ["tests/fixtures/usb-terminal-clearance"]
 }
