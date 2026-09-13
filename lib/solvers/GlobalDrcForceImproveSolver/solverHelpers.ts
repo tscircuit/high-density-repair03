@@ -2837,9 +2837,10 @@ const pushMovablesAwayFromObstacles = (
   // rounding differences can change subsequent repair candidate selection.
   const traceObstacleSearchDistance =
     maximumTraceRadius + traceObstacleClearance + CLEARANCE_SLACK
+  const viaObstacleClearance = getViaEdgeToPadEdgeClearance(srj)
   const requiredViaObstacleDistance =
-    (srj.minViaDiameter ?? 0.3) / 2 +
-    getViaEdgeToPadEdgeClearance(srj)! +
+    vias.reduce((maximum, via) => Math.max(maximum, via.radius), 0) +
+    viaObstacleClearance +
     CLEARANCE_SLACK
 
   for (const obstacle of srj.obstacles) {
@@ -2858,7 +2859,7 @@ const pushMovablesAwayFromObstacles = (
       const repulsion = getRectRepulsion(
         via,
         obstacle,
-        requiredViaObstacleDistance,
+        via.radius + viaObstacleClearance + CLEARANCE_SLACK,
       )
       if (!repulsion) continue
       const move = Math.min(BROAD_MAX_MOVE, repulsion.penetration)
