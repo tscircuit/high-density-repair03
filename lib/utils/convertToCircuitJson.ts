@@ -458,6 +458,7 @@ function extractViasFromRoutes(
   routes: SimplifiedPcbTrace[] | HighDensityRoute[],
   layerCount: number,
   minViaDiameter = 0.3,
+  allowBlindAndBuriedVias = false,
 ): PcbVia[] {
   const vias: PcbVia[] = []
   const viaLocations = new Set<string>() // Track unique via locations
@@ -479,7 +480,11 @@ function extractViasFromRoutes(
                 y: segment.y,
                 outer_diameter: viaDiameter,
                 hole_diameter: viaDiameter * 0.5,
-                layers: getViaLayers(segment, layerCount) as LayerName[],
+                layers: getViaLayers(
+                  segment,
+                  layerCount,
+                  allowBlindAndBuriedVias,
+                ) as LayerName[],
               })
               viaLocations.add(locationKey)
             }
@@ -517,6 +522,7 @@ function extractViasFromRoutes(
                 layers: getViaLayers(
                   { from_layer: fromLayer, to_layer: toLayer },
                   layerCount,
+                  allowBlindAndBuriedVias,
                 ) as LayerName[],
               })
               viaLocations.add(locationKey)
@@ -561,6 +567,7 @@ export function convertToCircuitJson(
       routes,
       srjWithPointPairs.layerCount,
       minViaDiameter,
+      srjWithPointPairs.allowBlindAndBuriedVias,
     ),
   )
 

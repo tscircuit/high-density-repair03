@@ -46,6 +46,11 @@ export interface SimpleRouteJson {
   minTraceWidth: number
   nominalTraceWidth?: number
   minViaDiameter?: number
+  /**
+   * Enables blind and buried vias. Without it, autorouted vias span the
+   * complete board stack, matching Core's physical-via model.
+   */
+  allowBlindAndBuriedVias?: boolean
   minBoardEdgeClearance?: number
   minTraceToPadEdgeClearance?: number
   minViaEdgeToPadEdgeClearance?: number
