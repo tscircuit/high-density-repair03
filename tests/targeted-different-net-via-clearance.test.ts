@@ -25,6 +25,8 @@ test("prioritizes different-net via clearance over a trace topology repair", () 
     layerCount: 2,
     minTraceWidth: 0.1,
     minViaDiameter: 0.3,
+    // The custom evaluator requires 0.4 mm center spacing for 0.15 mm drills.
+    minViaHoleEdgeToViaHoleEdgeClearance: 0.25,
   }
   const inputRoutes: HighDensityRoute[] = [
     {
@@ -130,6 +132,7 @@ test("limits different-net via priority so trace topology still progresses", () 
     layerCount: 2,
     minTraceWidth: 0.1,
     minViaDiameter: 0.3,
+    minViaHoleEdgeToViaHoleEdgeClearance: 0.25,
   }
   const createViaRoute = (
     connectionName: string,

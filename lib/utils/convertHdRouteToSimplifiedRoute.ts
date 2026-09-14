@@ -30,6 +30,7 @@ export const convertHdRouteToSimplifiedRoute = (
   options?: {
     traceThickness?: number
     viaDiameter?: number
+    viaHoleDiameter?: number
     connectionPoints?: ConnectionPoint[]
   },
 ): SimplifiedPcbTrace["route"] => {
@@ -81,6 +82,9 @@ export const convertHdRouteToSimplifiedRoute = (
         from_layer: mapZToLayerName(previousPoint.z, layerCount),
         to_layer: mapZToLayerName(currentPoint.z, layerCount),
         ...(options?.viaDiameter ? { via_diameter: options.viaDiameter } : {}),
+        ...(options?.viaHoleDiameter !== undefined
+          ? { via_hole_diameter: options.viaHoleDiameter }
+          : {}),
       })
       continue
     }

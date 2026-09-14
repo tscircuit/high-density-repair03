@@ -612,6 +612,7 @@ test("preserves width, via diameter, and endpoint port ids in DRC traces", () =>
     from_layer: "top",
     to_layer: "bottom",
     via_diameter: 0.71,
+    via_hole_diameter: 0.15,
   })
   expect(trace.route[3]).toEqual({
     route_type: "wire",

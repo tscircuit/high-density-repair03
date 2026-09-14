@@ -286,7 +286,7 @@ test("uses an injected connectivity map for equivalent net identifiers", () => {
 test("uses the spatial broad phase instead of comparing every trace pair", () => {
   const traceCount = 250
   const srj: SimpleRouteJson = {
-    bounds: { minX: 0, minY: 0, maxX: 10, maxY: traceCount * 2 },
+    bounds: { minX: -1, minY: -1, maxX: 10, maxY: traceCount * 2 },
     connections: Array.from({ length: traceCount }, (_, index) => ({
       name: `net_${index}`,
       pointsToConnect: [],

@@ -105,9 +105,10 @@ test("repairs the obstacle-layer segment when a wrong-layer segment is nearer", 
   expect(initialSnapshot.count).toBe(1)
   const error = initialSnapshot.errors[0]!
   expect(error.actual_clearance).toBe(0.075)
-  expect(error.center).toEqual({ x: 0.5625, y: 0 })
-  // The error center lies directly on the inner-layer segment, while the actual
-  // bottom-layer conflict starts 0.0625 mm away at the transition.
+  expect(error.center).toEqual({ x: 0.5375, y: 0 })
+  // Core places the marker between the pad and trace copper edges. The nearer
+  // inner-layer segment passes through it, but the bottom-layer conflict is
+  // the endpoint at x=0.625.
   expect((error.center as { x: number }).x).toBeLessThan(
     hdRoutes[0]!.route[2]!.x,
   )

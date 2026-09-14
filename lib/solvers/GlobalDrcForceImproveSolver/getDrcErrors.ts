@@ -1,8 +1,13 @@
 import {
   checkDifferentNetViaSpacing,
   checkEachPcbTraceNonOverlapping,
+  checkPadTraceClearance,
+  checkPcbTracesOutOfBoard,
   checkSameNetViaSpacing,
+  checkViaPadClearance,
+  checkViaTraceClearance,
 } from "@tscircuit/checks"
+import { getFullConnectivityMapFromCircuitJson } from "circuit-json-to-connectivity-map"
 import type { Point } from "graphics-debug"
 
 type CircuitJson = Parameters<typeof checkEachPcbTraceNonOverlapping>[0]
@@ -15,7 +20,12 @@ type DifferentNetViaError = ReturnType<
 >[number]
 type ViaError = SameNetViaError | DifferentNetViaError
 
-type DrcError = TraceError | ViaError
+type DrcError =
+  | TraceError
+  | ViaError
+  | ReturnType<typeof checkPadTraceClearance>[number]
+  | ReturnType<typeof checkViaTraceClearance>[number]
+  | ReturnType<typeof checkViaPadClearance>[number]
 
 type DrcErrorWithCenter = DrcError & { center?: Point }
 
@@ -35,33 +45,47 @@ export interface GetDrcErrorsOptions {
   traceClearance?: number
 }
 
-const getSpacingOptions = (spacing: number | undefined) =>
-  ({
-    minSpacing: spacing,
-    minClearance: spacing,
-  }) as unknown as Parameters<typeof checkEachPcbTraceNonOverlapping>[1]
-
 export const getDrcErrors = (
   circuitJson: CircuitJson,
   options: GetDrcErrorsOptions = {},
 ): GetDrcErrorsResult => {
-  const viaClearance = Math.max(
-    options.viaClearance ?? MIN_VIA_TO_VIA_CLEARANCE,
-    MIN_VIA_TO_VIA_CLEARANCE,
-  )
-  const traceErrors = checkEachPcbTraceNonOverlapping(
-    circuitJson,
-    getSpacingOptions(options.traceClearance),
-  )
-  const viaErrors = [
-    ...checkSameNetViaSpacing(circuitJson, getSpacingOptions(viaClearance)),
-    ...checkDifferentNetViaSpacing(
-      circuitJson,
-      getSpacingOptions(viaClearance),
+  const connMap = getFullConnectivityMapFromCircuitJson(circuitJson)
+  connMap.addConnections(
+    circuitJson.flatMap((element) =>
+      element.type === "pcb_via" && element.pcb_trace_id
+        ? [[element.pcb_via_id, element.pcb_trace_id]]
+        : [],
     ),
+  )
+  const traceErrors = checkEachPcbTraceNonOverlapping(circuitJson, {
+    connMap,
+    minClearance: options.traceClearance,
+  })
+  const viaErrors = [
+    ...checkSameNetViaSpacing(circuitJson, {
+      connMap,
+      minClearance: options.viaClearance,
+    }),
+    ...checkDifferentNetViaSpacing(circuitJson, {
+      connMap,
+      minClearance: options.viaClearance,
+    }),
   ]
 
-  const errors: DrcError[] = [...traceErrors, ...viaErrors]
+  const errors: DrcError[] = [
+    ...traceErrors,
+    ...checkPcbTracesOutOfBoard(circuitJson),
+    ...checkViaTraceClearance(circuitJson, {
+      connMap,
+      minClearance: options.traceClearance,
+    }),
+    ...checkPadTraceClearance(circuitJson, {
+      connMap,
+      minClearance: options.traceClearance,
+    }),
+    ...checkViaPadClearance(circuitJson, { connMap }),
+    ...viaErrors,
+  ]
 
   const vias = circuitJson.filter(
     (
@@ -77,6 +101,41 @@ export const getDrcErrors = (
   const viasById = new Map(vias.map((via) => [via.pcb_via_id, via]))
 
   const errorsWithCenters = errors.map((error) => {
+    // Preserve physical owner identities so typed clearance errors can be repaired.
+    const viaIds =
+      "pcb_via_id" in error && typeof error.pcb_via_id === "string"
+        ? [error.pcb_via_id]
+        : "pcb_pad_ids" in error && Array.isArray(error.pcb_pad_ids)
+          ? error.pcb_pad_ids.filter((id) => viasById.has(id))
+          : []
+    if (viaIds.length > 0) {
+      const owners = viaIds.flatMap((id) => {
+        const via = viasById.get(id)
+        return via &&
+          "pcb_trace_id" in via &&
+          typeof via.pcb_trace_id === "string"
+          ? [via.pcb_trace_id]
+          : []
+      })
+      const traceIds =
+        "pcb_trace_id" in error && typeof error.pcb_trace_id === "string"
+          ? [error.pcb_trace_id]
+          : "pcb_trace_ids" in error && Array.isArray(error.pcb_trace_ids)
+            ? error.pcb_trace_ids
+            : []
+      const via = viasById.get(viaIds[0]!)
+      return {
+        ...error,
+        pcb_via_ids: viaIds,
+        pcb_trace_ids: [...new Set([...traceIds, ...owners])],
+        center:
+          "pcb_center" in error && error.pcb_center
+            ? error.pcb_center
+            : via
+              ? { x: via.x, y: via.y }
+              : undefined,
+      }
+    }
     if ("center" in error && error.center) {
       return error as DrcErrorWithCenter
     }

@@ -206,6 +206,7 @@ test("does not let a trace jump into the board-edge zone in one move", () => {
     layerCount: 2,
     minTraceWidth: 0.2,
     minViaDiameter: 0.3,
+    minTraceToPadEdgeClearance: 0.16,
   }
   const routes = cloneRoutes([
     {

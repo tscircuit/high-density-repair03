@@ -35,6 +35,7 @@ export type HighDensityIntraNodeRoute = {
   rootConnectionName?: string
   traceThickness: number
   viaDiameter: number
+  viaHoleDiameter?: number
   route: Array<{
     x: number
     y: number

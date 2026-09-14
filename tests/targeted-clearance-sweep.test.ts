@@ -70,7 +70,8 @@ test("repairs multiple exact geometry errors in one accepted sweep", () => {
         pcb_trace_id: "A_0",
       })
     }
-    if (Math.abs((routes?.[1]?.route[1]?.y ?? 4) - 4) < 0.2) {
+    // The reported B contact is on route[2]–route[3], not route[1]–route[2].
+    if (Math.abs((routes?.[1]?.route[2]?.y ?? 4) - 4) < 0.2) {
       errors.push({
         type: "pcb_trace_error",
         message:
@@ -94,7 +95,7 @@ test("repairs multiple exact geometry errors in one accepted sweep", () => {
   const output = solver.getOutput()
   expect(drcEvaluator({ traces: [], routes: output })).toEqual([])
   expect(output[0]?.route[1]?.y).toBeGreaterThanOrEqual(0.2)
-  expect(Math.abs((output[1]?.route[1]?.y ?? 4) - 4)).toBeGreaterThanOrEqual(
+  expect(Math.abs((output[1]?.route[2]?.y ?? 4) - 4)).toBeGreaterThanOrEqual(
     0.2,
   )
 })

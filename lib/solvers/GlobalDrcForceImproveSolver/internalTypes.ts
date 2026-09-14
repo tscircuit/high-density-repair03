@@ -22,6 +22,7 @@ export type ViaNode = {
   x: number
   y: number
   radius: number
+  holeRadius: number
   movable: boolean
   canCanonicalize: boolean
 }
