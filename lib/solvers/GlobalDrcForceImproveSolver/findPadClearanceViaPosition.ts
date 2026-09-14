@@ -193,9 +193,10 @@ const getPadRegions = (
   connMap?: ConnectivityMap,
 ): PadRegion[] => {
   const layers = new Set(
-    range(Math.min(...zLayers), Math.max(...zLayers) + 1).map((z) =>
-      mapZToLayerName(z, srj.layerCount),
-    ),
+    range(
+      srj.allowBlindAndBuriedVias ? Math.min(...zLayers) : 0,
+      srj.allowBlindAndBuriedVias ? Math.max(...zLayers) + 1 : srj.layerCount,
+    ).map((z) => mapZToLayerName(z, srj.layerCount)),
   )
   return srj.obstacles
     .filter(
