@@ -20,6 +20,7 @@ import {
 import {
   applyBroadRepulsionForces,
   applyDrcErrorForces,
+  applyTraceClearanceDetourForError,
   applySafeTraceLayerMoveForError,
   applyTerminalViaRelocationForError,
   applyTraceDetourForError,
@@ -43,6 +44,7 @@ import {
   getTraceRouteIndexForError,
   getTraceRoutePairForError,
   getViaDrcIssueCount,
+  hasNewDrcErrorIdentities,
   isBetterDrcSnapshot,
   isDrcSnapshotCountBetter,
   isTraceObstacleDrcError,
@@ -204,6 +206,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   private safeTraceLayerCursorByErrorId = new Map<string, number>()
   private traceLayerCorridorCursorByErrorId = new Map<string, number>()
   private tracePairDetourCursorByErrorId = new Map<string, number>()
+  private clearanceDetourErrorsAttempted = new Set<Record<string, unknown>>()
   private errorCursor = 0
   private stalledIterations = 0
   private bestDrcIssueCountSeen: number | undefined
@@ -1498,7 +1501,65 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       }
     }
 
+    // Try geometry-sized detours only after the existing repair candidates
+    // stall. Reuse neither a failed candidate nor an error-count threshold.
+    if (!acceptedCandidate && this.enableSafeTraceLayerMoves) {
+      const error = centeredErrors.find(
+        (candidate) => !this.clearanceDetourErrorsAttempted.has(candidate),
+      )
+      if (error) {
+        this.clearanceDetourErrorsAttempted.add(error)
+        const primaryRouteIndex = getTraceRouteIndexForError(
+          error,
+          bestSnapshot.traceRouteIndexById,
+        )
+        const routeIndexes =
+          getTraceRoutePairForError(error, bestSnapshot.traceRouteIndexById) ??
+          (primaryRouteIndex === undefined ? [] : [primaryRouteIndex])
+        for (const routeIndex of routeIndexes) {
+          for (const direction of [-1, 1] as const) {
+            const candidateRoutes = cloneRoutesForIndexes(bestRoutes, [
+              routeIndex,
+            ])
+            if (
+              !applyTraceClearanceDetourForError(
+                this.srj,
+                candidateRoutes,
+                error,
+                bestSnapshot.traceRouteIndexById,
+                routeIndex,
+                direction,
+                this.connMap,
+              )
+            ) {
+              continue
+            }
+            this.candidateAttempts += 1
+            const materialized = materializeRoutesForIndexes(candidateRoutes, [
+              routeIndex,
+            ])
+            const snapshot = this.getSnapshot(materialized)
+            if (
+              snapshot.count < bestSnapshot.count &&
+              !hasNewDrcErrorIdentities(snapshot.errors, bestSnapshot.errors)
+            ) {
+              bestRoutes = materialized
+              bestSnapshot = snapshot
+              bestIssueCount = this.getRepairIssueCount(snapshot)
+              bestIssueScore = this.getRepairIssueScore(snapshot)
+              bestViaIssueCount = this.getViaIssueCount(snapshot)
+              this.targetedForceAccepted = true
+              acceptedCandidate = true
+              break
+            }
+          }
+          if (acceptedCandidate) break
+        }
+      }
+    }
+
     if (acceptedCandidate) {
+      this.clearanceDetourErrorsAttempted.clear()
       this.largeBoardBroadFallbackMisses = 0
     } else if (attemptedPeriodicLargeBoardBroadFallback) {
       this.largeBoardBroadFallbackMisses += 1

@@ -29,6 +29,8 @@
     "transformation-matrix": "^3.1.0"
   },
   "devDependencies": {
+    "checks-reference": "npm:@tscircuit/checks@0.0.163",
+    "format-si-unit": "0.0.12",
     "@biomejs/biome": "^2.4.13",
     "@tscircuit/solver-utils": "^0.0.19",
     "@types/bun": "latest",
