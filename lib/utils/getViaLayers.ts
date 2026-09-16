@@ -22,3 +22,18 @@ export const getViaLayers = (via: ViaSpan, layerCount: number): string[] => {
   }
   return boardLayers.slice(Math.min(from, to), Math.max(from, to) + 1)
 }
+
+/** Physical copper extent for DRC; route endpoints only describe travel. */
+export const getPhysicalViaLayers = (
+  via: ViaLayers,
+  layerCount: number,
+  allowBlindAndBuriedVias = false,
+): string[] => {
+  const physicalSpan = allowBlindAndBuriedVias
+    ? via
+    : {
+        from_layer: "top",
+        to_layer: mapZToLayerName(layerCount - 1, layerCount),
+      }
+  return getViaLayers(physicalSpan, layerCount)
+}
