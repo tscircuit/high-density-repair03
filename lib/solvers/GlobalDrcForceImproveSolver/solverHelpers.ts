@@ -47,6 +47,20 @@ import type { HighDensityRoute } from "../../types/high-density-types"
 import { convertHdRouteToSimplifiedRoute } from "../../utils/convertHdRouteToSimplifiedRoute"
 import { mapZToLayerName } from "../../utils/mapZToLayerName"
 
+type AppendDistinctUnitDirectionParams = {
+  directions: Point[]
+  dx: number
+  dy: number
+}
+
+type ApplyViaPadClearanceDirectionVariantParams = {
+  srj: SimpleRouteJson
+  routes: MutableRoute[]
+  error: Record<string, unknown>
+  traceRouteIndexById: Map<string, number>
+  directionVariant: number
+}
+
 const cloneRoute = (route: HighDensityRoute): MutableRoute => ({
   ...route,
   route: route.route.map((point) => ({ ...point })),
@@ -2346,6 +2360,107 @@ const moveViaAwayFromPoint = (
     via,
     directionX * MAX_ERROR_MOVE,
     directionY * MAX_ERROR_MOVE,
+    srj,
+  )
+}
+
+export const VIA_PAD_CLEARANCE_DIRECTION_VARIANT_COUNT = 5
+
+const appendDistinctUnitDirection = ({
+  directions,
+  dx,
+  dy,
+}: AppendDistinctUnitDirectionParams): void => {
+  const length = Math.hypot(dx, dy)
+  if (length <= POSITION_EPSILON) return
+  const direction = { x: dx / length, y: dy / length }
+  if (
+    directions.some(
+      (candidate) =>
+        Math.hypot(candidate.x - direction.x, candidate.y - direction.y) <=
+        POSITION_EPSILON,
+    )
+  ) {
+    return
+  }
+  directions.push(direction)
+}
+
+/**
+ * Tries a bounded local direction for a via whose direct pad repulsion path
+ * may be blocked. Incident route tangents preserve the via topology while the
+ * caller scores each candidate against the complete DRC snapshot.
+ */
+export const applyViaPadClearanceDirectionVariant = ({
+  srj,
+  routes,
+  error,
+  traceRouteIndexById,
+  directionVariant,
+}: ApplyViaPadClearanceDirectionVariantParams): boolean => {
+  if (!isViaPadDrcError(error)) return false
+  const center = getErrorCenter(error)
+  if (!center) return false
+  const routeIndex = getTraceRouteIndexForError(error, traceRouteIndexById)
+  if (routeIndex === undefined) return false
+  const vias = collectViaNodes(routes)
+  const via = getNearestVia(vias, center, routeIndex)
+  const route = via ? routes[via.routeIndex] : undefined
+  if (!via || !route || via.pointIndexes.length === 0) return false
+
+  const directions: Point[] = []
+  const repulsionPoint = getRepulsionPointForError(srj, error, center)
+  appendDistinctUnitDirection({
+    directions,
+    dx: via.x - repulsionPoint.x,
+    dy: via.y - repulsionPoint.y,
+  })
+
+  const firstPointIndex = Math.min(...via.pointIndexes)
+  const lastPointIndex = Math.max(...via.pointIndexes)
+  let precedingPoint: Point | undefined
+  for (let pointIndex = firstPointIndex - 1; pointIndex >= 0; pointIndex -= 1) {
+    const point = route.route[pointIndex]
+    if (!point || areSameXY(point, via)) continue
+    precedingPoint = point
+    break
+  }
+  let followingPoint: Point | undefined
+  for (
+    let pointIndex = lastPointIndex + 1;
+    pointIndex < route.route.length;
+    pointIndex += 1
+  ) {
+    const point = route.route[pointIndex]
+    if (!point || areSameXY(point, via)) continue
+    followingPoint = point
+    break
+  }
+
+  for (const point of [precedingPoint, followingPoint]) {
+    if (!point) continue
+    appendDistinctUnitDirection({
+      directions,
+      dx: point.x - via.x,
+      dy: point.y - via.y,
+    })
+  }
+  for (const point of [precedingPoint, followingPoint]) {
+    if (!point) continue
+    appendDistinctUnitDirection({
+      directions,
+      dx: via.x - point.x,
+      dy: via.y - point.y,
+    })
+  }
+
+  const direction = directions[directionVariant]
+  if (!direction) return false
+  return moveVia(
+    routes,
+    via,
+    direction.x * MAX_ERROR_MOVE,
+    direction.y * MAX_ERROR_MOVE,
     srj,
   )
 }
