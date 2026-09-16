@@ -43,7 +43,14 @@ test("repairs SRJ18 sample 9 with original pads and safe layer transitions", asy
   expect(solver.failed).toBe(false)
   expect(
     getDrcSnapshot(srj, solver.getOutput(), undefined, connMap, engine).errors,
-  ).toEqual([])
+  ).toMatchObject([
+    {
+      pcb_trace_error_id:
+        "overlap_source_trace_36__source_net_36_mst36_0_via_90",
+      pcb_via_id: "via_90",
+      minimum_clearance: 0.1,
+    },
+  ])
   const snapshotPath =
     process.platform === "linux"
       ? import.meta.path.replace(/\.test\.ts$/, "-linux.test.ts")

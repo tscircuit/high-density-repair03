@@ -24,7 +24,6 @@ test("DRC checks the full drilled stack when buried vias are disabled", () => {
           y: 0,
           from_layer: "top",
           to_layer: "inner2",
-          layers: ["top", "inner1", "inner2"],
         },
       ],
     },

@@ -25,7 +25,7 @@ export const getViaLayers = (via: ViaSpan, layerCount: number): string[] => {
 
 /** Physical copper extent for DRC; route endpoints only describe travel. */
 export const getPhysicalViaLayers = (
-  via: ViaLayers,
+  via: ViaSpan,
   layerCount: number,
   allowBlindAndBuriedVias = false,
 ): string[] => {
