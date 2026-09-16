@@ -120,9 +120,9 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
             includeTraceViaOwnerMetadata:
               params.enableTraceViaOwnerTargeting ?? false,
           }))
+    const stagedLegacyEvaluator =
+      params.drcEvaluator?.evaluateLegacy ?? params.drcEvaluator
     this.legacyDrcEvaluator = (input) => {
-      const stagedLegacyEvaluator =
-        params.drcEvaluator?.evaluateLegacy ?? params.drcEvaluator
       const result = stagedLegacyEvaluator
         ? stagedLegacyEvaluator(input)
         : this.autoroutingDrcEngine!.evaluateLegacy(input.traces)
@@ -137,6 +137,12 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
           (error) => !isViaPadDrcError(error),
         ),
       }
+    }
+    if (
+      stagedLegacyEvaluator === params.drcEvaluator &&
+      params.drcEvaluator?.consumesHdRoutesDirectly === true
+    ) {
+      this.legacyDrcEvaluator.consumesHdRoutesDirectly = true
     }
     this.params = {
       ...params,
