@@ -152,6 +152,62 @@ test("opts into promoted via-owner targeting while retaining the legacy default"
   expect(targetedRoutes[1]?.route).toEqual(originalUnrelatedRoute)
 })
 
+test("reproduces an unscaled promoted via-owner clearance move", () => {
+  const srj: SimpleRouteJson = {
+    bounds: { minX: -2, minY: -2, maxX: 2, maxY: 2 },
+    connections: [{ name: "owner", pointsToConnect: [] }],
+    obstacles: [],
+    layerCount: 2,
+    minTraceWidth: 0.1,
+    minViaDiameter: 0.3,
+  }
+  const routes = cloneRoutes([
+    {
+      connectionName: "owner",
+      route: [
+        { x: -1, y: 0, z: 0 },
+        { x: 0.3, y: 0, z: 0 },
+        { x: 0.3, y: 0, z: 1 },
+        { x: 1, y: 0, z: 1 },
+      ],
+      vias: [{ x: 0.3, y: 0 }],
+      traceThickness: 0.1,
+      viaDiameter: 0.3,
+    },
+  ])
+  const actualClearance = 0.0913196441577734
+  const minimumClearance = 0.1
+  const scale = 0.25
+
+  const changed = applyDrcErrorForces(
+    srj,
+    routes,
+    [
+      {
+        type: "pcb_via_trace_clearance_error",
+        pcb_trace_id: "owner_0",
+        pcb_trace_ids: ["owner_0", "fixed_trace"],
+        pcb_via_id: "owner_via",
+        pcb_via_ids: ["owner_via"],
+        actual_clearance: actualClearance,
+        minimum_clearance: minimumClearance,
+        center: { x: 0, y: 0 },
+      },
+    ],
+    new Map([["owner_0", 0]]),
+    scale,
+    undefined,
+    true,
+    false,
+    true,
+    true,
+  )
+
+  expect(changed).toBe(true)
+  expect(routes[0]?.route[1]?.x).toBeCloseTo(0.44)
+  expect(routes[0]?.route[2]?.x).toBeCloseTo(0.44)
+})
+
 test("keeps raw engine trace-via errors on the primary segment route", () => {
   const srj: SimpleRouteJson = {
     bounds: { minX: -2, minY: -2, maxX: 2, maxY: 2 },
