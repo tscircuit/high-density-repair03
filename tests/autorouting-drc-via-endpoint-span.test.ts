@@ -3,7 +3,7 @@ import { AutoroutingDrcEngine } from "../lib/drc/AutoroutingDrcEngine"
 import type { SimpleRouteJson, SimplifiedPcbTraces } from "../lib/types"
 import { convertToCircuitJson } from "../lib/utils/convertToCircuitJson"
 
-test("DRC treats endpoint spans and explicit via layers as the same geometry", () => {
+test("DRC checks forward and reversed via endpoint spans identically", () => {
   const srj: SimpleRouteJson = {
     layerCount: 4,
     minTraceWidth: 0.12,
@@ -42,17 +42,18 @@ test("DRC treats endpoint spans and explicit via layers as the same geometry", (
   const declared = structuredClone(traces)
   const via = declared[0]!.route[0]!
   if (via.route_type !== "via") throw new Error("Expected a via")
-  via.layers = ["top", "inner1", "inner2"]
+  via.from_layer = "inner2"
+  via.to_layer = "top"
   expect(engine.evaluate(declared).errors).toEqual(
     engine.evaluate(traces).errors,
   )
-  via.layers = ["top", "inner1", "inner2", "bottom"]
+  via.from_layer = "bottom"
   expect(engine.evaluate(declared).errors.length).toBeGreaterThan(0)
   for (const point of declared[1]!.route) {
     if (point.route_type === "wire") point.layer = "bottom"
   }
   expect(engine.evaluate(declared).errors.length).toBeGreaterThan(0)
-  via.layers = ["top", "inner1", "inner2"]
+  via.from_layer = "inner2"
   expect(engine.evaluate(declared).errors).toEqual([])
   const json = convertToCircuitJson(srj, declared)
   const exportedVia = json.find((element) => element.type === "pcb_via")

@@ -63,7 +63,11 @@ export interface SimpleRouteJson {
 
 export interface Obstacle {
   obstacleId?: string
+  /** Optional owner used to identify adjacent pads on the same component. */
+  componentId?: string
   type: "rect"
+  /** Physical pad shape; width and height still describe its bounds. */
+  shape?: "rect" | "circle"
   layers: string[]
   zLayers?: number[]
   center: { x: number; y: number }
@@ -111,8 +115,6 @@ export interface SimplifiedPcbTrace {
         to_layer: string
         from_layer: string
         via_diameter?: number
-        /** Explicit copper layers; otherwise expand the inclusive from/to span. */
-        layers?: string[]
       }
     | {
         route_type: "jumper"
