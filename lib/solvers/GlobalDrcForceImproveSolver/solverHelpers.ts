@@ -2334,6 +2334,7 @@ const moveViaAwayFromPoint = (
   via: ViaNode,
   point: Point,
   srj: SimpleRouteJson,
+  moveDistance = MAX_ERROR_MOVE,
 ) => {
   const separationX = via.x - point.x
   const separationY = via.y - point.y
@@ -2344,9 +2345,27 @@ const moveViaAwayFromPoint = (
   return moveVia(
     routes,
     via,
-    directionX * MAX_ERROR_MOVE,
-    directionY * MAX_ERROR_MOVE,
+    directionX * moveDistance,
+    directionY * moveDistance,
     srj,
+  )
+}
+
+const getClearanceRepairMoveDistance = (
+  error: Record<string, unknown>,
+  scale: number,
+) => {
+  const clearanceDeficit =
+    Number(error.minimum_clearance) - Number(error.actual_clearance)
+  if (!Number.isFinite(clearanceDeficit) || clearanceDeficit <= 0) {
+    return MAX_ERROR_MOVE * scale
+  }
+  const direction = Math.sign(scale) || 1
+  return (
+    Math.min(
+      MAX_ERROR_MOVE,
+      (clearanceDeficit + CLEARANCE_SLACK) * Math.abs(scale),
+    ) * direction
   )
 }
 
@@ -4749,7 +4768,13 @@ export const applyDrcErrorForces = (
       const nearestOwnerVia = getNearestVia(vias, center, routeIndex)
       if (nearestOwnerVia) {
         changed =
-          moveViaAwayFromPoint(routes, nearestOwnerVia, center, srj) || changed
+          moveViaAwayFromPoint(
+            routes,
+            nearestOwnerVia,
+            center,
+            srj,
+            getClearanceRepairMoveDistance(error, scale),
+          ) || changed
         continue
       }
     }
