@@ -152,7 +152,7 @@ test("opts into promoted via-owner targeting while retaining the legacy default"
   expect(targetedRoutes[1]?.route).toEqual(originalUnrelatedRoute)
 })
 
-test("reproduces an unscaled promoted via-owner clearance move", () => {
+test("scales a promoted via-owner move to its measured clearance deficit", () => {
   const srj: SimpleRouteJson = {
     bounds: { minX: -2, minY: -2, maxX: 2, maxY: 2 },
     connections: [{ name: "owner", pointsToConnect: [] }],
@@ -203,9 +203,10 @@ test("reproduces an unscaled promoted via-owner clearance move", () => {
     true,
   )
 
+  const expectedMove = (minimumClearance - actualClearance + 0.015) * scale
   expect(changed).toBe(true)
-  expect(routes[0]?.route[1]?.x).toBeCloseTo(0.44)
-  expect(routes[0]?.route[2]?.x).toBeCloseTo(0.44)
+  expect(routes[0]?.route[1]?.x).toBeCloseTo(0.3 + expectedMove)
+  expect(routes[0]?.route[2]?.x).toBeCloseTo(0.3 + expectedMove)
 })
 
 test("keeps raw engine trace-via errors on the primary segment route", () => {
