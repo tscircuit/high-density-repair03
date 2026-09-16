@@ -3,7 +3,7 @@ import type { AnyCircuitElement, PcbTrace, PcbVia } from "circuit-json"
 import type { Obstacle, SimpleRouteJson, SimplifiedPcbTrace } from "../types"
 import type { HighDensityRoute } from "../types/high-density-types"
 import { getConnectionPointLayers } from "../types/srj-types"
-import { getViaLayers } from "./getViaLayers"
+import { getPhysicalViaLayers } from "./getViaLayers"
 import { mapZToLayerName } from "./mapZToLayerName"
 import type { LayerName } from "./mapZToLayerName"
 import { pointToBoxDistance } from "@tscircuit/math-utils"
@@ -458,6 +458,7 @@ function extractViasFromRoutes(
   routes: SimplifiedPcbTrace[] | HighDensityRoute[],
   layerCount: number,
   minViaDiameter = 0.3,
+  allowBlindAndBuriedVias = false,
 ): PcbVia[] {
   const vias: PcbVia[] = []
   const viaLocations = new Set<string>() // Track unique via locations
@@ -479,7 +480,11 @@ function extractViasFromRoutes(
                 y: segment.y,
                 outer_diameter: viaDiameter,
                 hole_diameter: viaDiameter * 0.5,
-                layers: getViaLayers(segment, layerCount) as LayerName[],
+                layers: getPhysicalViaLayers(
+                  segment,
+                  layerCount,
+                  allowBlindAndBuriedVias,
+                ) as LayerName[],
               })
               viaLocations.add(locationKey)
             }
@@ -514,9 +519,10 @@ function extractViasFromRoutes(
                 y: currPoint.y,
                 outer_diameter: viaDiameter,
                 hole_diameter: viaDiameter * 0.5,
-                layers: getViaLayers(
+                layers: getPhysicalViaLayers(
                   { from_layer: fromLayer, to_layer: toLayer },
                   layerCount,
+                  allowBlindAndBuriedVias,
                 ) as LayerName[],
               })
               viaLocations.add(locationKey)
@@ -561,6 +567,7 @@ export function convertToCircuitJson(
       routes,
       srjWithPointPairs.layerCount,
       minViaDiameter,
+      srjWithPointPairs.allowBlindAndBuriedVias,
     ),
   )
 

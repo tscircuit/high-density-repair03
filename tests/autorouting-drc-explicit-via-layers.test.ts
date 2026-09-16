@@ -6,6 +6,7 @@ import { convertToCircuitJson } from "../lib/utils/convertToCircuitJson"
 test("DRC treats endpoint spans and explicit via layers as the same geometry", () => {
   const srj: SimpleRouteJson = {
     layerCount: 4,
+    allowBlindAndBuriedVias: true,
     minTraceWidth: 0.12,
     minViaDiameter: 0.2,
     bounds: { minX: -2, minY: -2, maxX: 2, maxY: 2 },
