@@ -1726,7 +1726,7 @@ const getLocalObstacleSpanPointIndexes = (
   segment: Segment,
   obstacle: SimpleRouteJson["obstacles"][number],
   requiredDistance: number,
-) => {
+): number[] => {
   const obstacleBounds = expandBounds2d(
     getObstacleBounds(obstacle),
     requiredDistance,
@@ -1774,7 +1774,13 @@ const getLocalObstacleSpanPointIndexes = (
     index <= endSegmentIndex + 1;
     index += 1
   ) {
-    if (routePointCanMoveAsLocalSpan(route, index)) {
+    // Intersecting segment bounds also contain clear endpoints. Moving those
+    // endpoints can create a collision outside this obstacle's repair region.
+    if (
+      routePointCanMoveAsLocalSpan(route, index) &&
+      getPointToObstacleDistance(route.route[index]!, obstacle) <=
+        requiredDistance
+    ) {
       pointIndexes.push(index)
     }
   }
@@ -1790,7 +1796,7 @@ const moveLocalObstacleSpanByTranslation = (
   dx: number,
   dy: number,
   srj: SimpleRouteJson,
-) => {
+): boolean => {
   const route = routes[segment.routeIndex]
   if (!route) return false
 
@@ -1800,7 +1806,15 @@ const moveLocalObstacleSpanByTranslation = (
     obstacle,
     requiredDistance,
   )
-  if (pointIndexes.length <= 2) return false
+  // A nearby bend can enter the clearance region while both endpoints of the
+  // colliding segment stay outside it. Moving that bend does not repair this
+  // segment and must not suppress its ordinary segment translation.
+  if (
+    !pointIndexes.includes(segment.startIndex) &&
+    !pointIndexes.includes(segment.endIndex)
+  ) {
+    return false
+  }
 
   return moveRoutePointIndexesByTranslation(
     route,
@@ -1964,8 +1978,24 @@ const translateVia = (
   return true
 }
 
-const getSameRootViaSite = (routes: MutableRoute[], via: ViaNode) => {
-  const currentVias = collectViaNodes(routes)
+const getSameRootViaSite = (
+  routes: MutableRoute[],
+  via: ViaNode,
+): ViaNode[] => {
+  const sameRootRoutes: MutableRoute[] = []
+  const originalRouteIndexes: number[] = []
+  for (let routeIndex = 0; routeIndex < routes.length; routeIndex += 1) {
+    const route: MutableRoute = routes[routeIndex]!
+    if (getRootConnectionName(route) !== via.rootConnectionName) continue
+    sameRootRoutes.push(route)
+    originalRouteIndexes.push(routeIndex)
+  }
+  // Only this root can share the site. Recollect current geometry after each
+  // move, retaining board route indexes and the original candidate order.
+  const currentVias: ViaNode[] = collectViaNodes(sameRootRoutes)
+  for (const candidate of currentVias) {
+    candidate.routeIndex = originalRouteIndexes[candidate.routeIndex]!
+  }
   const currentVia = currentVias.find(
     (candidate) =>
       candidate.routeIndex === via.routeIndex &&
