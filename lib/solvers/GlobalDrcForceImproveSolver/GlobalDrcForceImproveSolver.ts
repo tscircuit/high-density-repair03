@@ -21,6 +21,7 @@ import {
   applyBroadRepulsionForces,
   applyDrcErrorForces,
   applySafeTraceLayerMoveForError,
+  applyTerminalPadRetractionForError,
   applyTerminalViaRelocationForError,
   applyTraceDetourForError,
   applyTraceLayerCorridorForError,
@@ -50,6 +51,7 @@ import {
   materializeRoutes,
   materializeRoutesForIndexes,
   SAFE_TRACE_LAYER_DIRECTION_VARIANT_COUNT,
+  TERMINAL_PAD_RETRACTION_VARIANT_COUNT,
 } from "./solverHelpers"
 import { applyTraceToPadClearanceRelaxation } from "./traceToPadClearanceRelaxation"
 import { applyViaToPadClearanceRelaxation } from "./viaToPadClearanceRelaxation"
@@ -198,7 +200,11 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   private candidateAttempts = 0
   private viaInPadCandidateAttempts = 0
   private viaInPadCandidatesAccepted = 0
+  private terminalPadRetractionCandidateAttempts = 0
+  private terminalPadRetractionCandidatesAccepted = 0
   private padTopologyErrorCursor = 0
+  private terminalPadErrorCursor = 0
+  private terminalPadRetractionCursorByErrorId = new Map<string, number>()
   private safeTraceLayerCursorByErrorId = new Map<string, number>()
   private traceLayerCorridorCursorByErrorId = new Map<string, number>()
   private tracePairDetourCursorByErrorId = new Map<string, number>()
@@ -311,6 +317,10 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         this.viaInPadCandidateAttempts,
       globalDrcForceImproveViaInPadCandidatesAccepted:
         this.viaInPadCandidatesAccepted,
+      globalDrcForceImproveTerminalPadRetractionCandidateAttempts:
+        this.terminalPadRetractionCandidateAttempts,
+      globalDrcForceImproveTerminalPadRetractionCandidatesAccepted:
+        this.terminalPadRetractionCandidatesAccepted,
       globalDrcForceImproveStalledIterations: this.stalledIterations,
       globalDrcForceImproveBestDrcIssueCountSeen:
         this.bestDrcIssueCountSeen ?? snapshot.count,
@@ -634,6 +644,107 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           (this.padTopologyErrorCursor + offset) % padTraceErrors.length
         ]!,
     )
+    const terminalPadErrors = prioritizedErrors.filter(
+      (error) =>
+        error.type === "pcb_pad_trace_clearance_error" ||
+        error.type === "pcb_trace_error",
+    )
+    if (terminalPadErrors.length > 0) {
+      const terminalError =
+        terminalPadErrors[
+          this.terminalPadErrorCursor % terminalPadErrors.length
+        ]!
+      this.terminalPadErrorCursor =
+        (this.terminalPadErrorCursor + 1) % terminalPadErrors.length
+      const terminalErrorKey =
+        typeof terminalError.pcb_pad_trace_clearance_error_id === "string"
+          ? terminalError.pcb_pad_trace_clearance_error_id
+          : typeof terminalError.pcb_trace_error_id === "string"
+            ? terminalError.pcb_trace_error_id
+            : typeof terminalError.pcb_trace_id === "string"
+              ? terminalError.pcb_trace_id
+              : undefined
+      let terminalVariantCursor = terminalErrorKey
+        ? (this.terminalPadRetractionCursorByErrorId.get(terminalErrorKey) ?? 0)
+        : 0
+      let bestTerminalCandidate:
+        | {
+            routes: HighDensityRoute[]
+            snapshot: DrcSnapshot
+            viaIssueCount: number
+          }
+        | undefined
+      for (
+        let variantsChecked = 0;
+        variantsChecked < TERMINAL_PAD_RETRACTION_VARIANT_COUNT &&
+        candidateAttemptsThisStep < maxCandidateAttemptsThisStep;
+        variantsChecked += 1
+      ) {
+        const variantIndex = terminalVariantCursor
+        terminalVariantCursor =
+          (terminalVariantCursor + 1) % TERMINAL_PAD_RETRACTION_VARIANT_COUNT
+        const candidateRoutes = cloneRoutes(bestRoutes)
+        const changed = applyTerminalPadRetractionForError(
+          this.srj,
+          candidateRoutes,
+          terminalError,
+          bestSnapshot.traceRouteIndexById,
+          variantIndex,
+        )
+        if (!changed) continue
+
+        const materializedCandidateRoutes = materializeRoutes(candidateRoutes)
+        candidateAttemptsThisStep += 1
+        this.candidateAttempts += 1
+        this.terminalPadRetractionCandidateAttempts += 1
+        const candidateSnapshot = getDrcSnapshot(
+          this.srj,
+          materializedCandidateRoutes,
+          this.drcEvaluator,
+          this.connMap,
+          this.autoroutingDrcEngine,
+        )
+        const candidateViaIssueCount = getViaDrcIssueCount(candidateSnapshot)
+        const comparisonSnapshot = bestTerminalCandidate?.snapshot
+        const comparisonViaIssueCount =
+          bestTerminalCandidate?.viaIssueCount ?? bestViaIssueCount
+        if (
+          isBetterDrcSnapshot(
+            candidateSnapshot,
+            candidateViaIssueCount,
+            comparisonSnapshot?.count ?? bestIssueCount,
+            comparisonSnapshot?.issueScore ?? bestIssueScore,
+            comparisonViaIssueCount,
+          )
+        ) {
+          bestTerminalCandidate = {
+            routes: materializedCandidateRoutes,
+            snapshot: candidateSnapshot,
+            viaIssueCount: candidateViaIssueCount,
+          }
+        }
+      }
+      if (terminalErrorKey) {
+        this.terminalPadRetractionCursorByErrorId.set(
+          terminalErrorKey,
+          terminalVariantCursor,
+        )
+      }
+      if (bestTerminalCandidate) {
+        bestRoutes = bestTerminalCandidate.routes
+        bestSnapshot = bestTerminalCandidate.snapshot
+        bestIssueCount = bestSnapshot.count
+        bestIssueScore = bestSnapshot.issueScore
+        bestViaIssueCount = bestTerminalCandidate.viaIssueCount
+        this.terminalPadRetractionCandidatesAccepted += 1
+        this.targetedForceAccepted = true
+        acceptedCandidate = true
+        if (bestIssueCount === 0) {
+          this.acceptSolvedRoutes(bestRoutes, bestSnapshot)
+          return
+        }
+      }
+    }
     for (const error of this.enableSafeTraceLayerMoves ||
     this.enableViaInPadLayerMoves
       ? orderedPadTopologyErrors
