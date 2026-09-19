@@ -328,13 +328,13 @@ trace-to-own-pad connections are unchanged. The DRC engine option is opt-in for
 other callers.
 
 Before moving coordinates, the solver attempts clearance-checked shortcuts on
-backward turns in traces involved in errors, preserving routing anchors and
-forward bends. Via searches include
+traces involved in errors, preserving routing anchors. Via searches include
 longer moves to escape pad clusters. Both discrete and gradient updates reject
 increases in trace-centerline intersections, so a lower error count cannot
 justify introducing a new crossing into a crossing-free board.
 
-If residual contacts remain, one bounded refinement pass subdivides nearby wire
+If residual contacts remain, backward turns introduced during movement are
+removed with clearance checks, then one bounded refinement pass subdivides nearby wire
 segments and resumes coordinate optimization. This adds local bend freedom while
 preserving the original terminals, widths, layers, and fixed copper. It does not
 add pipeline stages or allow new vias.

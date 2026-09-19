@@ -103,7 +103,7 @@ export class GlobalDrcCoordinateRepairSolver extends BaseSolver {
     }
   }
 
-  private simplifyRoutes(): void {
+  private simplifyRoutes(backwardOnly = false): void {
     let errors = this.evaluate()
     let score = errors.length * 100 + Math.sqrt(getDeficitEnergy(errors))
     let intersections = this.engine.lastRunStats.traceIntersectionCount
@@ -135,7 +135,7 @@ export class GlobalDrcCoordinateRepairSolver extends BaseSolver {
         const ay = point.y - previous.y
         const bx = next.x - point.x
         const by = next.y - point.y
-        if (ax * bx + ay * by >= 0) continue
+        if (backwardOnly && ax * bx + ay * by >= 0) continue
         trace.route.splice(index, 1)
         const candidateErrors = this.evaluate()
         const candidateScore = candidateErrors.length * 100 + Math.sqrt(getDeficitEnergy(candidateErrors))
@@ -299,6 +299,8 @@ export class GlobalDrcCoordinateRepairSolver extends BaseSolver {
   override _step(): void {
     if (this.phase === "done" && this.errors.length > 0 && !this.refined) {
       this.refined = true
+      this.simplifyRoutes(true)
+      this.errors = this.evaluate()
       if (this.refineRoutesNearErrors()) {
         this.buildCoordinateGroups()
         this.phase = "vias"
