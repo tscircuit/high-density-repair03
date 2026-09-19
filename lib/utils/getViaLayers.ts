@@ -36,6 +36,6 @@ export const getViaDrillLayers = (
     : {
         from_layer: "top",
         to_layer: mapZToLayerName(layerCount - 1, layerCount),
-  }
+      }
   return getViaLayers(drillSpan, layerCount)
 }

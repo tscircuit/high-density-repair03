@@ -1,8 +1,5 @@
 import { expect, test } from "bun:test"
-import {
-  getViaDrillLayers,
-  getViaLayers,
-} from "../lib/utils/getViaLayers"
+import { getViaDrillLayers, getViaLayers } from "../lib/utils/getViaLayers"
 
 test("separates route spans from physical drill spans", () => {
   const layers = ["top", "inner1", "inner2", "bottom"]
@@ -20,11 +17,7 @@ test("separates route spans from physical drill spans", () => {
     getViaDrillLayers({ from_layer: "inner3", to_layer: "inner1" }, 6),
   ).toEqual(["top", "inner1", "inner2", "inner3", "inner4", "bottom"])
   expect(
-    getViaDrillLayers(
-      { from_layer: "inner3", to_layer: "inner1" },
-      6,
-      true,
-    ),
+    getViaDrillLayers({ from_layer: "inner3", to_layer: "inner1" }, 6, true),
   ).toEqual(["inner1", "inner2", "inner3"])
   expect(
     getViaDrillLayers({ from_layer: "top", to_layer: "inner2" }, 4, true),
