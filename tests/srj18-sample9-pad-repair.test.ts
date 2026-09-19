@@ -15,6 +15,8 @@ test("repairs SRJ18 sample 9 with original pads and safe layer transitions", asy
     srj: SimpleRouteJson
     hdRoutes: HighDensityRoute[]
   }
+  // This fixture exercises partial-layer moves.
+  srj.allowBlindAndBuriedVias = true
   const connMap = getConnectivityMapFromSimpleRouteJson(srj)
   const engine = new AutoroutingDrcEngine(srj, {
     connMap,

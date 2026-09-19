@@ -342,7 +342,7 @@ export const getTopologyRepairDrcSnapshot = (
 
 export const collectViaNodes = (
   routes: HighDensityRoute[],
-  defaultViaDiameter = 0.3,
+  srj: SimpleRouteJson,
 ): ViaNode[] => {
   const vias: ViaNode[] = []
 
@@ -387,14 +387,19 @@ export const collectViaNodes = (
         Boolean(route.route[pointIndex]?.pcb_port_id),
       )
 
+      const endpointZ = uniquePointIndexes.map((i) => route.route[i]!.z)
+      const minZ = srj.allowBlindAndBuriedVias ? Math.min(...endpointZ) : 0
+      const maxZ = srj.allowBlindAndBuriedVias
+        ? Math.max(...endpointZ)
+        : srj.layerCount - 1
       vias.push({
         routeIndex,
         rootConnectionName: getRootConnectionName(route),
         pointIndexes: uniquePointIndexes,
-        zLayers: [...new Set(uniquePointIndexes.map((i) => route.route[i]!.z))],
+        zLayers: Array.from({ length: maxZ - minZ + 1 }, (_, z) => minZ + z),
         x: current.x,
         y: current.y,
-        radius: (route.viaDiameter ?? defaultViaDiameter) / 2,
+        radius: (route.viaDiameter ?? srj.minViaDiameter ?? 0.3) / 2,
         movable: endpointPointIndexes.length === 0,
         canCanonicalize:
           endpointPointIndexes.length === 0 || !hasTaggedTerminal,
@@ -1966,8 +1971,12 @@ const translateVia = (
   return true
 }
 
-const getSameRootViaSite = (routes: MutableRoute[], via: ViaNode) => {
-  const currentVias = collectViaNodes(routes)
+const getSameRootViaSite = (
+  routes: MutableRoute[],
+  via: ViaNode,
+  srj: SimpleRouteJson,
+): ViaNode[] => {
+  const currentVias = collectViaNodes(routes, srj)
   const currentVia = currentVias.find(
     (candidate) =>
       candidate.routeIndex === via.routeIndex &&
@@ -1992,7 +2001,7 @@ const translateSameRootViaSite = (
   dy: number,
   srj: SimpleRouteJson,
 ) => {
-  const siteVias = getSameRootViaSite(routes, via)
+  const siteVias = getSameRootViaSite(routes, via, srj)
   if (
     siteVias.length === 0 ||
     siteVias.some(
@@ -2030,7 +2039,7 @@ const moveVia = (
   srj: SimpleRouteJson,
 ) =>
   via.movable &&
-  getSameRootViaSite(routes, via).length <= 1 &&
+  getSameRootViaSite(routes, via, srj).length <= 1 &&
   translateVia(routes, via, dx, dy, srj)
 
 const moveSegmentAwayFromPoint = (
@@ -2916,7 +2925,7 @@ const applyBroadRepulsionPass = (
   allowSameNetViaPairs = false,
 ): boolean => {
   let changed = false
-  const vias = collectViaNodes(routes)
+  const vias = collectViaNodes(routes, srj)
   const segments = collectSegments(routes)
   const spatialInteractionDistance = getBroadSpatialInteractionDistance(
     srj,
@@ -3016,7 +3025,7 @@ const applyBroadViaSegmentCleanupPass = (
   connMap?: ConnectivityMap,
 ): boolean => {
   let changed = false
-  const vias = collectViaNodes(routes)
+  const vias = collectViaNodes(routes, srj)
   const segments = collectSegments(routes)
   const spatialInteractionDistance = getBroadSpatialInteractionDistance(
     srj,
@@ -3663,7 +3672,7 @@ export const applySafeTraceLayerMoveForError = (
 
   const boardEdgeClearance = srj.minBoardEdgeClearance ?? 0.2
   const originalSegments = collectSegmentsForRoute(route, routeIndex)
-  const originalVias = collectViaNodes([route])
+  const originalVias = collectViaNodes([route], srj)
   for (let index = 1; index < movedRoute.length; index += 1) {
     const start = movedRoute[index - 1]!
     const end = movedRoute[index]!
@@ -4231,7 +4240,7 @@ export const applyViaOnlyDisplacementForTraceError = (
   const viaOwnerIndexes = viaOwnerIds
     .map((id) => traceRouteIndexById.get(id))
     .filter((index): index is number => index !== undefined)
-  const vias = collectViaNodes(routes)
+  const vias = collectViaNodes(routes, srj)
   const via = getNearestVia(
     viaOwnerIds.length > 0
       ? vias.filter((candidate) =>
@@ -4753,7 +4762,7 @@ export const applyDrcErrorForces = (
   enableTraceViaOwnerTargeting = false,
 ) => {
   let changed = false
-  const vias = collectViaNodes(routes)
+  const vias = collectViaNodes(routes, srj)
   const segments = collectSegments(routes)
 
   for (const error of errors) {
