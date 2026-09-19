@@ -3,7 +3,7 @@ import type { AnyCircuitElement, PcbTrace, PcbVia } from "circuit-json"
 import type { Obstacle, SimpleRouteJson, SimplifiedPcbTrace } from "../types"
 import type { HighDensityRoute } from "../types/high-density-types"
 import { getConnectionPointLayers } from "../types/srj-types"
-import { getPhysicalViaLayers } from "./getViaLayers"
+import { getViaDrillLayers } from "./getViaLayers"
 import { mapZToLayerName } from "./mapZToLayerName"
 import type { LayerName } from "./mapZToLayerName"
 import { pointToBoxDistance } from "@tscircuit/math-utils"
@@ -480,7 +480,7 @@ function extractViasFromRoutes(
                 y: segment.y,
                 outer_diameter: viaDiameter,
                 hole_diameter: viaDiameter * 0.5,
-                layers: getPhysicalViaLayers(
+                layers: getViaDrillLayers(
                   segment,
                   layerCount,
                   allowBlindAndBuriedVias,
@@ -519,7 +519,7 @@ function extractViasFromRoutes(
                 y: currPoint.y,
                 outer_diameter: viaDiameter,
                 hole_diameter: viaDiameter * 0.5,
-                layers: getPhysicalViaLayers(
+                layers: getViaDrillLayers(
                   { from_layer: fromLayer, to_layer: toLayer },
                   layerCount,
                   allowBlindAndBuriedVias,
