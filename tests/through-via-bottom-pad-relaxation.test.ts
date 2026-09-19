@@ -8,7 +8,7 @@ import { findPadClearanceViaPosition } from "../lib/solvers/GlobalDrcForceImprov
 import { getDrcSnapshot } from "../lib/solvers/GlobalDrcForceImproveSolver/solverHelpers"
 import { applyViaToPadClearanceRelaxation } from "../lib/solvers/GlobalDrcForceImproveSolver/viaToPadClearanceRelaxation"
 
-test("via placement and relaxation clear bottom pads according to board policy", (): void => {
+test("via placement and relaxation clear bottom pads according to the board setting", (): void => {
   for (const layerCount of [4, 6]) {
     for (const allowBlindAndBuriedVias of [undefined, false, true]) {
       const srj: SimpleRouteJson = {
