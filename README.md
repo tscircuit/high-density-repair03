@@ -315,7 +315,8 @@ and layer transitions are preserved. Bounds include the moving copper radius.
 The search is bounded. `solved` means the optimization finished; inspect `errors`
 to determine whether the output is DRC-clean. The caller should independently
 validate final copper before returning a successful board. Pipeline9 uses this
-after power expansion so it evaluates the actual final trace widths.
+inside its existing joint DRC repair solver; length matching and power expansion
+run afterward, followed by final clearance validation.
 
 `AutoroutingDrcEngine` also accepts `traceToPadClearance` independently of
 `traceClearance`. `evaluateContacts()` returns individual segment contacts for
