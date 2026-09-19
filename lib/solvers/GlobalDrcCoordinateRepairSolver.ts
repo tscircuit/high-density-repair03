@@ -45,6 +45,7 @@ export class GlobalDrcCoordinateRepairSolver extends BaseSolver {
   private changed = false
   private cycle = 0
   private gradientIteration = 0
+  private refined = false
 
   constructor(readonly params: Params) {
     super()
@@ -68,6 +69,12 @@ export class GlobalDrcCoordinateRepairSolver extends BaseSolver {
       viaToPadClearance: options.viaToPadClearance + 0.005,
     })
     this.simplifyRoutes()
+    this.buildCoordinateGroups()
+    this.errors = this.evaluate()
+  }
+
+  private buildCoordinateGroups(): void {
+    this.groups.length = 0
     for (const trace of this.routes) {
       const visited = new Set<RoutePoint>()
       for (const point of trace.route) {
@@ -89,12 +96,11 @@ export class GlobalDrcCoordinateRepairSolver extends BaseSolver {
           points,
           via: points.some((other) => other.route_type === "via"),
           radius: Math.max(...points.map((other) => other.route_type === "via"
-            ? (other.via_diameter ?? params.srj.minViaDiameter ?? 0.3) / 2
+            ? (other.via_diameter ?? this.params.srj.minViaDiameter ?? 0.3) / 2
             : other.width / 2)),
         })
       }
     }
-    this.errors = this.evaluate()
   }
 
   private simplifyRoutes(): void {
@@ -125,6 +131,11 @@ export class GlobalDrcCoordinateRepairSolver extends BaseSolver {
           next.width !== point.width || point.start_pcb_port_id || point.end_pcb_port_id) continue
         if (anchors.some((anchor) =>
           Math.hypot(anchor.x - point.x, anchor.y - point.y) < 1e-7)) continue
+        const ax = point.x - previous.x
+        const ay = point.y - previous.y
+        const bx = next.x - point.x
+        const by = next.y - point.y
+        if (ax * bx + ay * by >= 0) continue
         trace.route.splice(index, 1)
         const candidateErrors = this.evaluate()
         const candidateScore = candidateErrors.length * 100 + Math.sqrt(getDeficitEnergy(candidateErrors))
@@ -139,6 +150,43 @@ export class GlobalDrcCoordinateRepairSolver extends BaseSolver {
         }
       }
     }
+  }
+
+  private refineRoutesNearErrors(): boolean {
+    let addedPoints = 0
+    for (const trace of this.routes) {
+      const centers = this.errors.filter((error) => error.pcb_trace_id === trace.pcb_trace_id ||
+        (Array.isArray(error.pcb_trace_ids) && error.pcb_trace_ids.includes(trace.pcb_trace_id)))
+        .flatMap((error) => error.center ? [error.center] : [])
+      for (let index = 0; index < trace.route.length - 1; index++) {
+        const start = trace.route[index]!
+        const end = trace.route[index + 1]!
+        if (start.route_type !== "wire" || end.route_type !== "wire" ||
+          start.layer !== end.layer || start.width !== end.width) continue
+        const dx = end.x - start.x
+        const dy = end.y - start.y
+        const length = Math.hypot(dx, dy)
+        if (length <= 0.3 || !centers.some((center) => {
+          const fraction = Math.max(0, Math.min(1,
+            ((center.x - start.x) * dx + (center.y - start.y) * dy) / (length * length)))
+          return Math.hypot(center.x - start.x - dx * fraction,
+            center.y - start.y - dy * fraction) < 1.2
+        })) continue
+        const divisions = Math.min(24, Math.ceil(length / 0.3))
+        const points = Array.from({ length: divisions - 1 }, (_, pointIndex) => ({
+          ...start,
+          x: start.x + dx * (pointIndex + 1) / divisions,
+          y: start.y + dy * (pointIndex + 1) / divisions,
+          start_pcb_port_id: undefined,
+          end_pcb_port_id: undefined,
+        }))
+        trace.route.splice(index + 1, 0, ...points)
+        index += points.length
+        addedPoints += points.length
+      }
+    }
+    this.stats.refinementPoints = addedPoints
+    return addedPoints > 0
   }
 
   private evaluate(contacts = false): AutoroutingDrcError[] {
@@ -249,12 +297,25 @@ export class GlobalDrcCoordinateRepairSolver extends BaseSolver {
   }
 
   override _step(): void {
+    if (this.phase === "done" && this.errors.length > 0 && !this.refined) {
+      this.refined = true
+      if (this.refineRoutesNearErrors()) {
+        this.buildCoordinateGroups()
+        this.phase = "vias"
+        this.queue = []
+        this.cursor = 0
+        this.pass = 0
+        this.cycle = 0
+        this.gradientIteration = 0
+        this.errors = this.evaluate()
+      }
+    }
     if (this.errors.length === 0 || this.phase === "done") {
       this.stats = { ...this.stats, errors: this.errors.length }
       this.solved = true
       return
     }
-    this.stats = { phase: this.phase, cycle: this.cycle, pass: this.pass,
+    this.stats = { ...this.stats, phase: this.phase, cycle: this.cycle, pass: this.pass,
       errors: this.errors.length, gradientIteration: this.gradientIteration }
     if (this.phase === "gradient") {
       this.gradientIteration++
