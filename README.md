@@ -326,3 +326,9 @@ Coordinate repair enables `disallowViaInSmtPad`: SMT pad clearance applies to
 same-net vias as well as foreign-net vias. Same-net plated-hole exemptions and
 trace-to-own-pad connections are unchanged. The DRC engine option is opt-in for
 other callers.
+
+Before moving coordinates, the solver attempts clearance-checked shortcuts on
+traces involved in errors, preserving routing anchors. Via searches include
+longer moves to escape pad clusters. Both discrete and gradient updates reject
+increases in trace-centerline intersections, so a lower error count cannot
+justify introducing a new crossing into a crossing-free board.

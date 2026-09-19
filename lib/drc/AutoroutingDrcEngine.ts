@@ -136,6 +136,7 @@ export interface AutoroutingDrcEngineOptions {
 }
 
 export interface AutoroutingDrcEngineRunStats {
+  traceIntersectionCount: number
   traceCount: number
   segmentCount: number
   viaCount: number
@@ -404,6 +405,7 @@ export class AutoroutingDrcEngine {
     obstacleCount: 0,
     broadPhaseCandidateCount: 0,
     exactCheckCount: 0,
+    traceIntersectionCount: 0,
   }
 
   constructor(
@@ -722,6 +724,9 @@ export class AutoroutingDrcEngine {
       ) -
       segmentA.width / 2 -
       segmentB.width / 2
+    if (gap + segmentA.width / 2 + segmentB.width / 2 <= POSITION_EPSILON) {
+      this.lastRunStats.traceIntersectionCount++
+    }
     if (gap > this.traceClearance - DRC_EPSILON) return undefined
 
     const forwardId = `overlap_${segmentA.traceId}_${segmentB.traceId}`
@@ -987,6 +992,7 @@ export class AutoroutingDrcEngine {
       obstacleCount: this.obstacles.length,
       broadPhaseCandidateCount: 0,
       exactCheckCount: 0,
+      traceIntersectionCount: 0,
     }
 
     for (const segment of segments) {

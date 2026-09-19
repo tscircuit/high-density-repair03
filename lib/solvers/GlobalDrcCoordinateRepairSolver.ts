@@ -67,6 +67,7 @@ export class GlobalDrcCoordinateRepairSolver extends BaseSolver {
       traceToPadClearance: options.traceToPadClearance + 0.005,
       viaToPadClearance: options.viaToPadClearance + 0.005,
     })
+    this.simplifyRoutes()
     for (const trace of this.routes) {
       const visited = new Set<RoutePoint>()
       for (const point of trace.route) {
@@ -94,6 +95,50 @@ export class GlobalDrcCoordinateRepairSolver extends BaseSolver {
       }
     }
     this.errors = this.evaluate()
+  }
+
+  private simplifyRoutes(): void {
+    let errors = this.evaluate()
+    let score = errors.length * 100 + Math.sqrt(getDeficitEnergy(errors))
+    let intersections = this.engine.lastRunStats.traceIntersectionCount
+    const involvedIds = new Set(errors.flatMap((error) => [
+      error.pcb_trace_id,
+      ...(Array.isArray(error.pcb_trace_ids) ? error.pcb_trace_ids : []),
+    ]))
+    const anchors = [...(this.params.srj.traces ?? []), ...this.routes].flatMap((trace) =>
+      trace.route.flatMap((point, index) => {
+        if (point.route_type === "jumper") return [point.start, point.end]
+        if (point.route_type === "via" || index === 0 || index === trace.route.length - 1 ||
+          point.start_pcb_port_id || point.end_pcb_port_id) return [point]
+        return []
+      }),
+    )
+    for (const trace of this.routes) {
+      if (!involvedIds.has(trace.pcb_trace_id)) continue
+      for (let index = 1; index < trace.route.length - 1; index++) {
+        const previous = trace.route[index - 1]!
+        const point = trace.route[index]!
+        const next = trace.route[index + 1]!
+        if (previous.route_type !== "wire" || point.route_type !== "wire" ||
+          next.route_type !== "wire" || previous.layer !== point.layer ||
+          next.layer !== point.layer || previous.width !== point.width ||
+          next.width !== point.width || point.start_pcb_port_id || point.end_pcb_port_id) continue
+        if (anchors.some((anchor) =>
+          Math.hypot(anchor.x - point.x, anchor.y - point.y) < 1e-7)) continue
+        trace.route.splice(index, 1)
+        const candidateErrors = this.evaluate()
+        const candidateScore = candidateErrors.length * 100 + Math.sqrt(getDeficitEnergy(candidateErrors))
+        const candidateIntersections = this.engine.lastRunStats.traceIntersectionCount
+        if (candidateScore <= score + 1e-9 && candidateIntersections <= intersections) {
+          errors = candidateErrors
+          score = candidateScore
+          intersections = candidateIntersections
+          index--
+        } else {
+          trace.route.splice(index, 0, point)
+        }
+      }
+    }
   }
 
   private evaluate(contacts = false): AutoroutingDrcError[] {
@@ -131,9 +176,15 @@ export class GlobalDrcCoordinateRepairSolver extends BaseSolver {
     let bestX = x
     let bestY = y
     let bestErrors = this.errors
+    this.evaluate()
+    let bestIntersections = this.engine.lastRunStats.traceIntersectionCount
     let bestScore = this.errors.length * 100 + Math.sqrt(getDeficitEnergy(this.errors))
     const angles = this.phase === "vias" ? 32 : 16
-    for (const radius of [0.005, 0.01, 0.025, 0.05, 0.1, 0.2, 0.35, 0.5, 0.75, 1]) {
+    // A via can be trapped between a group of same-net pads; escaping the
+    // entire pad cluster may require a larger move than adjusting a bend.
+    const radii = [0.005, 0.01, 0.025, 0.05, 0.1, 0.2, 0.35, 0.5, 0.75, 1,
+      ...(group.via ? [1.5, 2] : [])]
+    for (const radius of radii) {
       for (let angle = 0; angle < angles; angle++) {
         const cx = x + radius * Math.cos(angle * 2 * Math.PI / angles)
         const cy = y + radius * Math.sin(angle * 2 * Math.PI / angles)
@@ -141,7 +192,9 @@ export class GlobalDrcCoordinateRepairSolver extends BaseSolver {
         this.set(group, cx, cy)
         const errors = this.evaluate()
         const score = errors.length * 100 + Math.sqrt(getDeficitEnergy(errors))
-        if (score < bestScore) {
+        const intersections = this.engine.lastRunStats.traceIntersectionCount
+        if (intersections <= bestIntersections && score < bestScore) {
+          bestIntersections = intersections
           bestX = cx
           bestY = cy
           bestErrors = errors
@@ -157,6 +210,7 @@ export class GlobalDrcCoordinateRepairSolver extends BaseSolver {
   private gradientStep(): boolean {
     const contacts = this.evaluate(true)
     const energy = getDeficitEnergy(contacts)
+    const intersections = this.contactEngine.lastRunStats.traceIntersectionCount
     const groups = this.selectGroups(contacts, true).map((group) => ({
       group, x: group.points[0]!.x, y: group.points[0]!.y, dx: 0, dy: 0,
     }))
@@ -184,7 +238,8 @@ export class GlobalDrcCoordinateRepairSolver extends BaseSolver {
         valid &&= this.inside(group, cx, cy)
         this.set(group, cx, cy)
       }
-      if (valid && getDeficitEnergy(this.evaluate(true)) < energy - 1e-12) {
+      if (valid && getDeficitEnergy(this.evaluate(true)) < energy - 1e-12 &&
+        this.contactEngine.lastRunStats.traceIntersectionCount <= intersections) {
         this.errors = this.evaluate()
         return true
       }
