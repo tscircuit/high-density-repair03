@@ -25,3 +25,4 @@ export type {
   SimpleRouteJson,
 } from "./solvers/GlobalDrcForceImproveSolver"
 export { getViaLayers } from "./utils/getViaLayers"
+export { GlobalDrcCoordinateRepairSolver } from "./solvers/GlobalDrcCoordinateRepairSolver"

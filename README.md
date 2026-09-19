@@ -303,3 +303,38 @@ One API difference to keep in mind:
 ## Compatibility Export
 
 `MySolver` is still exported as a thin wrapper around `GlobalDrcForceImproveSolver` with empty defaults, mainly for the existing debugger page and smoke tests.
+
+## Final coordinate repair
+
+`GlobalDrcCoordinateRepairSolver` accepts an SRJ and newly routed simplified
+traces. Existing `srj.traces` stay fixed. It searches local via and bend positions,
+then jointly reduces clearance deficits around remaining contacts. Coincident
+via/trace points move together; terminals, jumper attachments, copper widths,
+and layer transitions are preserved. Bounds include the moving copper radius.
+
+The search is bounded. `solved` means the optimization finished; inspect `errors`
+to determine whether the output is DRC-clean. The caller should independently
+validate final copper before returning a successful board. Pipeline9 uses this
+inside its existing joint DRC repair solver; length matching and power expansion
+run afterward, followed by final clearance validation.
+
+`AutoroutingDrcEngine` also accepts `traceToPadClearance` independently of
+`traceClearance`. `evaluateContacts()` returns individual segment contacts for
+continuous optimization; normal `evaluate()` retains its existing aggregation.
+
+Coordinate repair enables `disallowViaInSmtPad`: SMT pad clearance applies to
+same-net vias as well as foreign-net vias. Same-net plated-hole exemptions and
+trace-to-own-pad connections are unchanged. The DRC engine option is opt-in for
+other callers.
+
+Before moving coordinates, the solver attempts clearance-checked shortcuts on
+traces involved in errors, preserving routing anchors. Via searches include
+longer moves to escape pad clusters. Both discrete and gradient updates reject
+increases in trace-centerline intersections, so a lower error count cannot
+justify introducing a new crossing into a crossing-free board.
+
+If residual contacts remain, backward turns introduced during movement are
+removed with clearance checks, then one bounded refinement pass subdivides nearby wire
+segments and resumes coordinate optimization. This adds local bend freedom while
+preserving the original terminals, widths, layers, and fixed copper. It does not
+add pipeline stages or allow new vias.
