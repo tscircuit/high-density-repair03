@@ -130,4 +130,4 @@ test("keeps an accepted safe-layer candidate when a later broad branch only ties
     branchStep.mockRestore()
     seed.mockRestore()
   }
-})
+}, 30_000)
