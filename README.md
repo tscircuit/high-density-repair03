@@ -303,3 +303,20 @@ One API difference to keep in mind:
 ## Compatibility Export
 
 `MySolver` is still exported as a thin wrapper around `GlobalDrcForceImproveSolver` with empty defaults, mainly for the existing debugger page and smoke tests.
+
+## Final coordinate repair
+
+`GlobalDrcCoordinateRepairSolver` accepts an SRJ and newly routed simplified
+traces. Existing `srj.traces` stay fixed. It searches local via and bend positions,
+then jointly reduces clearance deficits around remaining contacts. Coincident
+via/trace points move together; terminals, jumper attachments, copper widths,
+and layer transitions are preserved. Bounds include the moving copper radius.
+
+The search is bounded. `solved` means the optimization finished; inspect `errors`
+to determine whether the output is DRC-clean. The caller should independently
+validate final copper before returning a successful board. Pipeline9 uses this
+after power expansion so it evaluates the actual final trace widths.
+
+`AutoroutingDrcEngine` also accepts `traceToPadClearance` independently of
+`traceClearance`. `evaluateContacts()` returns individual segment contacts for
+continuous optimization; normal `evaluate()` retains its existing aggregation.

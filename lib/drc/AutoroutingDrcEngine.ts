@@ -107,6 +107,8 @@ export interface AutoroutingDrcEngineOptions {
    * trace-to-obstacle checks.
    */
   traceClearance?: number
+  /** Separate copper-edge clearance for traces against pads. */
+  traceToPadClearance?: number
   /**
    * Copper-edge clearance used for both same-net and different-net via pairs.
    * Values below 0.1 mm are clamped to the repair solver's safety minimum.
@@ -378,6 +380,7 @@ const createTraceErrorMessage = (
  */
 export class AutoroutingDrcEngine {
   private readonly traceClearance: number
+  private readonly traceToPadClearance: number
   private readonly viaClearance: number
   private readonly viaToPadClearance: number
   private readonly cellSize: number
@@ -405,6 +408,10 @@ export class AutoroutingDrcEngine {
     options: AutoroutingDrcEngineOptions = {},
   ) {
     this.traceClearance = options.traceClearance ?? DEFAULT_TRACE_CLEARANCE
+    this.traceToPadClearance = options.traceToPadClearance ?? this.traceClearance
+    if (!Number.isFinite(this.traceToPadClearance) || this.traceToPadClearance < 0) {
+      throw new Error("traceToPadClearance must be a non-negative finite number")
+    }
     this.viaClearance = Math.max(
       options.viaClearance ?? MIN_VIA_CLEARANCE,
       MIN_VIA_CLEARANCE,
@@ -446,7 +453,7 @@ export class AutoroutingDrcEngine {
       0.25,
       Math.max(boardWidth, boardHeight) / 64,
       (this.srj.minViaDiameter ?? 0.3) +
-        Math.max(this.traceClearance, this.viaToPadClearance),
+        Math.max(this.traceClearance, this.traceToPadClearance, this.viaToPadClearance),
     )
   }
 
@@ -584,7 +591,7 @@ export class AutoroutingDrcEngine {
     for (const obstacle of this.obstacles) {
       const bounds = expandBounds(
         getObstacleBounds(obstacle),
-        Math.max(this.traceClearance, this.viaToPadClearance),
+        Math.max(this.traceClearance, this.traceToPadClearance, this.viaToPadClearance),
       )
       for (const layer of obstacle.layers) {
         let index = this.obstacleIndexesByLayer.get(layer)
@@ -806,7 +813,7 @@ export class AutoroutingDrcEngine {
             radius: obstacle.radius,
           })
     const gap = shapeDistance - segment.width / 2
-    if (gap + DRC_EPSILON >= this.traceClearance) return undefined
+    if (gap + DRC_EPSILON >= this.traceToPadClearance) return undefined
 
     const errorId = `overlap_${segment.traceId}_${obstacle.obstacleId}`
 
@@ -821,7 +828,7 @@ export class AutoroutingDrcEngine {
       pcb_trace_id: segment.traceId,
       source_trace_id: "",
       pcb_trace_error_id: errorId,
-      minimum_clearance: this.traceClearance,
+      minimum_clearance: this.traceToPadClearance,
       actual_clearance: gap,
       pcb_component_ids: [],
       pcb_port_ids: [
@@ -944,6 +951,11 @@ export class AutoroutingDrcEngine {
     return this.evaluateInternal(traces, true)
   }
 
+  /** Preserve individual segment contacts for continuous clearance optimization. */
+  evaluateContacts(traces: SimplifiedPcbTraces): AutoroutingDrcResult {
+    return this.evaluateInternal(traces, true, false)
+  }
+
   /**
    * Evaluates the established trace/via DRC set used by the first repair
    * stage. Via-to-pad errors remain part of the normal complete evaluation and
@@ -956,6 +968,7 @@ export class AutoroutingDrcEngine {
   private evaluateInternal(
     traces: SimplifiedPcbTraces,
     includeViaPadErrors: boolean,
+    aggregateTraceContacts = true,
   ): AutoroutingDrcResult {
     const { segments, vias } = this.collectDynamicGeometry(traces)
     const dynamicIndexesByLayer = this.buildDynamicIndexes(segments, vias)
@@ -1065,6 +1078,9 @@ export class AutoroutingDrcEngine {
             : error.actual_clearance,
       }),
     )
+    if (!aggregateTraceContacts) {
+      errors.splice(0, errors.length, ...detectedTraceErrors)
+    }
     errors.push(...detectedViaPadErrors)
     errors.push(...detectedViaErrors)
     const errorsWithCenters = errors.filter((error) => error.center)
