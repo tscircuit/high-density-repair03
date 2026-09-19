@@ -116,6 +116,8 @@ export interface AutoroutingDrcEngineOptions {
   viaClearance?: number
   /** Copper-edge clearance used for via-to-pad checks. */
   viaToPadClearance?: number
+  /** Apply SMT pad clearance even when a via belongs to the same net. */
+  disallowViaInSmtPad?: boolean
   /**
    * Optional broad-phase cell size. The engine derives one from the board
    * bounds when this is omitted.
@@ -383,6 +385,7 @@ export class AutoroutingDrcEngine {
   private readonly traceToPadClearance: number
   private readonly viaClearance: number
   private readonly viaToPadClearance: number
+  private readonly disallowViaInSmtPad: boolean
   private readonly cellSize: number
   private readonly connMap?: ConnectivityMap
   private readonly includeTraceViaOwnerMetadata: boolean
@@ -420,6 +423,7 @@ export class AutoroutingDrcEngine {
       options.viaToPadClearance ??
       this.srj.minViaEdgeToPadEdgeClearance ??
       DEFAULT_VIA_TO_PAD_CLEARANCE
+    this.disallowViaInSmtPad = options.disallowViaInSmtPad ?? false
     this.connMap = options.connMap
     this.includeTraceViaOwnerMetadata =
       options.includeTraceViaOwnerMetadata ?? false
@@ -854,7 +858,8 @@ export class AutoroutingDrcEngine {
     via: Via,
     obstacle: StaticObstacle,
   ): AutoroutingDrcError | undefined {
-    if (this.obstacleSharesNet(via.netId, obstacle)) return undefined
+    if (this.obstacleSharesNet(via.netId, obstacle) &&
+      !(this.disallowViaInSmtPad && obstacle.obstacleType === "pcb_smtpad")) return undefined
     this.lastRunStats.exactCheckCount += 1
 
     const obstacleBounds = getObstacleLocalBounds(obstacle)

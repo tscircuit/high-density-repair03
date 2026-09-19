@@ -57,6 +57,7 @@ export class GlobalDrcCoordinateRepairSolver extends BaseSolver {
       traceToPadClearance: params.srj.minTraceToPadEdgeClearance ?? 0.1,
       viaToPadClearance: params.srj.minViaEdgeToPadEdgeClearance ?? 0.1,
       includeTraceViaOwnerMetadata: true,
+      disallowViaInSmtPad: true,
     }
     this.engine = new AutoroutingDrcEngine(params.srj, options)
     this.contactEngine = new AutoroutingDrcEngine(params.srj, {

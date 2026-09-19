@@ -321,3 +321,8 @@ run afterward, followed by final clearance validation.
 `AutoroutingDrcEngine` also accepts `traceToPadClearance` independently of
 `traceClearance`. `evaluateContacts()` returns individual segment contacts for
 continuous optimization; normal `evaluate()` retains its existing aggregation.
+
+Coordinate repair enables `disallowViaInSmtPad`: SMT pad clearance applies to
+same-net vias as well as foreign-net vias. Same-net plated-hole exemptions and
+trace-to-own-pad connections are unchanged. The DRC engine option is opt-in for
+other callers.
