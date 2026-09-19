@@ -24,3 +24,18 @@ export const getViaLayers = (via: ViaLayers, layerCount: number): string[] => {
   }
   return boardLayers.slice(Math.min(from, to), Math.max(from, to) + 1)
 }
+
+/** Layers crossed by the via drill for DRC; route endpoints describe travel. */
+export const getViaDrillLayers = (
+  via: ViaLayers,
+  layerCount: number,
+  allowBlindAndBuriedVias = false,
+): string[] => {
+  const drillSpan = allowBlindAndBuriedVias
+    ? via
+    : {
+        from_layer: "top",
+        to_layer: mapZToLayerName(layerCount - 1, layerCount),
+      }
+  return getViaLayers(drillSpan, layerCount)
+}
