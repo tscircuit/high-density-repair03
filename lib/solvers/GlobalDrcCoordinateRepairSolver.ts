@@ -16,7 +16,7 @@ type Params = {
   srj: SimpleRouteJson
   routedTraces: SimplifiedPcbTraces
 }
-type Phase = "vias" | "points" | "gradient" | "polish" | "done"
+type Phase = "vias" | "gradient" | "polish" | "done"
 
 const getDeficitEnergy = (errors: AutoroutingDrcError[]): number => {
   let energy = 0
@@ -221,10 +221,11 @@ export class GlobalDrcCoordinateRepairSolver extends BaseSolver {
       return
     }
     this.pass++
-    if (!this.changed || this.pass >= (this.phase === "vias" ? 4 : 8)) {
+    // Seed the joint optimizer with one via pass. Repeated single-point scans
+    // make little progress on coupled pad/trace constraints.
+    if (!this.changed || this.pass >= (this.phase === "vias" ? 1 : 8)) {
       this.pass = 0
-      if (this.phase === "vias") this.phase = "points"
-      else if (this.phase === "points") this.phase = "gradient"
+      if (this.phase === "vias") this.phase = "gradient"
       else {
         this.cycle++
         this.gradientIteration = 0
