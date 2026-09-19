@@ -1,23 +1,20 @@
 import { mapZToLayerName } from "./mapZToLayerName"
 
-type ViaSpan = {
-  from_layer: string
-  to_layer: string
+type ViaLayers = {
+  layers?: string[]
+  from_layer?: string
+  to_layer?: string
 }
 
-/** Vias occupy every board layer unless blind and buried vias are enabled. */
-export const getViaLayers = (
-  via: ViaSpan,
-  layerCount: number,
-  allowBlindAndBuriedVias = false,
-): string[] => {
+/** Normalize the explicit-layer and inclusive-endpoint representations. */
+export const getViaLayers = (via: ViaLayers, layerCount: number): string[] => {
+  if (via.layers !== undefined) return via.layers
   if (!Number.isInteger(layerCount) || layerCount < 1) {
     throw new Error(`Invalid board layer count: ${layerCount}`)
   }
   const boardLayers = Array.from({ length: layerCount }, (_, z) =>
     mapZToLayerName(z, layerCount),
   )
-  if (!allowBlindAndBuriedVias) return boardLayers
   const from = boardLayers.findIndex((layer) => layer === via.from_layer)
   const to = boardLayers.findIndex((layer) => layer === via.to_layer)
   if (from < 0 || to < 0) {
@@ -26,4 +23,19 @@ export const getViaLayers = (
     )
   }
   return boardLayers.slice(Math.min(from, to), Math.max(from, to) + 1)
+}
+
+/** Layers crossed by the via drill for DRC; route endpoints describe travel. */
+export const getViaDrillLayers = (
+  via: ViaLayers,
+  layerCount: number,
+  allowBlindAndBuriedVias = false,
+): string[] => {
+  const drillSpan = allowBlindAndBuriedVias
+    ? via
+    : {
+        from_layer: "top",
+        to_layer: mapZToLayerName(layerCount - 1, layerCount),
+  }
+  return getViaLayers(drillSpan, layerCount)
 }
