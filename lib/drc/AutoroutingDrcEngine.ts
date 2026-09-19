@@ -377,6 +377,10 @@ const createTraceErrorMessage = (
  * `@tscircuit/checks` validation suite.
  */
 export class AutoroutingDrcEngine {
+  private readonly obstacleConnectivityCache = new Map<
+    StaticObstacle,
+    Map<string, boolean>
+  >()
   private readonly traceClearance: number
   private readonly viaClearance: number
   private readonly viaToPadClearance: number
@@ -689,10 +693,19 @@ export class AutoroutingDrcEngine {
     return indexes
   }
 
-  private obstacleSharesNet(netId: string, obstacle: StaticObstacle) {
-    return obstacle.connectedTo.some((connectedId) =>
+  private obstacleSharesNet(netId: string, obstacle: StaticObstacle): boolean {
+    let netCache = this.obstacleConnectivityCache.get(obstacle)
+    if (!netCache) {
+      netCache = new Map<string, boolean>()
+      this.obstacleConnectivityCache.set(obstacle, netCache)
+    }
+    const cached = netCache.get(netId)
+    if (cached !== undefined) return cached
+    const connected = obstacle.connectedTo.some((connectedId) =>
       this.areConnected(netId, connectedId),
     )
+    netCache.set(netId, connected)
+    return connected
   }
 
   private checkTracePair(
@@ -957,6 +970,9 @@ export class AutoroutingDrcEngine {
     traces: SimplifiedPcbTraces,
     includeViaPadErrors: boolean,
   ): AutoroutingDrcResult {
+    // Candidate segments repeatedly visit the same obstacle. Connectivity is
+    // fixed within one evaluation, but callers can change it between runs.
+    this.obstacleConnectivityCache.clear()
     const { segments, vias } = this.collectDynamicGeometry(traces)
     const dynamicIndexesByLayer = this.buildDynamicIndexes(segments, vias)
     const detectedTraceErrors: AutoroutingDrcError[] = []
