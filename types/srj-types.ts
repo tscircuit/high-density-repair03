@@ -46,6 +46,8 @@ export interface SimpleRouteJson {
   minTraceWidth: number
   nominalTraceWidth?: number
   minViaDiameter?: number
+  /** Enables partial via spans; autorouted vias span the board by default. */
+  allowBlindAndBuriedVias?: boolean
   minBoardEdgeClearance?: number
   minTraceToPadEdgeClearance?: number
   minViaEdgeToPadEdgeClearance?: number
