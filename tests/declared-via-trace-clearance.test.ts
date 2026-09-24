@@ -58,12 +58,14 @@ test("via-trace repair honors the declared board clearance", (): void => {
     const via = output[0]!.vias[0]!
     const trace = output[1]!
     const gap = Math.min(
-      ...trace.route.slice(1).map(
-        (point, index): number =>
-          pointToSegmentDistance(via, trace.route[index]!, point) -
-          output[0]!.viaDiameter / 2 -
-          trace.traceThickness / 2,
-      ),
+      ...trace.route
+        .slice(1)
+        .map(
+          (point, index): number =>
+            pointToSegmentDistance(via, trace.route[index]!, point) -
+            output[0]!.viaDiameter / 2 -
+            trace.traceThickness / 2,
+        ),
     )
     expect(gap).toBeGreaterThanOrEqual(clearance)
     expect(getDrcSnapshot(srj, output).count).toBe(0)
