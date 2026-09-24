@@ -4762,10 +4762,11 @@ export const applyDrcErrorForces = (
   enableTraceViaOwnerTargeting = false,
 ) => {
   let changed = false
-  const vias = collectViaNodes(routes, srj)
-  const segments = collectSegments(routes)
 
   for (const error of errors) {
+    // Earlier errors can insert detour points, invalidating cached indices.
+    const vias = collectViaNodes(routes, srj)
+    const segments = collectSegments(routes)
     const center = getErrorCenter(error)
     if (!center) continue
     let repulsionPoint = center
@@ -4977,9 +4978,11 @@ export const applyDrcErrorForces = (
       changed = movedSegment || changed
     }
 
+    // Segment repair above can splice this very route. Resolve the current
+    // via points so both ends of its layer transition move together.
     const nearestVia = hasTargetedTraceViaMetadata
       ? undefined
-      : getNearestVia(vias, center)
+      : getNearestVia(collectViaNodes(routes, srj), center)
     if (
       nearestVia &&
       Math.hypot(nearestVia.x - center.x, nearestVia.y - center.y) < 0.35
