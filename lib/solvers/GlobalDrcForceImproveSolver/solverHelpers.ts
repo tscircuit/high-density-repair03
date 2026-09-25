@@ -658,7 +658,12 @@ const getRepulsionPointForError = (
   const referencedPadIds = Array.isArray(error.pcb_pad_ids)
     ? error.pcb_pad_ids.filter((id): id is string => typeof id === "string")
     : []
-  const referencedObstacle = srj.obstacles.find(
+  // connectedTo contains net aliases, not just the owning pad's identity.
+  // Resolve shared aliases at the reported contact, not by array order.
+  const referencedObstacle = getNearestObstacleNearPoint(
+    srj,
+    center,
+    Number.POSITIVE_INFINITY,
     (obstacle) =>
       referencedPadIds.some((id) => obstacle.connectedTo.includes(id)) &&
       (obstacleFilter?.(obstacle) ?? true),
