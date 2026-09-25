@@ -202,6 +202,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   private viaInPadCandidatesAccepted = 0
   private padTopologyErrorCursor = 0
   private safeTraceLayerCursorByErrorId = new Map<string, number>()
+  private safeTraceLayerVariantsCheckedByErrorId = new Map<string, number>()
   private traceLayerCorridorCursorByErrorId = new Map<string, number>()
   private tracePairDetourCursorByErrorId = new Map<string, number>()
   private errorCursor = 0
@@ -579,6 +580,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       getMaxTargetedCandidateAttemptsForEffort(this.effort)
     let candidateAttemptsThisStep = 0
     let safeTraceLayerCandidateAttemptsThisStep = 0
+    let safeTraceLayerSearchPending = false
     let tracePairDetourAttemptedThisStep = false
     let acceptedCandidate = false
     let attemptedPeriodicLargeBoardBroadFallback = false
@@ -832,6 +834,16 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
             traceErrorKey,
             safeTraceLayerCursor,
           )
+          const totalVariantsChecked = Math.min(
+            variantCount,
+            (this.safeTraceLayerVariantsCheckedByErrorId.get(traceErrorKey) ??
+              0) + variantsChecked,
+          )
+          this.safeTraceLayerVariantsCheckedByErrorId.set(
+            traceErrorKey,
+            totalVariantsChecked,
+          )
+          safeTraceLayerSearchPending ||= totalVariantsChecked < variantCount
         }
       }
       if (
@@ -1505,6 +1517,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
 
     if (acceptedCandidate) {
       this.largeBoardBroadFallbackMisses = 0
+      this.safeTraceLayerVariantsCheckedByErrorId.clear()
     } else if (attemptedPeriodicLargeBoardBroadFallback) {
       this.largeBoardBroadFallbackMisses += 1
     }
@@ -1512,7 +1525,10 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     this.outputHdRoutes = bestRoutes
     this.outputSnapshot = bestSnapshot
     this.stalledIterations = acceptedCandidate ? 0 : this.stalledIterations + 1
-    if (!tracePairDetourAttemptedThisStep) {
+    // A bounded search continuing across steps is not a DRC plateau until
+    // it has visited a complete variant cycle for the unchanged geometry.
+    if (safeTraceLayerSearchPending) this.drcCountPlateauChecks = 0
+    if (!tracePairDetourAttemptedThisStep && !safeTraceLayerSearchPending) {
       this.updateDrcCountPlateauState(bestSnapshot)
     }
     this.updateStats(bestSnapshot)

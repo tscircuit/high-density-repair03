@@ -43,6 +43,10 @@ test("repairs SRJ18 sample 9 with original pads and safe layer transitions", asy
 
   expect(solver.solved).toBe(true)
   expect(solver.failed).toBe(false)
+  // Untried safe-layer variants must not be mistaken for a DRC plateau.
+  // The existing iteration cap still applies to the finite search.
+  expect(solver.MAX_ITERATIONS).toBe(32)
+  expect(solver.iterations).toBeLessThanOrEqual(solver.MAX_ITERATIONS)
   expect(
     getDrcSnapshot(srj, solver.getOutput(), undefined, connMap, engine).errors,
   ).toEqual([])
