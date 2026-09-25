@@ -13,10 +13,7 @@ test("a repair cannot increase total DRCs by replacing trace errors with pad err
     count: 2,
     issueScore: 2,
     traceRouteIndexById: new Map(),
-    errors: [
-      { type: "pcb_trace_error" },
-      { type: "pcb_trace_error" },
-    ],
+    errors: [{ type: "pcb_trace_error" }, { type: "pcb_trace_error" }],
   }
   const candidate: DrcSnapshot = {
     count: 3,
