@@ -1922,6 +1922,14 @@ const insertDetourPointAwayFromPoint = (
   return true
 }
 
+const refreshViaPosition = (routes: MutableRoute[], via: ViaNode): void => {
+  // Moving an attached trace updates route points, not cached ViaNode copies.
+  const point = routes[via.routeIndex]?.route[via.pointIndexes[0]!]
+  if (!point) throw new Error("Via refers to a missing route point")
+  via.x = point.x
+  via.y = point.y
+}
+
 const translateVia = (
   routes: MutableRoute[],
   via: ViaNode,
@@ -1931,6 +1939,7 @@ const translateVia = (
 ) => {
   const route = routes[via.routeIndex]
   if (!route) return false
+  refreshViaPosition(routes, via)
   const translation = clipPointTranslationAwayFromBoardEdge(
     srj,
     via,
@@ -2036,7 +2045,7 @@ const translateSameRootViaSite = (
   return true
 }
 
-const moveVia = (
+export const moveVia = (
   routes: MutableRoute[],
   via: ViaNode,
   dx: number,
@@ -2452,6 +2461,8 @@ const pushViaViaPair = (
   maxMove = BROAD_MAX_MOVE,
   allowSameNet = false,
 ) => {
+  refreshViaPosition(routes, left)
+  refreshViaPosition(routes, right)
   if (
     !allowSameNet &&
     sharesNet(left.rootConnectionName, right.rootConnectionName, connMap)
@@ -2569,6 +2580,7 @@ const pushViaSegmentPair = (
   moveDivisor = 2,
   translateSharedViaSite = false,
 ) => {
+  refreshViaPosition(routes, via)
   if (sharesNet(via.rootConnectionName, segment.rootConnectionName, connMap))
     return false
 
@@ -2869,6 +2881,7 @@ const pushMovablesAwayFromObstacles = (
     for (const viaIndex of nearbyViaIndexes) {
       const via = vias[viaIndex]
       if (!via) continue
+      refreshViaPosition(routes, via)
       if (obstacleSharesNet(via.rootConnectionName, obstacle, connMap)) continue
       const repulsion = getRectRepulsion(
         via,
@@ -2955,6 +2968,7 @@ const applyBroadRepulsionPass = (
   for (let leftIndex = 0; leftIndex < vias.length; leftIndex += 1) {
     const left = vias[leftIndex]
     if (!left) continue
+    refreshViaPosition(routes, left)
     const nearbyViaIndexes = getSpatialCandidateIndexes(
       viaSpatialIndex,
       expandBounds2d(getViaBounds(left), spatialInteractionDistance),
@@ -2980,6 +2994,7 @@ const applyBroadRepulsionPass = (
   for (let viaIndex = 0; viaIndex < vias.length; viaIndex += 1) {
     const via = vias[viaIndex]
     if (!via) continue
+    refreshViaPosition(routes, via)
     const nearbySegmentIndexes = getSpatialCandidateIndexes(
       segmentSpatialIndex,
       expandBounds2d(getViaBounds(via), spatialInteractionDistance),
