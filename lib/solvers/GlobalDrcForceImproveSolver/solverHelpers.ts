@@ -3263,6 +3263,7 @@ export const isDrcSnapshotCountBetter = (
   candidateSnapshot: DrcSnapshot,
   bestSnapshot: DrcSnapshot,
 ) => {
+  if (candidateSnapshot.count > bestSnapshot.count) return false
   const candidateLegacyCount = getNonViaPadDrcIssueCount(candidateSnapshot)
   const bestLegacyCount = getNonViaPadDrcIssueCount(bestSnapshot)
   if (candidateLegacyCount !== bestLegacyCount) {
@@ -4750,6 +4751,7 @@ export const isBetterDrcSnapshot = (
   bestSnapshot?: DrcSnapshot,
 ) => {
   if (bestSnapshot) {
+    if (candidateSnapshot.count > bestSnapshot.count) return false
     const candidateLegacyCount = getNonViaPadDrcIssueCount(candidateSnapshot)
     const bestLegacyCount = getNonViaPadDrcIssueCount(bestSnapshot)
     if (candidateLegacyCount !== bestLegacyCount) {
@@ -4765,6 +4767,7 @@ export const isBetterDrcSnapshot = (
     (candidateIssueCount === bestIssueCount &&
       candidateIssueScore < bestIssueScore) ||
     (candidateIssueCount === bestIssueCount &&
+      candidateIssueScore <= bestIssueScore &&
       candidateViaIssueCount < bestViaIssueCount)
   )
 }
