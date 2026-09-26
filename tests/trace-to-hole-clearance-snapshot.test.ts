@@ -149,5 +149,7 @@ test("indexed DRC highlights physical hole gaps below the selected clearance", a
     }),
     { backgroundColor: "white", svgWidth: 1400, svgHeight: 320 },
   )
-  await expect(svg.replace(/[ \t]+$/gm, "")).toMatchSvgSnapshot(import.meta.path)
+  await expect(svg.replace(/[ \t]+$/gm, "")).toMatchSvgSnapshot(
+    import.meta.path,
+  )
 })
