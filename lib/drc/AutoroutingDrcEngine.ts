@@ -65,7 +65,8 @@ type Via = {
 
 type StaticObstacle = {
   kind: "obstacle"
-  obstacleType: "pcb_smtpad" | "pcb_plated_hole"
+  obstacleType: "pcb_smtpad" | "pcb_plated_hole" | "pcb_hole"
+  traceClearance: number
   obstacleId: string
   connectedTo: string[]
   x: number
@@ -702,7 +703,7 @@ export class AutoroutingDrcEngine {
     const addedSmtPadIds = new Set<string>()
     const addedPlatedHoleIds = new Set<string>()
 
-    for (const obstacle of this.srj.obstacles) {
+    for (const [obstacleIndex, obstacle] of this.srj.obstacles.entries()) {
       if (obstacle.layers.length === 0) continue
       const smtPadId = obstacle.connectedTo.find((id) =>
         id.startsWith("pcb_smtpad_"),
@@ -713,21 +714,26 @@ export class AutoroutingDrcEngine {
       const pcbPortId = obstacle.connectedTo.find((id) =>
         id.startsWith("pcb_port_"),
       )
-      if (!smtPadId && !platedHoleId && !pcbPortId) continue
+      if (!obstacle.isNonPlatedHole && !smtPadId && !platedHoleId && !pcbPortId)
+        continue
 
       const isMultiLayer = obstacle.layers.length > 1
-      const obstacleType = isMultiLayer
-        ? ("pcb_plated_hole" as const)
-        : ("pcb_smtpad" as const)
-      const obstacleId = isMultiLayer
-        ? (platedHoleId ??
-          `pcb_plated_hole_${obstacle.center.x.toFixed(
-            3,
-          )}_${obstacle.center.y.toFixed(3)}`)
-        : (smtPadId ??
-          `pcb_smtpad_${obstacle.center.x.toFixed(
-            3,
-          )}_${obstacle.center.y.toFixed(3)}`)
+      const obstacleType = obstacle.isNonPlatedHole
+        ? ("pcb_hole" as const)
+        : isMultiLayer
+          ? ("pcb_plated_hole" as const)
+          : ("pcb_smtpad" as const)
+      const obstacleId = obstacle.isNonPlatedHole
+        ? (obstacle.obstacleId ?? `pcb_hole_${obstacleIndex}`)
+        : isMultiLayer
+          ? (platedHoleId ??
+            `pcb_plated_hole_${obstacle.center.x.toFixed(
+              3,
+            )}_${obstacle.center.y.toFixed(3)}`)
+          : (smtPadId ??
+            `pcb_smtpad_${obstacle.center.x.toFixed(
+              3,
+            )}_${obstacle.center.y.toFixed(3)}`)
       const addedIds = isMultiLayer ? addedPlatedHoleIds : addedSmtPadIds
       if (addedIds.has(obstacleId)) continue
       addedIds.add(obstacleId)
@@ -742,11 +748,16 @@ export class AutoroutingDrcEngine {
       // Explicit rotation describes a rectangular pad, including square pads.
       // Only legacy, unrotated multilayer obstacles use the circular inference.
       const isCircular =
-        !hasRotation &&
-        isMultiLayer &&
-        Math.abs(obstacle.width - obstacle.height) < 0.001
+        (obstacle.isNonPlatedHole && obstacle.shape === "circle") ||
+        (!obstacle.isNonPlatedHole &&
+          !hasRotation &&
+          isMultiLayer &&
+          Math.abs(obstacle.width - obstacle.height) < 0.001)
       obstacles.push({
         kind: "obstacle",
+        traceClearance: obstacle.isNonPlatedHole
+          ? (this.srj.minTraceToHoleEdgeClearance ?? this.traceClearance)
+          : this.traceClearance,
         obstacleType,
         obstacleId,
         connectedTo: obstacle.connectedTo,
@@ -771,7 +782,7 @@ export class AutoroutingDrcEngine {
     for (const obstacle of this.obstacles) {
       const bounds = expandBounds(
         getObstacleBounds(obstacle),
-        Math.max(this.traceClearance, this.viaToPadClearance),
+        Math.max(obstacle.traceClearance, this.viaToPadClearance),
       )
       for (const layer of obstacle.layers) {
         let index = this.obstacleIndexesByLayer.get(layer)
@@ -1204,7 +1215,7 @@ export class AutoroutingDrcEngine {
       hasConservativeAxialClearance(
         segment,
         getObstacleBounds(obstacle),
-        this.traceClearance,
+        obstacle.traceClearance,
       )
     ) {
       return undefined
@@ -1227,7 +1238,7 @@ export class AutoroutingDrcEngine {
             radius: obstacle.radius,
           })
     const gap = shapeDistance - segment.width / 2
-    if (gap + DRC_EPSILON >= this.traceClearance) return undefined
+    if (gap + DRC_EPSILON >= obstacle.traceClearance) return undefined
 
     const errorId = `overlap_${segment.traceId}_${obstacle.obstacleId}`
 
@@ -1242,7 +1253,7 @@ export class AutoroutingDrcEngine {
       pcb_trace_id: segment.traceId,
       source_trace_id: "",
       pcb_trace_error_id: errorId,
-      minimum_clearance: this.traceClearance,
+      minimum_clearance: obstacle.traceClearance,
       actual_clearance: gap,
       pcb_component_ids: [],
       pcb_port_ids: [
@@ -1302,6 +1313,7 @@ export class AutoroutingDrcEngine {
     via: Via,
     obstacle: StaticObstacle,
   ): AutoroutingDrcError | undefined {
+    if (obstacle.obstacleType === "pcb_hole") return undefined
     if (this.obstacleSharesNet(via.netId, obstacle)) return undefined
     this.lastRunStats.exactCheckCount += 1
 
