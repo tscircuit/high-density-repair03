@@ -341,12 +341,19 @@ export const getTopologyRepairDrcSnapshot = (
 export const collectViaNodes = (
   routes: HighDensityRoute[],
   defaultViaDiameter = 0.3,
+  rootConnectionName?: string,
 ): ViaNode[] => {
   const vias: ViaNode[] = []
 
   for (let routeIndex = 0; routeIndex < routes.length; routeIndex += 1) {
     const route = routes[routeIndex]
     if (!route) continue
+    if (
+      rootConnectionName !== undefined &&
+      getRootConnectionName(route) !== rootConnectionName
+    ) {
+      continue
+    }
     const seenIndexes = new Set<number>()
 
     for (let index = 0; index < route.route.length - 1; index += 1) {
@@ -1964,8 +1971,17 @@ const translateVia = (
   return true
 }
 
-const getSameRootViaSite = (routes: MutableRoute[], via: ViaNode) => {
-  const currentVias = collectViaNodes(routes)
+const getSameRootViaSite = (
+  routes: MutableRoute[],
+  via: ViaNode,
+): ViaNode[] => {
+  const currentRoute = routes[via.routeIndex]
+  if (!currentRoute) return []
+  const currentVias = collectViaNodes(
+    routes,
+    undefined,
+    getRootConnectionName(currentRoute),
+  )
   const currentVia = currentVias.find(
     (candidate) =>
       candidate.routeIndex === via.routeIndex &&
