@@ -47,17 +47,19 @@ export const sharesNet = (
   left: string,
   right: string | undefined,
   connMap?: ConnectivityMap,
-) => {
+): boolean => {
   if (!right) return false
   if (left === right) return true
-  if (connMap?.areIdsConnected(left, right)) return true
 
-  const leftNetId = getConnMapNetId(connMap, left)
-  const rightNetId = getConnMapNetId(connMap, right)
-  if (leftNetId && (leftNetId === right || leftNetId === rightNetId)) {
+  const leftNetId = connMap?.getNetConnectedToId(left)
+  const rightNetId = connMap?.getNetConnectedToId(right)
+  if (
+    leftNetId &&
+    (leftNetId === rightNetId || (left && leftNetId === right))
+  ) {
     return true
   }
-  if (rightNetId && (rightNetId === left || rightNetId === leftNetId)) {
+  if (rightNetId && rightNetId === left) {
     return true
   }
 
