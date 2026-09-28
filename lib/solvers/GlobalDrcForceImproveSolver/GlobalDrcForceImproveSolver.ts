@@ -202,6 +202,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   private viaInPadCandidatesAccepted = 0
   private padTopologyErrorCursor = 0
   private safeTraceLayerCursorByErrorId = new Map<string, number>()
+  private safeTraceLayerVariantsCheckedByErrorId = new Map<string, number>()
   private traceLayerCorridorCursorByErrorId = new Map<string, number>()
   private tracePairDetourCursorByErrorId = new Map<string, number>()
   private errorCursor = 0
@@ -458,11 +459,16 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     const isLargeRouteBoard =
       this.inputHdRoutes.length > BROAD_FALLBACK_SMALL_ROUTE_LIMIT &&
       initialDrcIssueCount > 0
-    const needsLargeBoardBroadFallbackWindow = isLargeRouteBoard
+    const canUseBroadFallback =
+      this.enableBroadFallback &&
+      (!isLargeRouteBoard ||
+        this.effort >= 2 ||
+        this.enableLargeBoardBroadFallback)
 
     if (
+      canUseBroadFallback &&
       (initialDrcIssueCount >= LARGE_DRC_COUNT_THRESHOLD ||
-        needsLargeBoardBroadFallbackWindow) &&
+        isLargeRouteBoard) &&
       this.iterations < MIN_ITERATIONS_FOR_LARGE_BOARD_BROAD_FALLBACK
     ) {
       if (
@@ -575,6 +581,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     let candidateAttemptsThisStep = 0
     let safeTraceLayerCandidateAttemptsThisStep = 0
     let tracePairDetourAttemptedThisStep = false
+    let hasPendingSafeTraceLayerVariants = false
     let acceptedCandidate = false
     let attemptedPeriodicLargeBoardBroadFallback = false
     const activeRepairErrors = getLegacyFirstRepairErrors(centeredErrors)
@@ -823,6 +830,17 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           if (evaluatedDirection) safeTraceLayerCandidateAttemptsThisStep += 1
         }
         if (traceErrorKey) {
+          const variantsCheckedSinceImprovement = Math.min(
+            variantCount,
+            (this.safeTraceLayerVariantsCheckedByErrorId.get(traceErrorKey) ??
+              0) + variantsChecked,
+          )
+          this.safeTraceLayerVariantsCheckedByErrorId.set(
+            traceErrorKey,
+            variantsCheckedSinceImprovement,
+          )
+          hasPendingSafeTraceLayerVariants ||=
+            variantsCheckedSinceImprovement < variantCount
           this.safeTraceLayerCursorByErrorId.set(
             traceErrorKey,
             safeTraceLayerCursor,
@@ -1499,6 +1517,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     }
 
     if (acceptedCandidate) {
+      this.safeTraceLayerVariantsCheckedByErrorId.clear()
       this.largeBoardBroadFallbackMisses = 0
     } else if (attemptedPeriodicLargeBoardBroadFallback) {
       this.largeBoardBroadFallbackMisses += 1
@@ -1507,7 +1526,12 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     this.outputHdRoutes = bestRoutes
     this.outputSnapshot = bestSnapshot
     this.stalledIterations = acceptedCandidate ? 0 : this.stalledIterations + 1
-    if (!tracePairDetourAttemptedThisStep) {
+    // A per-step candidate budget can leave layer variants unexplored even
+    // when the DRC count is unchanged. Finish that search before stopping.
+    if (
+      !tracePairDetourAttemptedThisStep &&
+      !hasPendingSafeTraceLayerVariants
+    ) {
       this.updateDrcCountPlateauState(bestSnapshot)
     }
     this.updateStats(bestSnapshot)
