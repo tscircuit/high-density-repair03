@@ -78,3 +78,26 @@ The focused Bun regression test `tests/collect-via-nodes-root-filter.test.ts`
 checks the concrete implementation on shared sites, interleaved roots, original
 indices, stacked layers, and terminal metadata. Runtime improvements require
 separate measured evidence; these theorems establish no speedup claim.
+
+## Logical inner-work cost
+
+`scan_cost_decomposition` proves, for arbitrary nonnegative natural-number
+per-route costs, that the original inner-scan cost is exactly the retained cost
+plus the skipped cost. `selected_scan_cost_le` consequently proves that the
+retained inner work cannot increase. `selected_scan_cost_lt` proves a strict
+decrease when the total skipped cost is positive. The latter premise concerns
+input work counts, not correctness or elapsed time.
+
+A concrete interpretation of `cost i` is the number of route-point scan steps
+and/or via-record constructions performed inside the unchanged scan of route
+`i`. The cost is attached to the original index, so the same selected route has
+the same cost before and after filtering. The theorem counts repeated indices
+with multiplicity; it does not require deduplicated inputs.
+
+This model explicitly excludes the outer route traversal, which remains O(R),
+and the new root comparison per route. It also excludes memory allocation,
+garbage collection, JIT behavior, and downstream changes in runtime conditions.
+It does not establish a wall-time bound or guarantee a speedup, including on
+inputs where every route has the selected root. These new cost theorems were
+checked with the same Lean command above; their printed foundations are only
+`propext` and `Quot.sound`.

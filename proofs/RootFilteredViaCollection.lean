@@ -124,6 +124,50 @@ theorem same_root_site_equivalence (indices : List Nat)
     simp only [hroot]
     exact site_filter_eq xs (rootAt targetIndex) (sameSite current)
 
+/-- Logical cost of each original inner scan; excludes outer traversal overhead. -/
+def fullScanCost (indices : List Nat) (cost : Nat → Nat) : Nat :=
+  (indices.map cost).sum
+
+def selectedScanCost (indices : List Nat) (rootAt : Nat → Root)
+    (root : Root) (cost : Nat → Nat) : Nat :=
+  (indices.map (fun i => if rootAt i = root then cost i else 0)).sum
+
+def skippedScanCost (indices : List Nat) (rootAt : Nat → Root)
+    (root : Root) (cost : Nat → Nat) : Nat :=
+  (indices.map (fun i => if rootAt i = root then 0 else cost i)).sum
+
+/-- The removed inner work is exactly the sum of the skipped route costs. -/
+theorem scan_cost_decomposition (indices : List Nat) (rootAt : Nat → Root)
+    (root : Root) (cost : Nat → Nat) :
+    fullScanCost indices cost =
+      selectedScanCost indices rootAt root cost + skippedScanCost indices rootAt root cost := by
+  induction indices with
+  | nil => simp [fullScanCost, selectedScanCost, skippedScanCost]
+  | cons i indices ih =>
+    by_cases h : rootAt i = root
+    · simp [fullScanCost, selectedScanCost, skippedScanCost, h] at *
+      omega
+    · simp [fullScanCost, selectedScanCost, skippedScanCost, h] at *
+      omega
+
+/-- Root filtering cannot increase this nonnegative inner-scan work measure. -/
+theorem selected_scan_cost_le (indices : List Nat) (rootAt : Nat → Root)
+    (root : Root) (cost : Nat → Nat) :
+    selectedScanCost indices rootAt root cost ≤ fullScanCost indices cost := by
+  rw [scan_cost_decomposition indices rootAt root cost]
+  omega
+
+/-- A positive skipped cost gives a strict decrease in this work measure. -/
+theorem selected_scan_cost_lt (indices : List Nat) (rootAt : Nat → Root)
+    (root : Root) (cost : Nat → Nat)
+    (positive : 0 < skippedScanCost indices rootAt root cost) :
+    selectedScanCost indices rootAt root cost < fullScanCost indices cost := by
+  rw [scan_cost_decomposition indices rootAt root cost]
+  omega
+
+#print axioms scan_cost_decomposition
+#print axioms selected_scan_cost_le
+#print axioms selected_scan_cost_lt
 #print axioms collection_equivalence
 #print axioms same_root_site_equivalence
 end RootFilteredViaCollection
