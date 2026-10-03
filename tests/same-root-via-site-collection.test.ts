@@ -144,8 +144,8 @@ test("root-scoped via collection retains ordered live groups and shared-site bou
           x += 0.25
           y -= 0.25
         } else {
-          x += (Math.floor(random() * 5) - 2) * epsilon / 2
-          y += (Math.floor(random() * 5) - 2) * epsilon / 2
+          x += ((Math.floor(random() * 5) - 2) * epsilon) / 2
+          y += ((Math.floor(random() * 5) - 2) * epsilon) / 2
         }
         xs.push(x)
         ys.push(y)
