@@ -16,9 +16,17 @@ export type DrcEvaluatorResult =
   | { errors: DrcError[]; errorsWithCenters?: DrcError[] }
   | DrcError[]
 
-export type DrcEvaluatorFunction = (
+export type DrcEvaluatorFunction = ((
   input: DrcEvaluatorInput,
-) => DrcEvaluatorResult
+) => DrcEvaluatorResult) & {
+  /**
+   * Opt in when the evaluator uses only routes/hdRoutes and supplies its own
+   * prepared SRJ and trace context. Skips connectivity normalization of srj
+   * and supplies empty traces; evaluators must not read or mutate the supplied
+   * srj or traces in this mode.
+   */
+  inputMode?: "routes-only"
+}
 
 export type DrcEvaluator = DrcEvaluatorFunction & {
   /** Staged evaluator for the established DRC set before via-to-pad repair. */
