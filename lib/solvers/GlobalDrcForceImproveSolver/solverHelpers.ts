@@ -48,6 +48,10 @@ import { convertHdRouteToSimplifiedRoute } from "../../utils/convertHdRouteToSim
 import { mapZToLayerName } from "../../utils/mapZToLayerName"
 import { findPadClearanceViaPosition } from "./findPadClearanceViaPosition"
 import { findTraceClearanceViaPositions } from "./findTraceClearanceViaPositions"
+import {
+  createBroadNetMatchers,
+  type BroadNetMatchers,
+} from "./broadNetMatchers"
 
 const cloneRoute = (route: HighDensityRoute): MutableRoute => ({
   ...route,
@@ -2485,10 +2489,13 @@ const pushViaViaPair = (
   connMap?: ConnectivityMap,
   maxMove = BROAD_MAX_MOVE,
   allowSameNet = false,
+  netMatchers?: BroadNetMatchers,
 ) => {
   if (
     !allowSameNet &&
-    sharesNet(left.rootConnectionName, right.rootConnectionName, connMap)
+    (netMatchers
+      ? netMatchers.routesShareNet(left, right)
+      : sharesNet(left.rootConnectionName, right.rootConnectionName, connMap))
   ) {
     return false
   }
@@ -2602,8 +2609,13 @@ const pushViaSegmentPair = (
   maxMove = BROAD_MAX_MOVE,
   moveDivisor = 2,
   translateSharedViaSite = false,
+  netMatchers?: BroadNetMatchers,
 ) => {
-  if (sharesNet(via.rootConnectionName, segment.rootConnectionName, connMap))
+  if (
+    netMatchers
+      ? netMatchers.routesShareNet(via, segment)
+      : sharesNet(via.rootConnectionName, segment.rootConnectionName, connMap)
+  )
     return false
 
   const projection = pointToSegmentProjection(via, segment)
@@ -2661,10 +2673,13 @@ const pushSegmentSegmentPair = (
   right: Segment,
   srj: SimpleRouteJson,
   connMap?: ConnectivityMap,
+  netMatchers?: BroadNetMatchers,
 ) => {
   if (
     left.z !== right.z ||
-    sharesNet(left.rootConnectionName, right.rootConnectionName, connMap)
+    (netMatchers
+      ? netMatchers.routesShareNet(left, right)
+      : sharesNet(left.rootConnectionName, right.rootConnectionName, connMap))
   ) {
     return false
   }
@@ -2873,6 +2888,7 @@ const pushMovablesAwayFromObstacles = (
   segmentSpatialIndex: Map<string, number[]>,
   spatialCellSize: number,
   connMap?: ConnectivityMap,
+  netMatchers?: BroadNetMatchers,
 ) => {
   let changed = false
   const traceObstacleClearance = getTraceToPadEdgeClearance(srj)
@@ -2893,6 +2909,7 @@ const pushMovablesAwayFromObstacles = (
   for (const obstacle of srj.obstacles) {
     if (obstacle.isCopperPour) continue
     const obstacleBounds = getObstacleBounds(obstacle)
+    const sharesObstacleNet = netMatchers?.forObstacle(obstacle)
 
     const nearbyViaIndexes = getSpatialCandidateIndexes(
       viaSpatialIndex,
@@ -2902,7 +2919,12 @@ const pushMovablesAwayFromObstacles = (
     for (const viaIndex of nearbyViaIndexes) {
       const via = vias[viaIndex]
       if (!via) continue
-      if (obstacleSharesNet(via.rootConnectionName, obstacle, connMap)) continue
+      if (
+        sharesObstacleNet
+          ? sharesObstacleNet(via)
+          : obstacleSharesNet(via.rootConnectionName, obstacle, connMap)
+      )
+        continue
       const repulsion = getRectRepulsion(
         via,
         obstacle,
@@ -2929,7 +2951,9 @@ const pushMovablesAwayFromObstacles = (
       const segment = segments[segmentIndex]
       if (!segment) continue
       if (
-        obstacleSharesNet(segment.rootConnectionName, obstacle, connMap) ||
+        (sharesObstacleNet
+          ? sharesObstacleNet(segment)
+          : obstacleSharesNet(segment.rootConnectionName, obstacle, connMap)) ||
         !obstacleAppliesToSegment(obstacle, segment, srj.layerCount)
       ) {
         continue
@@ -2961,6 +2985,7 @@ const applyBroadRepulsionPass = (
   routes: MutableRoute[],
   connMap?: ConnectivityMap,
   allowSameNetViaPairs = false,
+  netMatchers?: BroadNetMatchers,
 ): boolean => {
   let changed = false
   const vias = collectViaNodes(routes, srj)
@@ -3006,6 +3031,7 @@ const applyBroadRepulsionPass = (
           connMap,
           BROAD_MAX_MOVE,
           allowSameNetViaPairs,
+          netMatchers,
         ) || changed
     }
   }
@@ -3022,7 +3048,17 @@ const applyBroadRepulsionPass = (
       const segment = segments[segmentIndex]
       if (!segment) continue
       changed =
-        pushViaSegmentPair(routes, via, segment, srj, connMap) || changed
+        pushViaSegmentPair(
+          routes,
+          via,
+          segment,
+          srj,
+          connMap,
+          BROAD_MAX_MOVE,
+          2,
+          false,
+          netMatchers,
+        ) || changed
     }
   }
 
@@ -3039,7 +3075,14 @@ const applyBroadRepulsionPass = (
       const right = segments[rightIndex]
       if (!right) continue
       changed =
-        pushSegmentSegmentPair(routes, left, right, srj, connMap) || changed
+        pushSegmentSegmentPair(
+          routes,
+          left,
+          right,
+          srj,
+          connMap,
+          netMatchers,
+        ) || changed
     }
   }
 
@@ -3053,6 +3096,7 @@ const applyBroadRepulsionPass = (
       segmentSpatialIndex,
       spatialCellSize,
       connMap,
+      netMatchers,
     ) || changed
   )
 }
@@ -3061,6 +3105,7 @@ const applyBroadViaSegmentCleanupPass = (
   srj: SimpleRouteJson,
   routes: MutableRoute[],
   connMap?: ConnectivityMap,
+  netMatchers?: BroadNetMatchers,
 ): boolean => {
   let changed = false
   const vias = collectViaNodes(routes, srj)
@@ -3098,6 +3143,8 @@ const applyBroadViaSegmentCleanupPass = (
           connMap,
           BROAD_MAX_MOVE,
           1.75,
+          false,
+          netMatchers,
         ) || changed
     }
   }
@@ -3115,6 +3162,11 @@ export const applyBroadRepulsionForces = (
   runFinalViaSegmentCleanup = true,
 ) => {
   const mutableRoutes = cloneRoutes(routes)
+  const netMatchers = createBroadNetMatchers(
+    mutableRoutes.length,
+    srj.obstacles.length,
+    connMap,
+  )
   const maxPasses = Math.max(
     2,
     Math.round(BROAD_FORCE_PASSES * Math.max(1, effort) * passMultiplier),
@@ -3127,13 +3179,14 @@ export const applyBroadRepulsionForces = (
       mutableRoutes,
       connMap,
       allowSameNetViaPairs,
+      netMatchers,
     )
     if (!passChanged) break
     changed = true
   }
 
   if (changed && runFinalViaSegmentCleanup) {
-    applyBroadViaSegmentCleanupPass(srj, mutableRoutes, connMap)
+    applyBroadViaSegmentCleanupPass(srj, mutableRoutes, connMap, netMatchers)
   }
 
   return changed ? materializeRoutes(mutableRoutes) : routes
