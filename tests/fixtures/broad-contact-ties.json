@@ -1,0 +1,590 @@
+[
+  {
+    "reverse": false,
+    "degenerate": false,
+    "srj": {
+      "layerCount": 2,
+      "minTraceWidth": 0.15,
+      "minViaDiameter": 0.3,
+      "bounds": {
+        "minX": -10,
+        "minY": -10,
+        "maxX": 10,
+        "maxY": 10
+      },
+      "obstacles": [],
+      "connections": []
+    },
+    "routes": [
+      {
+        "connectionName": "first",
+        "rootConnectionName": "first",
+        "traceThickness": 0.15,
+        "viaDiameter": 0.3,
+        "route": [
+          {
+            "x": -2,
+            "y": 0,
+            "z": 0
+          },
+          {
+            "x": -1,
+            "y": 0,
+            "z": 0
+          },
+          {
+            "x": 1,
+            "y": 0,
+            "z": 0
+          },
+          {
+            "x": 2,
+            "y": 0,
+            "z": 0
+          }
+        ],
+        "vias": []
+      },
+      {
+        "connectionName": "second",
+        "rootConnectionName": "second",
+        "traceThickness": 0.15,
+        "viaDiameter": 0.3,
+        "route": [
+          {
+            "x": -2,
+            "y": 0.08,
+            "z": 0
+          },
+          {
+            "x": -1,
+            "y": 0.08,
+            "z": 0
+          },
+          {
+            "x": 1,
+            "y": 0.08,
+            "z": 0
+          },
+          {
+            "x": 2,
+            "y": 0.08,
+            "z": 0
+          }
+        ],
+        "vias": []
+      }
+    ],
+    "expected": [
+      {
+        "connectionName": "first",
+        "rootConnectionName": "first",
+        "traceThickness": 0.15,
+        "viaDiameter": 0.3,
+        "route": [
+          {
+            "x": -2,
+            "y": 0,
+            "z": 0
+          },
+          {
+            "x": -1.0003008444361705,
+            "y": -0.0929988098973326,
+            "z": 0
+          },
+          {
+            "x": 1.0003008444361707,
+            "y": -0.09299880989733257,
+            "z": 0
+          },
+          {
+            "x": 2,
+            "y": 0,
+            "z": 0
+          }
+        ],
+        "vias": []
+      },
+      {
+        "connectionName": "second",
+        "rootConnectionName": "second",
+        "traceThickness": 0.15,
+        "viaDiameter": 0.3,
+        "route": [
+          {
+            "x": -2,
+            "y": 0.08,
+            "z": 0
+          },
+          {
+            "x": -0.9996632038107305,
+            "y": 0.1732078357076641,
+            "z": 0
+          },
+          {
+            "x": 0.9996632038107305,
+            "y": 0.17320783570766407,
+            "z": 0
+          },
+          {
+            "x": 2,
+            "y": 0.08,
+            "z": 0
+          }
+        ],
+        "vias": []
+      }
+    ]
+  },
+  {
+    "reverse": false,
+    "degenerate": true,
+    "srj": {
+      "layerCount": 2,
+      "minTraceWidth": 0.15,
+      "minViaDiameter": 0.3,
+      "bounds": {
+        "minX": -10,
+        "minY": -10,
+        "maxX": 10,
+        "maxY": 10
+      },
+      "obstacles": [],
+      "connections": []
+    },
+    "routes": [
+      {
+        "connectionName": "first",
+        "rootConnectionName": "first",
+        "traceThickness": 0.15,
+        "viaDiameter": 0.3,
+        "route": [
+          {
+            "x": -2,
+            "y": 0,
+            "z": 0
+          },
+          {
+            "x": -1,
+            "y": 0,
+            "z": 0
+          },
+          {
+            "x": -1,
+            "y": 0,
+            "z": 0
+          },
+          {
+            "x": 1,
+            "y": 0,
+            "z": 0
+          },
+          {
+            "x": 2,
+            "y": 0,
+            "z": 0
+          }
+        ],
+        "vias": []
+      },
+      {
+        "connectionName": "second",
+        "rootConnectionName": "second",
+        "traceThickness": 0.15,
+        "viaDiameter": 0.3,
+        "route": [
+          {
+            "x": -2,
+            "y": 0.08,
+            "z": 0
+          },
+          {
+            "x": -1,
+            "y": 0.08,
+            "z": 0
+          },
+          {
+            "x": -1,
+            "y": 0.08,
+            "z": 0
+          },
+          {
+            "x": 1,
+            "y": 0.08,
+            "z": 0
+          },
+          {
+            "x": 2,
+            "y": 0.08,
+            "z": 0
+          }
+        ],
+        "vias": []
+      }
+    ],
+    "expected": [
+      {
+        "connectionName": "first",
+        "rootConnectionName": "first",
+        "traceThickness": 0.15,
+        "viaDiameter": 0.3,
+        "route": [
+          {
+            "x": -2,
+            "y": 0,
+            "z": 0
+          },
+          {
+            "x": -1.0003008444361705,
+            "y": -0.0929988098973326,
+            "z": 0
+          },
+          {
+            "x": -1.0003008444361705,
+            "y": -0.0929988098973326,
+            "z": 0
+          },
+          {
+            "x": 1.0003008444361707,
+            "y": -0.09299880989733257,
+            "z": 0
+          },
+          {
+            "x": 2,
+            "y": 0,
+            "z": 0
+          }
+        ],
+        "vias": []
+      },
+      {
+        "connectionName": "second",
+        "rootConnectionName": "second",
+        "traceThickness": 0.15,
+        "viaDiameter": 0.3,
+        "route": [
+          {
+            "x": -2,
+            "y": 0.08,
+            "z": 0
+          },
+          {
+            "x": -0.9996632038107305,
+            "y": 0.1732078357076641,
+            "z": 0
+          },
+          {
+            "x": -0.9996632038107305,
+            "y": 0.1732078357076641,
+            "z": 0
+          },
+          {
+            "x": 0.9996632038107305,
+            "y": 0.17320783570766407,
+            "z": 0
+          },
+          {
+            "x": 2,
+            "y": 0.08,
+            "z": 0
+          }
+        ],
+        "vias": []
+      }
+    ]
+  },
+  {
+    "reverse": true,
+    "degenerate": false,
+    "srj": {
+      "layerCount": 2,
+      "minTraceWidth": 0.15,
+      "minViaDiameter": 0.3,
+      "bounds": {
+        "minX": -10,
+        "minY": -10,
+        "maxX": 10,
+        "maxY": 10
+      },
+      "obstacles": [],
+      "connections": []
+    },
+    "routes": [
+      {
+        "connectionName": "first",
+        "rootConnectionName": "first",
+        "traceThickness": 0.15,
+        "viaDiameter": 0.3,
+        "route": [
+          {
+            "x": -2,
+            "y": 0,
+            "z": 0
+          },
+          {
+            "x": -1,
+            "y": 0,
+            "z": 0
+          },
+          {
+            "x": 1,
+            "y": 0,
+            "z": 0
+          },
+          {
+            "x": 2,
+            "y": 0,
+            "z": 0
+          }
+        ],
+        "vias": []
+      },
+      {
+        "connectionName": "second",
+        "rootConnectionName": "second",
+        "traceThickness": 0.15,
+        "viaDiameter": 0.3,
+        "route": [
+          {
+            "x": 2,
+            "y": 0.08,
+            "z": 0
+          },
+          {
+            "x": 1,
+            "y": 0.08,
+            "z": 0
+          },
+          {
+            "x": -1,
+            "y": 0.08,
+            "z": 0
+          },
+          {
+            "x": -2,
+            "y": 0.08,
+            "z": 0
+          }
+        ],
+        "vias": []
+      }
+    ],
+    "expected": [
+      {
+        "connectionName": "first",
+        "rootConnectionName": "first",
+        "traceThickness": 0.15,
+        "viaDiameter": 0.3,
+        "route": [
+          {
+            "x": -2,
+            "y": 0,
+            "z": 0
+          },
+          {
+            "x": -0.9984718609695004,
+            "y": -0.093380081267431,
+            "z": 0
+          },
+          {
+            "x": 0.9996632038107305,
+            "y": -0.09320783570766408,
+            "z": 0
+          },
+          {
+            "x": 2,
+            "y": 0,
+            "z": 0
+          }
+        ],
+        "vias": []
+      },
+      {
+        "connectionName": "second",
+        "rootConnectionName": "second",
+        "traceThickness": 0.15,
+        "viaDiameter": 0.3,
+        "route": [
+          {
+            "x": 2,
+            "y": 0.08,
+            "z": 0
+          },
+          {
+            "x": 1.0003008444361707,
+            "y": 0.1729988098973326,
+            "z": 0
+          },
+          {
+            "x": -1.0015020326058142,
+            "y": 0.17305081527273022,
+            "z": 0
+          },
+          {
+            "x": -2,
+            "y": 0.08,
+            "z": 0
+          }
+        ],
+        "vias": []
+      }
+    ]
+  },
+  {
+    "reverse": true,
+    "degenerate": true,
+    "srj": {
+      "layerCount": 2,
+      "minTraceWidth": 0.15,
+      "minViaDiameter": 0.3,
+      "bounds": {
+        "minX": -10,
+        "minY": -10,
+        "maxX": 10,
+        "maxY": 10
+      },
+      "obstacles": [],
+      "connections": []
+    },
+    "routes": [
+      {
+        "connectionName": "first",
+        "rootConnectionName": "first",
+        "traceThickness": 0.15,
+        "viaDiameter": 0.3,
+        "route": [
+          {
+            "x": -2,
+            "y": 0,
+            "z": 0
+          },
+          {
+            "x": -1,
+            "y": 0,
+            "z": 0
+          },
+          {
+            "x": -1,
+            "y": 0,
+            "z": 0
+          },
+          {
+            "x": 1,
+            "y": 0,
+            "z": 0
+          },
+          {
+            "x": 2,
+            "y": 0,
+            "z": 0
+          }
+        ],
+        "vias": []
+      },
+      {
+        "connectionName": "second",
+        "rootConnectionName": "second",
+        "traceThickness": 0.15,
+        "viaDiameter": 0.3,
+        "route": [
+          {
+            "x": 2,
+            "y": 0.08,
+            "z": 0
+          },
+          {
+            "x": 1,
+            "y": 0.08,
+            "z": 0
+          },
+          {
+            "x": 1,
+            "y": 0.08,
+            "z": 0
+          },
+          {
+            "x": -1,
+            "y": 0.08,
+            "z": 0
+          },
+          {
+            "x": -2,
+            "y": 0.08,
+            "z": 0
+          }
+        ],
+        "vias": []
+      }
+    ],
+    "expected": [
+      {
+        "connectionName": "first",
+        "rootConnectionName": "first",
+        "traceThickness": 0.15,
+        "viaDiameter": 0.3,
+        "route": [
+          {
+            "x": -2,
+            "y": 0,
+            "z": 0
+          },
+          {
+            "x": -0.9984718609695004,
+            "y": -0.093380081267431,
+            "z": 0
+          },
+          {
+            "x": -0.9984718609695004,
+            "y": -0.093380081267431,
+            "z": 0
+          },
+          {
+            "x": 0.9996632038107305,
+            "y": -0.09320783570766408,
+            "z": 0
+          },
+          {
+            "x": 2,
+            "y": 0,
+            "z": 0
+          }
+        ],
+        "vias": []
+      },
+      {
+        "connectionName": "second",
+        "rootConnectionName": "second",
+        "traceThickness": 0.15,
+        "viaDiameter": 0.3,
+        "route": [
+          {
+            "x": 2,
+            "y": 0.08,
+            "z": 0
+          },
+          {
+            "x": 1.0003008444361707,
+            "y": 0.1729988098973326,
+            "z": 0
+          },
+          {
+            "x": 1.0003008444361707,
+            "y": 0.1729988098973326,
+            "z": 0
+          },
+          {
+            "x": -1.0015020326058142,
+            "y": 0.17305081527273022,
+            "z": 0
+          },
+          {
+            "x": -2,
+            "y": 0.08,
+            "z": 0
+          }
+        ],
+        "vias": []
+      }
+    ]
+  }
+]
