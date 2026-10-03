@@ -27,6 +27,15 @@
     "noUnusedParameters": false,
     "noPropertyAccessFromIndexSignature": false
   },
-  "include": ["lib", "fixtures", "tests", "*.ts", "*.tsx"],
+  "include": [
+    "lib",
+    "fixtures",
+    "tests",
+    "*.ts",
+    "*.tsx",
+    "scripts/benchmark-spatial-index.ts",
+    "scripts/benchmark-repair-isolation.ts",
+    "scripts/benchmark-repair-spatial-backends.ts"
+  ],
   "exclude": ["tests/fixtures/usb-terminal-clearance"]
 }
