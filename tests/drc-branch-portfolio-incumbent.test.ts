@@ -1,18 +1,35 @@
 import { expect, spyOn, test } from "bun:test"
 import { ConnectivityMap } from "circuit-json-to-connectivity-map"
+import { readFileSync } from "node:fs"
+import { gunzipSync } from "node:zlib"
 import {
   AutoroutingDrcEngine,
   GlobalDrcBranchPortfolioSolver,
   GlobalDrcForceImproveSolver,
   type HighDensityRoute,
+  type SimpleRouteJson,
 } from "../lib"
 import * as helpers from "../lib/solvers/GlobalDrcForceImproveSolver/solverHelpers"
-import { getUsbCircuitRender } from "./fixtures/getUsbCircuitRender"
 import recordedOutputs from "./fixtures/usb-portfolio-branch-outputs.json"
 
-test("keeps an accepted safe-layer candidate when a later broad branch only ties it", async () => {
-  const { phases } = await getUsbCircuitRender()
-  const repair = phases[2]!.repairs[0]!
+test("keeps an accepted safe-layer candidate when a later broad branch only ties it", () => {
+  // Genuine CC1 constructor input from the native USB circuit, not a branch
+  // output. Capture provenance is alongside the fixture. Native USB integration
+  // tests continue to render the complete circuit separately.
+  const repair = JSON.parse(
+    gunzipSync(
+      readFileSync(
+        new URL(
+          "./fixtures/usb-portfolio-branch-input.json.gz",
+          import.meta.url,
+        ),
+      ),
+    ).toString("utf8"),
+  ) as {
+    input: HighDensityRoute[]
+    srj: SimpleRouteJson
+    netMap: Record<string, string[]>
+  }
   const originalInput = structuredClone(repair.input)
   const connMap = new ConnectivityMap(repair.netMap)
   const engine = new AutoroutingDrcEngine(repair.srj, { connMap })
