@@ -100,6 +100,7 @@ export const isTraceObstacleDrcError = (error: Record<string, unknown>) => {
 const createSimplifiedTraces = (
   srj: SimpleRouteJson,
   routes: HighDensityRoute[],
+  includeTraces = true,
 ): {
   traces: SimplifiedPcbTraces
   traceRouteIndexById: Map<string, number>
@@ -129,27 +130,28 @@ const createSimplifiedTraces = (
       if (!hdRoute) continue
       const traceId = `${connection.name}_${i}`
 
-      traces.push({
-        type: "pcb_trace",
-        pcb_trace_id: traceId,
-        connection_name:
-          connection.netConnectionName ??
-          connection.rootConnectionName ??
-          connection.name,
-        route: convertHdRouteToSimplifiedRoute(
-          hdRoute.route.route,
-          srj.layerCount,
-          {
-            traceThickness:
-              hdRoute.route.traceThickness ??
-              connection.nominalTraceWidth ??
-              srj.nominalTraceWidth ??
-              srj.minTraceWidth,
-            viaDiameter: hdRoute.route.viaDiameter ?? srj.minViaDiameter,
-            connectionPoints: connection.pointsToConnect,
-          },
-        ),
-      })
+      if (includeTraces)
+        traces.push({
+          type: "pcb_trace",
+          pcb_trace_id: traceId,
+          connection_name:
+            connection.netConnectionName ??
+            connection.rootConnectionName ??
+            connection.name,
+          route: convertHdRouteToSimplifiedRoute(
+            hdRoute.route.route,
+            srj.layerCount,
+            {
+              traceThickness:
+                hdRoute.route.traceThickness ??
+                connection.nominalTraceWidth ??
+                srj.nominalTraceWidth ??
+                srj.minTraceWidth,
+              viaDiameter: hdRoute.route.viaDiameter ?? srj.minViaDiameter,
+              connectionPoints: connection.pointsToConnect,
+            },
+          ),
+        })
       traceRouteIndexById.set(traceId, hdRoute.routeIndex)
     }
   }
@@ -238,11 +240,16 @@ const createDrcSnapshot = (
   autoroutingDrcEngine?: AutoroutingDrcEngine,
   policy: DrcSnapshotPolicy = STANDARD_DRC_SNAPSHOT_POLICY,
 ): DrcSnapshot => {
-  const drcSrj =
-    autoroutingDrcEngine && !drcEvaluator
+  const routesOnlyEvaluator = drcEvaluator?.inputMode === "routes-only"
+  let drcSrj =
+    (autoroutingDrcEngine && !drcEvaluator) || routesOnlyEvaluator
       ? srj
       : getConnMapAwareSrj(srj, connMap)
-  const { traces, traceRouteIndexById } = createSimplifiedTraces(drcSrj, routes)
+  let { traces, traceRouteIndexById } = createSimplifiedTraces(
+    drcSrj,
+    routes,
+    !routesOnlyEvaluator,
+  )
   const drcResult = drcEvaluator?.({
     srj: drcSrj,
     routes,
@@ -269,6 +276,15 @@ const createDrcSnapshot = (
       ),
       traceRouteIndexById,
     }
+  }
+
+  // Preserve the established fallback input even if an opted-in external
+  // evaluator returns no result at runtime.
+  if (routesOnlyEvaluator) {
+    drcSrj = getConnMapAwareSrj(srj, connMap)
+    const fallbackInput = createSimplifiedTraces(drcSrj, routes)
+    traces = fallbackInput.traces
+    traceRouteIndexById = fallbackInput.traceRouteIndexById
   }
 
   const drc =

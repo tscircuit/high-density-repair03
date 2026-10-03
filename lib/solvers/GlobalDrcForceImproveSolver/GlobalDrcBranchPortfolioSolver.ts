@@ -138,6 +138,10 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         ),
       }
     }
+    Object.defineProperty(this.legacyDrcEvaluator, "inputMode", {
+      get: () =>
+        (params.drcEvaluator?.evaluateLegacy ?? params.drcEvaluator)?.inputMode,
+    })
     this.params = {
       ...params,
       autoroutingDrcEngine: this.autoroutingDrcEngine,
