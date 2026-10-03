@@ -1988,23 +1988,50 @@ const translateVia = (
   return true
 }
 
-const getSameRootViaSite = (routes: MutableRoute[], via: ViaNode) => {
-  const currentVias = collectViaNodes(routes)
-  const currentVia = currentVias.find(
-    (candidate) =>
-      candidate.routeIndex === via.routeIndex &&
-      candidate.pointIndexes.some((pointIndex) =>
-        via.pointIndexes.includes(pointIndex),
-      ),
+export const getSameRootViaSite = (
+  routes: MutableRoute[],
+  via: ViaNode,
+): ViaNode[] => {
+  if (!Number.isInteger(via.routeIndex)) return []
+  const currentRoute = routes[via.routeIndex]
+  if (!currentRoute || via.routeIndex < 0 || via.routeIndex >= routes.length)
+    return []
+
+  const currentRouteVias = collectViaNodes([currentRoute])
+  const currentVia = currentRouteVias.find((candidate) =>
+    candidate.pointIndexes.some((pointIndex) =>
+      via.pointIndexes.includes(pointIndex),
+    ),
   )
   if (!currentVia) return []
 
-  return currentVias.filter(
-    (candidate) =>
-      candidate.rootConnectionName === currentVia.rootConnectionName &&
-      Math.hypot(candidate.x - currentVia.x, candidate.y - currentVia.y) <=
-        COORDINATE_EPSILON,
-  )
+  const siteVias: ViaNode[] = []
+  for (let routeIndex = 0; routeIndex < routes.length; routeIndex += 1) {
+    const route = routes[routeIndex]
+    if (
+      !route ||
+      getRootConnectionName(route) !== currentVia.rootConnectionName
+    )
+      continue
+
+    // Grouping remains live and route-local. Reuse only the target route's
+    // collection; unrelated roots cannot contribute to the filtered site.
+    const routeVias =
+      routeIndex === via.routeIndex
+        ? currentRouteVias
+        : collectViaNodes([route])
+    for (const candidate of routeVias) {
+      candidate.routeIndex = routeIndex
+      if (
+        candidate.rootConnectionName === currentVia.rootConnectionName &&
+        Math.hypot(candidate.x - currentVia.x, candidate.y - currentVia.y) <=
+          COORDINATE_EPSILON
+      ) {
+        siteVias.push(candidate)
+      }
+    }
+  }
+  return siteVias
 }
 
 const translateSameRootViaSite = (
