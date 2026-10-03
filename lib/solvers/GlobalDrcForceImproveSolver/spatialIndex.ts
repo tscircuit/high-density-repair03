@@ -142,7 +142,11 @@ export const getSpatialCandidateIndexes = (
   // Bit positions retain the original item order across overlapping cells,
   // without allocating a Set or sorting a fresh array for every query.
   const candidateIndexes: number[] = []
-  for (let wordIndex = minWordIndex; wordIndex <= maxWordIndex; wordIndex += 1) {
+  for (
+    let wordIndex = minWordIndex;
+    wordIndex <= maxWordIndex;
+    wordIndex += 1
+  ) {
     if (scratch.wordGenerations[wordIndex] !== generation) continue
     let bits = scratch.bits[wordIndex]!
     while (bits !== 0) {

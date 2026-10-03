@@ -2,7 +2,9 @@ import { expect, test } from "bun:test"
 import { applyBroadRepulsionForces } from "../lib/solvers/GlobalDrcForceImproveSolver/solverHelpers"
 import type { SimpleRouteJson } from "../lib/types"
 import type { HighDensityRoute } from "../lib/types/high-density-types"
-import fixtureJson from "./fixtures/broad-contact-ties.json" with { type: "json" }
+import fixtureJson from "./fixtures/broad-contact-ties.json" with {
+  type: "json",
+}
 
 type ContactFixture = {
   srj: SimpleRouteJson

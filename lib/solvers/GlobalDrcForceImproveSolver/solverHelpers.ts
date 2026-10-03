@@ -373,7 +373,9 @@ export const collectViaNodes = (
       // The initial pair and the two disjoint cursor ranges never repeat an index.
       const uniquePointIndexes = pointIndexes
       if (
-        uniquePointIndexes.some((pointIndex) => routeSeenIndexes.has(pointIndex))
+        uniquePointIndexes.some((pointIndex) =>
+          routeSeenIndexes.has(pointIndex),
+        )
       ) {
         continue
       }
