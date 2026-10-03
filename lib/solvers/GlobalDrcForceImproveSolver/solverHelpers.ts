@@ -347,13 +347,14 @@ export const collectViaNodes = (
   for (let routeIndex = 0; routeIndex < routes.length; routeIndex += 1) {
     const route = routes[routeIndex]
     if (!route) continue
-    const seenIndexes = new Set<number>()
+    let seenIndexes: Set<number> | undefined
 
     for (let index = 0; index < route.route.length - 1; index += 1) {
       const current = route.route[index]
       const next = route.route[index + 1]
       if (!current || !next) continue
       if (current.z === next.z || !areSameXY(current, next)) continue
+      const routeSeenIndexes = (seenIndexes ??= new Set<number>())
 
       const pointIndexes = [index, index + 1]
       for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
@@ -367,14 +368,17 @@ export const collectViaNodes = (
         pointIndexes.push(cursor)
       }
 
-      const uniquePointIndexes = [...new Set(pointIndexes)]
+      // The initial pair and the two disjoint cursor ranges never repeat an index.
+      const uniquePointIndexes = pointIndexes
       if (
-        uniquePointIndexes.some((pointIndex) => seenIndexes.has(pointIndex))
+        uniquePointIndexes.some((pointIndex) =>
+          routeSeenIndexes.has(pointIndex),
+        )
       ) {
         continue
       }
       for (const pointIndex of uniquePointIndexes) {
-        seenIndexes.add(pointIndex)
+        routeSeenIndexes.add(pointIndex)
       }
 
       const endpointPointIndexes = uniquePointIndexes.filter(
@@ -575,9 +579,9 @@ const getNearestObstacleNearPoint = (
     | undefined
 
   for (const obstacle of srj.obstacles) {
-    if (predicate && !predicate(obstacle)) continue
     const distance = getPointToObstacleDistance(point, obstacle)
     if (distance > maxDistance) continue
+    if (predicate && !predicate(obstacle)) continue
     if (!nearestObstacle || distance < nearestObstacle.distance) {
       nearestObstacle = {
         obstacle,
@@ -2350,13 +2354,23 @@ const moveViaAwayFromPoint = (
   )
 }
 
-const getSegmentDistanceCandidates = (left: Segment, right: Segment) => {
+type SegmentContact = {
+  leftT: number
+  rightT: number
+  leftPoint: Point
+  rightPoint: Point
+}
+
+const getClosestSegmentContact = (
+  left: Segment,
+  right: Segment,
+): SegmentContact => {
   const leftStartProjection = pointToSegmentProjection(left.start, right)
   const leftEndProjection = pointToSegmentProjection(left.end, right)
   const rightStartProjection = pointToSegmentProjection(right.start, left)
   const rightEndProjection = pointToSegmentProjection(right.end, left)
 
-  return [
+  const candidates: SegmentContact[] = [
     {
       leftT: 0,
       rightT: leftStartProjection.t,
@@ -2381,17 +2395,24 @@ const getSegmentDistanceCandidates = (left: Segment, right: Segment) => {
       leftPoint: rightEndProjection,
       rightPoint: right.end,
     },
-  ].sort((a, b) => {
-    const aDistance = Math.hypot(
-      a.leftPoint.x - a.rightPoint.x,
-      a.leftPoint.y - a.rightPoint.y,
+  ]
+  let closest = candidates[0]!
+  let closestDistance = Math.hypot(
+    closest.leftPoint.x - closest.rightPoint.x,
+    closest.leftPoint.y - closest.rightPoint.y,
+  )
+  for (let index = 1; index < candidates.length; index += 1) {
+    const candidate = candidates[index]!
+    const distance = Math.hypot(
+      candidate.leftPoint.x - candidate.rightPoint.x,
+      candidate.leftPoint.y - candidate.rightPoint.y,
     )
-    const bDistance = Math.hypot(
-      b.leftPoint.x - b.rightPoint.x,
-      b.leftPoint.y - b.rightPoint.y,
-    )
-    return aDistance - bDistance
-  })
+    if (distance < closestDistance) {
+      closest = candidate
+      closestDistance = distance
+    }
+  }
+  return closest
 }
 
 const moveSegmentByDistribution = (
@@ -2619,8 +2640,7 @@ const pushSegmentSegmentPair = (
     return false
   }
 
-  const [candidate] = getSegmentDistanceCandidates(left, right)
-  if (!candidate) return false
+  const candidate = getClosestSegmentContact(left, right)
 
   const separationX = candidate.leftPoint.x - candidate.rightPoint.x
   const separationY = candidate.leftPoint.y - candidate.rightPoint.y
@@ -3936,8 +3956,7 @@ export const applyTracePairSegmentDisplacementForError = (
     return undefined
   }
 
-  const [contact] = getSegmentDistanceCandidates(leftSegment, rightSegment)
-  if (!contact) return undefined
+  const contact = getClosestSegmentContact(leftSegment, rightSegment)
   const separationX = contact.leftPoint.x - contact.rightPoint.x
   const separationY = contact.leftPoint.y - contact.rightPoint.y
   const distance = Math.hypot(separationX, separationY)

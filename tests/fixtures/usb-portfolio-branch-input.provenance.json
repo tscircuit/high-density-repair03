@@ -1,0 +1,21 @@
+{
+  "source": "tests/fixtures/usb-terminal-clearance/renderCircuit.tsx",
+  "jsonPath": "phases[2].repairs[0]",
+  "fields": ["input", "srj", "netMap"],
+  "inputSource": "repair.params.hdRoutes (constructor input, not repair output)",
+  "runtime": "Bun 1.3.1 (89fa0f34)",
+  "captureCommand": "timeout 60s /tmp/repair-ci-runtime/node_modules/.bin/bun tests/fixtures/usb-terminal-clearance/renderCircuit.tsx",
+  "nativeRenderOutputSha256": "bebeb353710ad8dc80f00653b3f9ed48a5753eeef33b19d636ebb02f8249c836",
+  "captureLocalHead": "8e08b9e149cb17ea6d91762c051ea61e3831619a",
+  "captureTree": "1681f52071b8911d094bc7da009c3e452406076d",
+  "publishedEquivalentHead": "63ae241cd96a73b79fea800352f039262451c5ae",
+  "sourceSha256": "25f1e71a0e290eadd3e377ac52f6384325b8584a9ccf17ad1cfecb0b9abdd88e",
+  "uncompressedPayloadSha256": "02cba6c65c8df1a533dc39a89db2e53ee69d1251dc198c4a6b51e8440e8c0909",
+  "fixtureDependencies": {
+    "tscircuit": "0.0.2468",
+    "@tscircuit/core": "0.0.1871",
+    "@tscircuit/props": "0.0.646",
+    "@tscircuit/capacity-autorouter": "0.0.890",
+    "circuit-to-svg": "0.0.413"
+  }
+}
