@@ -58,10 +58,7 @@ const makeInput = (): MotionInput => ({
   radius: 0.05,
 })
 
-const invoke = (
-  motion: Motion,
-  input: MotionInput,
-): Point | undefined =>
+const invoke = (motion: Motion, input: MotionInput): Point | undefined =>
   motion(
     input.srj,
     input.route,
@@ -199,7 +196,9 @@ test("strict rectangular interior preserves frozen board translation and live in
   for (const rotation of [0, 1, 2, 3]) {
     const input = makeInput()
     const vertices = input.srj.outline!.slice(0, 4)
-    input.srj.outline = vertices.slice(rotation).concat(vertices.slice(0, rotation))
+    input.srj.outline = vertices
+      .slice(rotation)
+      .concat(vertices.slice(0, rotation))
     compare(input)
     input.srj.outline.push(input.srj.outline[0]!)
     compare(input)

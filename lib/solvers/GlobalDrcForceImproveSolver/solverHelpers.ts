@@ -1304,8 +1304,7 @@ export const getSafeTranslationForPointIndexes = (
       featureRadius,
     )
   ) {
-    return Math.abs(dx) <= POSITION_EPSILON &&
-      Math.abs(dy) <= POSITION_EPSILON
+    return Math.abs(dx) <= POSITION_EPSILON && Math.abs(dy) <= POSITION_EPSILON
       ? undefined
       : { x: dx, y: dy }
   }

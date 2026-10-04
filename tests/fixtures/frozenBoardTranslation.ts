@@ -42,7 +42,6 @@ const projectPointOntoLineSegment = (
   }
 }
 
-
 const pointIsInsideBounds = (point: Point, bounds: SimpleRouteJson["bounds"]) =>
   point.x >= bounds.minX - COORDINATE_EPSILON &&
   point.x <= bounds.maxX + COORDINATE_EPSILON &&
@@ -536,4 +535,3 @@ export const getFrozenSafeTranslationForPointIndexes = (
 
   return translation
 }
-
