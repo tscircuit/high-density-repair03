@@ -76,23 +76,20 @@ export const areLiveSegmentPairForcesSeparated = (
   ) {
     return false
   }
-  const requiredDistance = leftRadius + rightRadius + clearance + CLEARANCE_SLACK
+  const requiredDistance =
+    leftRadius + rightRadius + clearance + CLEARANCE_SLACK
   if (!Number.isFinite(requiredDistance)) return false
   const threshold = requiredDistance + COORDINATE_EPSILON
 
   // Segment endpoints stay live as earlier force pairs move the shared points.
   return (
-    Math.min(left.start.x, left.end.x) -
-      Math.max(right.start.x, right.end.x) >
+    Math.min(left.start.x, left.end.x) - Math.max(right.start.x, right.end.x) >
       threshold ||
-    Math.min(right.start.x, right.end.x) -
-      Math.max(left.start.x, left.end.x) >
+    Math.min(right.start.x, right.end.x) - Math.max(left.start.x, left.end.x) >
       threshold ||
-    Math.min(left.start.y, left.end.y) -
-      Math.max(right.start.y, right.end.y) >
+    Math.min(left.start.y, left.end.y) - Math.max(right.start.y, right.end.y) >
       threshold ||
-    Math.min(right.start.y, right.end.y) -
-      Math.max(left.start.y, left.end.y) >
+    Math.min(right.start.y, right.end.y) - Math.max(left.start.y, left.end.y) >
       threshold
   )
 }
@@ -128,17 +125,12 @@ export const areLiveSegmentRectForcesSeparated = (
   const halfHeight = height / 2
   const point = center as Point
   return (
-    Math.min(segment.start.x, segment.end.x) -
-      (point.x + halfWidth) >
+    Math.min(segment.start.x, segment.end.x) - (point.x + halfWidth) >
       threshold ||
-    point.x - halfWidth -
-      Math.max(segment.start.x, segment.end.x) >
+    point.x - halfWidth - Math.max(segment.start.x, segment.end.x) >
       threshold ||
-    Math.min(segment.start.y, segment.end.y) -
-      (point.y + halfHeight) >
+    Math.min(segment.start.y, segment.end.y) - (point.y + halfHeight) >
       threshold ||
-    point.y - halfHeight -
-      Math.max(segment.start.y, segment.end.y) >
-      threshold
+    point.y - halfHeight - Math.max(segment.start.y, segment.end.y) > threshold
   )
 }
