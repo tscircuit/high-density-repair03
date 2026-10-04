@@ -52,6 +52,10 @@ import {
   createBroadNetMatchers,
   type BroadNetMatchers,
 } from "./broadNetMatchers"
+import {
+  areLiveSegmentPairForcesSeparated,
+  areLiveSegmentRectForcesSeparated,
+} from "./liveForceSeparation"
 
 const cloneRoute = (route: HighDensityRoute): MutableRoute => ({
   ...route,
@@ -2708,6 +2712,8 @@ const pushSegmentSegmentPair = (
     return false
   }
 
+  if (areLiveSegmentPairForcesSeparated(left, right)) return false
+
   const candidate = getClosestSegmentContact(left, right)
 
   const separationX = candidate.leftPoint.x - candidate.rightPoint.x
@@ -2819,6 +2825,9 @@ const getSegmentRectRepulsion = (
   obstacle: SimpleRouteJson["obstacles"][number],
   requiredDistance: number,
 ) => {
+  if (areLiveSegmentRectForcesSeparated(segment, obstacle, requiredDistance))
+    return undefined
+
   const halfWidth = obstacle.width / 2
   const halfHeight = obstacle.height / 2
   const obstacleCorners = [
