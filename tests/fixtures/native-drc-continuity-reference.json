@@ -1,0 +1,1235 @@
+{
+  "format": "native-drc-continuity-reference-v3",
+  "oracle": {
+    "package": "@tscircuit/checks",
+    "version": "0.0.233",
+    "sha256": "7b2a2f58ceaad44bf7151016934d5760a3fdc092f8e6989f9824ecbfcca314cd"
+  },
+  "connectivity": {
+    "package": "circuit-json-to-connectivity-map",
+    "version": "0.0.19",
+    "sha256": "ef18082e9a93c3bc3f6eda1f28a64f1a239d1090be7cfe9a67209d130634b585"
+  },
+  "cases": [
+    {
+      "name": "complete direct connection",
+      "logicalNets": [
+        ["net", "connectivity_net5"],
+        ["port_a", "connectivity_net5"],
+        ["port_b", "connectivity_net5"],
+        ["pad_a", "connectivity_net5"],
+        ["pad_b", "connectivity_net5"],
+        ["t", "connectivity_net5"]
+      ],
+      "expectedErrors": []
+    },
+    {
+      "name": "missing expected port",
+      "logicalNets": [
+        ["net", "connectivity_net5"],
+        ["port_a", "connectivity_net5"],
+        ["port_b", "connectivity_net5"],
+        ["pad_a", "connectivity_net5"],
+        ["pad_b", "connectivity_net5"],
+        ["t", "connectivity_net5"]
+      ],
+      "expectedErrors": [
+        {
+          "type": "pcb_trace_error",
+          "message": "Trace [trace[t]] is missing a connection to smtpad[#port_b]",
+          "source_trace_id": "net",
+          "error_type": "pcb_trace_error",
+          "pcb_trace_id": "t",
+          "pcb_trace_error_id": "missing_connection_t_port_b",
+          "center": {
+            "x": 0.5,
+            "y": 0
+          },
+          "pcb_component_ids": [],
+          "pcb_port_ids": ["port_b"]
+        }
+      ]
+    },
+    {
+      "name": "connected multi-trace source",
+      "logicalNets": [
+        ["net", "connectivity_net6"],
+        ["port_a", "connectivity_net6"],
+        ["port_b", "connectivity_net6"],
+        ["pad_a", "connectivity_net6"],
+        ["pad_b", "connectivity_net6"],
+        ["t_a", "connectivity_net6"],
+        ["t_b", "connectivity_net6"]
+      ],
+      "expectedErrors": []
+    },
+    {
+      "name": "broken multi-trace source",
+      "logicalNets": [
+        ["net", "connectivity_net6"],
+        ["port_a", "connectivity_net6"],
+        ["port_b", "connectivity_net6"],
+        ["pad_a", "connectivity_net6"],
+        ["pad_b", "connectivity_net6"],
+        ["t_a", "connectivity_net6"],
+        ["t_b", "connectivity_net6"]
+      ],
+      "expectedErrors": [
+        {
+          "type": "pcb_trace_error",
+          "message": "Trace [trace[t_a]] is missing a connection to smtpad[#port_b]",
+          "source_trace_id": "net",
+          "error_type": "pcb_trace_error",
+          "pcb_trace_id": "t_a",
+          "pcb_trace_error_id": "missing_connection_t_a_port_b",
+          "center": {
+            "x": -0.2,
+            "y": 0
+          },
+          "pcb_component_ids": [],
+          "pcb_port_ids": ["port_b"]
+        }
+      ]
+    },
+    {
+      "name": "two disconnected orphan endpoints",
+      "logicalNets": [["net", "connectivity_net1"], ["t", "connectivity_net1"]],
+      "expectedErrors": [
+        {
+          "type": "pcb_trace_error",
+          "message": "Trace [trace[t]] has disconnected endpoint at (-1.00, 0.00)",
+          "source_trace_id": "net",
+          "error_type": "pcb_trace_error",
+          "pcb_trace_id": "t",
+          "pcb_trace_error_id": "disconnected_endpoint_t_start",
+          "center": {
+            "x": -1,
+            "y": 0
+          },
+          "pcb_component_ids": [],
+          "pcb_port_ids": []
+        },
+        {
+          "type": "pcb_trace_error",
+          "message": "Trace [trace[t]] has disconnected endpoint at (1.00, 0.00)",
+          "source_trace_id": "net",
+          "error_type": "pcb_trace_error",
+          "pcb_trace_id": "t",
+          "pcb_trace_error_id": "disconnected_endpoint_t_end",
+          "center": {
+            "x": 1,
+            "y": 0
+          },
+          "pcb_component_ids": [],
+          "pcb_port_ids": []
+        }
+      ]
+    },
+    {
+      "name": "coincident orphan endpoint emits once",
+      "logicalNets": [["net", "connectivity_net1"], ["t", "connectivity_net1"]],
+      "expectedErrors": [
+        {
+          "type": "pcb_trace_error",
+          "message": "Trace [trace[t]] has disconnected endpoint at (0.00, 0.00)",
+          "source_trace_id": "net",
+          "error_type": "pcb_trace_error",
+          "pcb_trace_id": "t",
+          "pcb_trace_error_id": "disconnected_endpoint_t_start",
+          "center": {
+            "x": 0,
+            "y": 0
+          },
+          "pcb_component_ids": [],
+          "pcb_port_ids": []
+        }
+      ]
+    },
+    {
+      "name": "same-net copper endpoint contact",
+      "logicalNets": [
+        ["net", "connectivity_net2"],
+        ["t_a", "connectivity_net2"],
+        ["t_b", "connectivity_net2"]
+      ],
+      "expectedErrors": []
+    },
+    {
+      "name": "different-net contact does not cure orphan endpoints",
+      "logicalNets": [
+        ["a", "connectivity_net2"],
+        ["b", "connectivity_net3"],
+        ["t_a", "connectivity_net2"],
+        ["t_b", "connectivity_net3"]
+      ],
+      "expectedErrors": [
+        {
+          "type": "pcb_trace_error",
+          "message": "Trace [trace[t_a]] has disconnected endpoint at (-1.00, 0.00)",
+          "source_trace_id": "a",
+          "error_type": "pcb_trace_error",
+          "pcb_trace_id": "t_a",
+          "pcb_trace_error_id": "disconnected_endpoint_t_a_start",
+          "center": {
+            "x": -1,
+            "y": 0
+          },
+          "pcb_component_ids": [],
+          "pcb_port_ids": []
+        },
+        {
+          "type": "pcb_trace_error",
+          "message": "Trace [trace[t_a]] has disconnected endpoint at (1.00, 0.00)",
+          "source_trace_id": "a",
+          "error_type": "pcb_trace_error",
+          "pcb_trace_id": "t_a",
+          "pcb_trace_error_id": "disconnected_endpoint_t_a_end",
+          "center": {
+            "x": 1,
+            "y": 0
+          },
+          "pcb_component_ids": [],
+          "pcb_port_ids": []
+        },
+        {
+          "type": "pcb_trace_error",
+          "message": "Trace [trace[t_b]] has disconnected endpoint at (1.00, 0.00)",
+          "source_trace_id": "b",
+          "error_type": "pcb_trace_error",
+          "pcb_trace_id": "t_b",
+          "pcb_trace_error_id": "disconnected_endpoint_t_b_start",
+          "center": {
+            "x": 1,
+            "y": 0
+          },
+          "pcb_component_ids": [],
+          "pcb_port_ids": []
+        },
+        {
+          "type": "pcb_trace_error",
+          "message": "Trace [trace[t_b]] has disconnected endpoint at (-1.00, 0.00)",
+          "source_trace_id": "b",
+          "error_type": "pcb_trace_error",
+          "pcb_trace_id": "t_b",
+          "pcb_trace_error_id": "disconnected_endpoint_t_b_end",
+          "center": {
+            "x": -1,
+            "y": 0
+          },
+          "pcb_component_ids": [],
+          "pcb_port_ids": []
+        }
+      ]
+    },
+    {
+      "name": "empty route remains ignored",
+      "logicalNets": [
+        ["net", "connectivity_net5"],
+        ["port_a", "connectivity_net5"],
+        ["port_b", "connectivity_net5"],
+        ["pad_a", "connectivity_net5"],
+        ["pad_b", "connectivity_net5"],
+        ["t", "connectivity_net5"]
+      ],
+      "expectedErrors": []
+    },
+    {
+      "name": "padless declared port remains ignored",
+      "logicalNets": [
+        ["net", "connectivity_net3"],
+        ["port_a", "connectivity_net3"],
+        ["port_b", "connectivity_net3"],
+        ["t", "connectivity_net3"]
+      ],
+      "expectedErrors": []
+    },
+    {
+      "name": "wrong terminal layer",
+      "logicalNets": [
+        ["net", "connectivity_net5"],
+        ["port_a", "connectivity_net5"],
+        ["port_b", "connectivity_net5"],
+        ["pad_a", "connectivity_net5"],
+        ["pad_b", "connectivity_net5"],
+        ["t", "connectivity_net5"]
+      ],
+      "expectedErrors": [
+        {
+          "type": "pcb_trace_error",
+          "error_type": "pcb_trace_error",
+          "pcb_trace_error_id": "missing_layer_connection_t_0_port_a",
+          "pcb_trace_id": "t",
+          "source_trace_id": "net",
+          "pcb_port_ids": ["port_a"],
+          "pcb_component_ids": [],
+          "center": {
+            "x": -1,
+            "y": 0
+          },
+          "message": "Trace [trace[port[port_a], port[port_b]]] on bottom is missing a via connection to port [pcb_port[#port_a]] on top."
+        },
+        {
+          "type": "pcb_trace_error",
+          "error_type": "pcb_trace_error",
+          "pcb_trace_error_id": "missing_layer_connection_t_1_port_b",
+          "pcb_trace_id": "t",
+          "source_trace_id": "net",
+          "pcb_port_ids": ["port_b"],
+          "pcb_component_ids": [],
+          "center": {
+            "x": 1,
+            "y": 0
+          },
+          "message": "Trace [trace[port[port_a], port[port_b]]] on bottom is missing a via connection to port [pcb_port[#port_b]] on top."
+        },
+        {
+          "type": "pcb_trace_error",
+          "message": "Trace [trace[port[port_a], port[port_b]]] is missing a connection to smtpad[#port_a]",
+          "source_trace_id": "net",
+          "error_type": "pcb_trace_error",
+          "pcb_trace_id": "t",
+          "pcb_trace_error_id": "missing_connection_t_port_a",
+          "center": {
+            "x": -1,
+            "y": 0
+          },
+          "pcb_component_ids": [],
+          "pcb_port_ids": ["port_a"]
+        },
+        {
+          "type": "pcb_trace_error",
+          "message": "Trace [trace[port[port_a], port[port_b]]] is missing a connection to smtpad[#port_b]",
+          "source_trace_id": "net",
+          "error_type": "pcb_trace_error",
+          "pcb_trace_id": "t",
+          "pcb_trace_error_id": "missing_connection_t_port_b",
+          "center": {
+            "x": 1,
+            "y": 0
+          },
+          "pcb_component_ids": [],
+          "pcb_port_ids": ["port_b"]
+        }
+      ]
+    },
+    {
+      "name": "fullspan physical via bridges terminal layer",
+      "logicalNets": [
+        ["net", "connectivity_net5"],
+        ["port_a", "connectivity_net5"],
+        ["port_b", "connectivity_net5"],
+        ["pad_a", "connectivity_net5"],
+        ["pad_b", "connectivity_net5"],
+        ["t", "connectivity_net5"],
+        ["v_a", null],
+        ["v_b", null]
+      ],
+      "expectedErrors": [
+        {
+          "type": "pcb_trace_error",
+          "message": "Trace [trace[port[port_a], port[port_b]]] is missing a connection to smtpad[#port_a]",
+          "source_trace_id": "net",
+          "error_type": "pcb_trace_error",
+          "pcb_trace_id": "t",
+          "pcb_trace_error_id": "missing_connection_t_port_a",
+          "center": {
+            "x": -1,
+            "y": 0
+          },
+          "pcb_component_ids": [],
+          "pcb_port_ids": ["port_a"]
+        },
+        {
+          "type": "pcb_trace_error",
+          "message": "Trace [trace[port[port_a], port[port_b]]] is missing a connection to smtpad[#port_b]",
+          "source_trace_id": "net",
+          "error_type": "pcb_trace_error",
+          "pcb_trace_id": "t",
+          "pcb_trace_error_id": "missing_connection_t_port_b",
+          "center": {
+            "x": 1,
+            "y": 0
+          },
+          "pcb_component_ids": [],
+          "pcb_port_ids": ["port_b"]
+        }
+      ]
+    },
+    {
+      "name": "different-layer branches joined by physical via",
+      "logicalNets": [
+        ["net", "connectivity_net6"],
+        ["port_a", "connectivity_net6"],
+        ["port_b", "connectivity_net6"],
+        ["pad_a", "connectivity_net6"],
+        ["pad_b", "connectivity_net6"],
+        ["t_a", "connectivity_net6"],
+        ["t_b", "connectivity_net6"],
+        ["v", null]
+      ],
+      "expectedErrors": []
+    },
+    {
+      "name": "same logical net without physical contact remains disconnected",
+      "logicalNets": [
+        ["net", "connectivity_net6"],
+        ["port_a", "connectivity_net6"],
+        ["port_b", "connectivity_net6"],
+        ["pad_a", "connectivity_net6"],
+        ["pad_b", "connectivity_net6"],
+        ["t_a", "connectivity_net6"],
+        ["t_b", "connectivity_net6"]
+      ],
+      "expectedErrors": [
+        {
+          "type": "pcb_trace_error",
+          "message": "Trace [trace[t_a]] is missing a connection to smtpad[#port_b]",
+          "source_trace_id": "net",
+          "error_type": "pcb_trace_error",
+          "pcb_trace_id": "t_a",
+          "pcb_trace_error_id": "missing_connection_t_a_port_b",
+          "center": {
+            "x": -0.4,
+            "y": 0
+          },
+          "pcb_component_ids": [],
+          "pcb_port_ids": ["port_b"]
+        }
+      ]
+    },
+    {
+      "name": "first route chooses source error and center",
+      "logicalNets": [
+        ["net", "connectivity_net6"],
+        ["port_a", "connectivity_net6"],
+        ["port_b", "connectivity_net6"],
+        ["pad_a", "connectivity_net6"],
+        ["pad_b", "connectivity_net6"],
+        ["t_a", "connectivity_net6"],
+        ["t_b", "connectivity_net6"]
+      ],
+      "expectedErrors": [
+        {
+          "type": "pcb_trace_error",
+          "message": "Trace [trace[t_a]] is missing a connection to smtpad[#port_a]",
+          "source_trace_id": "net",
+          "error_type": "pcb_trace_error",
+          "pcb_trace_id": "t_a",
+          "pcb_trace_error_id": "missing_connection_t_a_port_a",
+          "center": {
+            "x": -0.6,
+            "y": 0
+          },
+          "pcb_component_ids": [],
+          "pcb_port_ids": ["port_a"]
+        },
+        {
+          "type": "pcb_trace_error",
+          "message": "Trace [trace[t_a]] is missing a connection to smtpad[#port_b]",
+          "source_trace_id": "net",
+          "error_type": "pcb_trace_error",
+          "pcb_trace_id": "t_a",
+          "pcb_trace_error_id": "missing_connection_t_a_port_b",
+          "center": {
+            "x": -0.4,
+            "y": 0
+          },
+          "pcb_component_ids": [],
+          "pcb_port_ids": ["port_b"]
+        }
+      ]
+    },
+    {
+      "name": "internal via continues to be checked on later source route",
+      "logicalNets": [
+        ["net", "connectivity_net6"],
+        ["port_a", "connectivity_net6"],
+        ["port_b", "connectivity_net6"],
+        ["pad_a", "connectivity_net6"],
+        ["pad_b", "connectivity_net6"],
+        ["t_a", "connectivity_net6"],
+        ["t_b", "connectivity_net6"],
+        ["v", null]
+      ],
+      "expectedErrors": [
+        {
+          "type": "pcb_trace_error",
+          "message": "Via in trace [trace[t_b]] is misaligned at position {x: 0.1, y: 0}.",
+          "source_trace_id": "net",
+          "error_type": "pcb_trace_error",
+          "pcb_trace_id": "t_b",
+          "pcb_trace_error_id": "misaligned_via_t_b_1",
+          "pcb_component_ids": [],
+          "pcb_port_ids": []
+        }
+      ]
+    },
+    {
+      "name": "strict internal via alignment 0",
+      "logicalNets": [
+        ["net", "connectivity_net5"],
+        ["port_a", "connectivity_net5"],
+        ["port_b", "connectivity_net5"],
+        ["pad_a", "connectivity_net5"],
+        ["pad_b", "connectivity_net5"],
+        ["t", "connectivity_net5"],
+        ["v", null]
+      ],
+      "expectedErrors": []
+    },
+    {
+      "name": "strict internal via alignment 0.009999",
+      "logicalNets": [
+        ["net", "connectivity_net5"],
+        ["port_a", "connectivity_net5"],
+        ["port_b", "connectivity_net5"],
+        ["pad_a", "connectivity_net5"],
+        ["pad_b", "connectivity_net5"],
+        ["t", "connectivity_net5"],
+        ["v", null]
+      ],
+      "expectedErrors": []
+    },
+    {
+      "name": "strict internal via alignment 0.01",
+      "logicalNets": [
+        ["net", "connectivity_net5"],
+        ["port_a", "connectivity_net5"],
+        ["port_b", "connectivity_net5"],
+        ["pad_a", "connectivity_net5"],
+        ["pad_b", "connectivity_net5"],
+        ["t", "connectivity_net5"],
+        ["v", null]
+      ],
+      "expectedErrors": [
+        {
+          "type": "pcb_trace_error",
+          "message": "Via in trace [trace[t]] is misaligned at position {x: 0, y: 0}.",
+          "source_trace_id": "net",
+          "error_type": "pcb_trace_error",
+          "pcb_trace_id": "t",
+          "pcb_trace_error_id": "misaligned_via_t_2",
+          "pcb_component_ids": [],
+          "pcb_port_ids": []
+        }
+      ]
+    },
+    {
+      "name": "strict internal via alignment 0.010001",
+      "logicalNets": [
+        ["net", "connectivity_net5"],
+        ["port_a", "connectivity_net5"],
+        ["port_b", "connectivity_net5"],
+        ["pad_a", "connectivity_net5"],
+        ["pad_b", "connectivity_net5"],
+        ["t", "connectivity_net5"],
+        ["v", null]
+      ],
+      "expectedErrors": [
+        {
+          "type": "pcb_trace_error",
+          "message": "Via in trace [trace[t]] is misaligned at position {x: 0, y: 0}.",
+          "source_trace_id": "net",
+          "error_type": "pcb_trace_error",
+          "pcb_trace_id": "t",
+          "pcb_trace_error_id": "misaligned_via_t_2",
+          "pcb_component_ids": [],
+          "pcb_port_ids": []
+        }
+      ]
+    },
+    {
+      "name": "native trace-contact gap 0",
+      "logicalNets": [
+        ["net", "connectivity_net6"],
+        ["port_a", "connectivity_net6"],
+        ["port_b", "connectivity_net6"],
+        ["pad_a", "connectivity_net6"],
+        ["pad_b", "connectivity_net6"],
+        ["t_a", "connectivity_net6"],
+        ["t_b", "connectivity_net6"]
+      ],
+      "expectedErrors": []
+    },
+    {
+      "name": "native trace-contact gap 0.099999999",
+      "logicalNets": [
+        ["net", "connectivity_net6"],
+        ["port_a", "connectivity_net6"],
+        ["port_b", "connectivity_net6"],
+        ["pad_a", "connectivity_net6"],
+        ["pad_b", "connectivity_net6"],
+        ["t_a", "connectivity_net6"],
+        ["t_b", "connectivity_net6"]
+      ],
+      "expectedErrors": []
+    },
+    {
+      "name": "native trace-contact gap 0.1",
+      "logicalNets": [
+        ["net", "connectivity_net6"],
+        ["port_a", "connectivity_net6"],
+        ["port_b", "connectivity_net6"],
+        ["pad_a", "connectivity_net6"],
+        ["pad_b", "connectivity_net6"],
+        ["t_a", "connectivity_net6"],
+        ["t_b", "connectivity_net6"]
+      ],
+      "expectedErrors": []
+    },
+    {
+      "name": "native trace-contact gap 0.100000001",
+      "logicalNets": [
+        ["net", "connectivity_net6"],
+        ["port_a", "connectivity_net6"],
+        ["port_b", "connectivity_net6"],
+        ["pad_a", "connectivity_net6"],
+        ["pad_b", "connectivity_net6"],
+        ["t_a", "connectivity_net6"],
+        ["t_b", "connectivity_net6"]
+      ],
+      "expectedErrors": [
+        {
+          "type": "pcb_trace_error",
+          "message": "Trace [trace[t_a]] is missing a connection to smtpad[#port_b]",
+          "source_trace_id": "net",
+          "error_type": "pcb_trace_error",
+          "pcb_trace_id": "t_a",
+          "pcb_trace_error_id": "missing_connection_t_a_port_b",
+          "center": {
+            "x": 0,
+            "y": 0
+          },
+          "pcb_component_ids": [],
+          "pcb_port_ids": ["port_b"]
+        }
+      ]
+    },
+    {
+      "name": "native trace-contact gap 0.3",
+      "logicalNets": [
+        ["net", "connectivity_net6"],
+        ["port_a", "connectivity_net6"],
+        ["port_b", "connectivity_net6"],
+        ["pad_a", "connectivity_net6"],
+        ["pad_b", "connectivity_net6"],
+        ["t_a", "connectivity_net6"],
+        ["t_b", "connectivity_net6"]
+      ],
+      "expectedErrors": [
+        {
+          "type": "pcb_trace_error",
+          "message": "Trace [trace[t_a]] is missing a connection to smtpad[#port_b]",
+          "source_trace_id": "net",
+          "error_type": "pcb_trace_error",
+          "pcb_trace_id": "t_a",
+          "pcb_trace_error_id": "missing_connection_t_a_port_b",
+          "center": {
+            "x": 0,
+            "y": 0
+          },
+          "pcb_component_ids": [],
+          "pcb_port_ids": ["port_b"]
+        }
+      ]
+    },
+    {
+      "name": "rotated terminal pad 0",
+      "logicalNets": [
+        ["net", "connectivity_net5"],
+        ["port_a", "connectivity_net5"],
+        ["port_b", "connectivity_net5"],
+        ["pad_a", "connectivity_net5"],
+        ["pad_b", "connectivity_net5"],
+        ["t", "connectivity_net5"]
+      ],
+      "expectedErrors": [
+        {
+          "type": "pcb_trace_error",
+          "message": "Trace [trace[t]] is missing a connection to smtpad[#port_b]",
+          "source_trace_id": "net",
+          "error_type": "pcb_trace_error",
+          "pcb_trace_id": "t",
+          "pcb_trace_error_id": "missing_connection_t_port_b",
+          "center": {
+            "x": 0.5,
+            "y": 0
+          },
+          "pcb_component_ids": [],
+          "pcb_port_ids": ["port_b"]
+        }
+      ]
+    },
+    {
+      "name": "rotated terminal pad 30",
+      "logicalNets": [
+        ["net", "connectivity_net5"],
+        ["port_a", "connectivity_net5"],
+        ["port_b", "connectivity_net5"],
+        ["pad_a", "connectivity_net5"],
+        ["pad_b", "connectivity_net5"],
+        ["t", "connectivity_net5"]
+      ],
+      "expectedErrors": [
+        {
+          "type": "pcb_trace_error",
+          "message": "Trace [trace[t]] is missing a connection to smtpad[#port_b]",
+          "source_trace_id": "net",
+          "error_type": "pcb_trace_error",
+          "pcb_trace_id": "t",
+          "pcb_trace_error_id": "missing_connection_t_port_b",
+          "center": {
+            "x": 0.5,
+            "y": 0
+          },
+          "pcb_component_ids": [],
+          "pcb_port_ids": ["port_b"]
+        }
+      ]
+    },
+    {
+      "name": "rotated terminal pad 90",
+      "logicalNets": [
+        ["net", "connectivity_net5"],
+        ["port_a", "connectivity_net5"],
+        ["port_b", "connectivity_net5"],
+        ["pad_a", "connectivity_net5"],
+        ["pad_b", "connectivity_net5"],
+        ["t", "connectivity_net5"]
+      ],
+      "expectedErrors": [
+        {
+          "type": "pcb_trace_error",
+          "message": "Trace [trace[t]] is missing a connection to smtpad[#port_b]",
+          "source_trace_id": "net",
+          "error_type": "pcb_trace_error",
+          "pcb_trace_id": "t",
+          "pcb_trace_error_id": "missing_connection_t_port_b",
+          "center": {
+            "x": 0.5,
+            "y": 0
+          },
+          "pcb_component_ids": [],
+          "pcb_port_ids": ["port_b"]
+        }
+      ]
+    },
+    {
+      "name": "rotated terminal pad 135",
+      "logicalNets": [
+        ["net", "connectivity_net5"],
+        ["port_a", "connectivity_net5"],
+        ["port_b", "connectivity_net5"],
+        ["pad_a", "connectivity_net5"],
+        ["pad_b", "connectivity_net5"],
+        ["t", "connectivity_net5"]
+      ],
+      "expectedErrors": [
+        {
+          "type": "pcb_trace_error",
+          "message": "Trace [trace[t]] is missing a connection to smtpad[#port_b]",
+          "source_trace_id": "net",
+          "error_type": "pcb_trace_error",
+          "pcb_trace_id": "t",
+          "pcb_trace_error_id": "missing_connection_t_port_b",
+          "center": {
+            "x": 0.5,
+            "y": 0
+          },
+          "pcb_component_ids": [],
+          "pcb_port_ids": ["port_b"]
+        }
+      ]
+    },
+    {
+      "name": "smtpad polygon edge cross-product tolerance",
+      "logicalNets": [
+        ["net", "connectivity_net3"],
+        ["edge", "connectivity_net3"],
+        ["edge_pad", "connectivity_net3"],
+        ["t", "connectivity_net3"]
+      ],
+      "expectedErrors": []
+    },
+    {
+      "name": "plated_hole polygon edge cross-product tolerance",
+      "logicalNets": [
+        ["net", "connectivity_net3"],
+        ["edge", "connectivity_net3"],
+        ["edge_pad", "connectivity_net3"],
+        ["t", "connectivity_net3"]
+      ],
+      "expectedErrors": []
+    },
+    {
+      "name": "foreign physical via has separate logical membership false",
+      "logicalNets": [
+        ["net", "connectivity_net6"],
+        ["pad_a", "connectivity_net1"],
+        ["port_a", "connectivity_net1"],
+        ["pad_b", "connectivity_net3"],
+        ["port_b", "connectivity_net3"],
+        ["t_a", "connectivity_net6"],
+        ["t_b", "connectivity_net6"],
+        ["v", null]
+      ],
+      "expectedErrors": [
+        {
+          "type": "pcb_trace_error",
+          "message": "Trace [trace[t_a]] has disconnected endpoint at (0.00, 0.00)",
+          "source_trace_id": "net",
+          "error_type": "pcb_trace_error",
+          "pcb_trace_id": "t_a",
+          "pcb_trace_error_id": "disconnected_endpoint_t_a_end",
+          "center": {
+            "x": 0,
+            "y": 0
+          },
+          "pcb_component_ids": [],
+          "pcb_port_ids": []
+        }
+      ]
+    },
+    {
+      "name": "foreign physical via has separate logical membership true",
+      "logicalNets": [
+        ["net", "connectivity_net7"],
+        ["v", "connectivity_net7"],
+        ["pad_a", "connectivity_net2"],
+        ["port_a", "connectivity_net2"],
+        ["pad_b", "connectivity_net4"],
+        ["port_b", "connectivity_net4"],
+        ["t_a", "connectivity_net7"],
+        ["t_b", "connectivity_net7"]
+      ],
+      "expectedErrors": []
+    },
+    {
+      "name": "physical via graph contact tolerance 0.3",
+      "logicalNets": [
+        ["net", "connectivity_net6"],
+        ["port_a", "connectivity_net6"],
+        ["port_b", "connectivity_net6"],
+        ["pad_a", "connectivity_net6"],
+        ["pad_b", "connectivity_net6"],
+        ["t_a", "connectivity_net6"],
+        ["t_b", "connectivity_net6"],
+        ["v_a", null],
+        ["v_b", null]
+      ],
+      "expectedErrors": []
+    },
+    {
+      "name": "physical via graph contact tolerance 0.30000005",
+      "logicalNets": [
+        ["net", "connectivity_net6"],
+        ["port_a", "connectivity_net6"],
+        ["port_b", "connectivity_net6"],
+        ["pad_a", "connectivity_net6"],
+        ["pad_b", "connectivity_net6"],
+        ["t_a", "connectivity_net6"],
+        ["t_b", "connectivity_net6"],
+        ["v_a", null],
+        ["v_b", null]
+      ],
+      "expectedErrors": []
+    },
+    {
+      "name": "physical via graph contact tolerance 0.3000002",
+      "logicalNets": [
+        ["net", "connectivity_net6"],
+        ["port_a", "connectivity_net6"],
+        ["port_b", "connectivity_net6"],
+        ["pad_a", "connectivity_net6"],
+        ["pad_b", "connectivity_net6"],
+        ["t_a", "connectivity_net6"],
+        ["t_b", "connectivity_net6"],
+        ["v_a", null],
+        ["v_b", null]
+      ],
+      "expectedErrors": [
+        {
+          "type": "pcb_trace_error",
+          "message": "Trace [trace[t_a]] is missing a connection to smtpad[#port_b]",
+          "source_trace_id": "net",
+          "error_type": "pcb_trace_error",
+          "pcb_trace_id": "t_a",
+          "pcb_trace_error_id": "missing_connection_t_a_port_b",
+          "center": {
+            "x": 0,
+            "y": 0
+          },
+          "pcb_component_ids": [],
+          "pcb_port_ids": ["port_b"]
+        }
+      ]
+    },
+    {
+      "name": "angled via-wire scaled contact ULP -1 origin 0,0",
+      "logicalNets": [
+        ["net", "connectivity_net6"],
+        ["port_a", "connectivity_net6"],
+        ["port_b", "connectivity_net6"],
+        ["pad_a", "connectivity_net6"],
+        ["pad_b", "connectivity_net6"],
+        ["t_a", "connectivity_net6"],
+        ["t_b", "connectivity_net6"],
+        ["v", null]
+      ],
+      "expectedErrors": []
+    },
+    {
+      "name": "angled via-via scaled contact ULP -1 origin 0,0",
+      "logicalNets": [
+        ["net", "connectivity_net6"],
+        ["port_a", "connectivity_net6"],
+        ["port_b", "connectivity_net6"],
+        ["pad_a", "connectivity_net6"],
+        ["pad_b", "connectivity_net6"],
+        ["t_a", "connectivity_net6"],
+        ["t_b", "connectivity_net6"],
+        ["v_a", null],
+        ["v_b", null]
+      ],
+      "expectedErrors": []
+    },
+    {
+      "name": "angled via-wire scaled contact ULP 0 origin 0,0",
+      "logicalNets": [
+        ["net", "connectivity_net6"],
+        ["port_a", "connectivity_net6"],
+        ["port_b", "connectivity_net6"],
+        ["pad_a", "connectivity_net6"],
+        ["pad_b", "connectivity_net6"],
+        ["t_a", "connectivity_net6"],
+        ["t_b", "connectivity_net6"],
+        ["v", null]
+      ],
+      "expectedErrors": [
+        {
+          "type": "pcb_trace_error",
+          "message": "Trace [trace[t_a]] is missing a connection to smtpad[#port_b]",
+          "source_trace_id": "net",
+          "error_type": "pcb_trace_error",
+          "pcb_trace_id": "t_a",
+          "pcb_trace_error_id": "missing_connection_t_a_port_b",
+          "center": {
+            "x": 0,
+            "y": 0
+          },
+          "pcb_component_ids": [],
+          "pcb_port_ids": ["port_b"]
+        }
+      ]
+    },
+    {
+      "name": "angled via-via scaled contact ULP 0 origin 0,0",
+      "logicalNets": [
+        ["net", "connectivity_net6"],
+        ["port_a", "connectivity_net6"],
+        ["port_b", "connectivity_net6"],
+        ["pad_a", "connectivity_net6"],
+        ["pad_b", "connectivity_net6"],
+        ["t_a", "connectivity_net6"],
+        ["t_b", "connectivity_net6"],
+        ["v_a", null],
+        ["v_b", null]
+      ],
+      "expectedErrors": [
+        {
+          "type": "pcb_trace_error",
+          "message": "Trace [trace[t_a]] is missing a connection to smtpad[#port_b]",
+          "source_trace_id": "net",
+          "error_type": "pcb_trace_error",
+          "pcb_trace_id": "t_a",
+          "pcb_trace_error_id": "missing_connection_t_a_port_b",
+          "center": {
+            "x": 0,
+            "y": 0
+          },
+          "pcb_component_ids": [],
+          "pcb_port_ids": ["port_b"]
+        }
+      ]
+    },
+    {
+      "name": "angled via-wire scaled contact ULP 1 origin 0,0",
+      "logicalNets": [
+        ["net", "connectivity_net6"],
+        ["port_a", "connectivity_net6"],
+        ["port_b", "connectivity_net6"],
+        ["pad_a", "connectivity_net6"],
+        ["pad_b", "connectivity_net6"],
+        ["t_a", "connectivity_net6"],
+        ["t_b", "connectivity_net6"],
+        ["v", null]
+      ],
+      "expectedErrors": [
+        {
+          "type": "pcb_trace_error",
+          "message": "Trace [trace[t_a]] is missing a connection to smtpad[#port_b]",
+          "source_trace_id": "net",
+          "error_type": "pcb_trace_error",
+          "pcb_trace_id": "t_a",
+          "pcb_trace_error_id": "missing_connection_t_a_port_b",
+          "center": {
+            "x": 0,
+            "y": 0
+          },
+          "pcb_component_ids": [],
+          "pcb_port_ids": ["port_b"]
+        }
+      ]
+    },
+    {
+      "name": "angled via-via scaled contact ULP 1 origin 0,0",
+      "logicalNets": [
+        ["net", "connectivity_net6"],
+        ["port_a", "connectivity_net6"],
+        ["port_b", "connectivity_net6"],
+        ["pad_a", "connectivity_net6"],
+        ["pad_b", "connectivity_net6"],
+        ["t_a", "connectivity_net6"],
+        ["t_b", "connectivity_net6"],
+        ["v_a", null],
+        ["v_b", null]
+      ],
+      "expectedErrors": [
+        {
+          "type": "pcb_trace_error",
+          "message": "Trace [trace[t_a]] is missing a connection to smtpad[#port_b]",
+          "source_trace_id": "net",
+          "error_type": "pcb_trace_error",
+          "pcb_trace_id": "t_a",
+          "pcb_trace_error_id": "missing_connection_t_a_port_b",
+          "center": {
+            "x": 0,
+            "y": 0
+          },
+          "pcb_component_ids": [],
+          "pcb_port_ids": ["port_b"]
+        }
+      ]
+    },
+    {
+      "name": "angled via-wire scaled contact ULP -1 origin 123.456,-78.901",
+      "logicalNets": [
+        ["net", "connectivity_net6"],
+        ["port_a", "connectivity_net6"],
+        ["port_b", "connectivity_net6"],
+        ["pad_a", "connectivity_net6"],
+        ["pad_b", "connectivity_net6"],
+        ["t_a", "connectivity_net6"],
+        ["t_b", "connectivity_net6"],
+        ["v", null]
+      ],
+      "expectedErrors": []
+    },
+    {
+      "name": "angled via-via scaled contact ULP -1 origin 123.456,-78.901",
+      "logicalNets": [
+        ["net", "connectivity_net6"],
+        ["port_a", "connectivity_net6"],
+        ["port_b", "connectivity_net6"],
+        ["pad_a", "connectivity_net6"],
+        ["pad_b", "connectivity_net6"],
+        ["t_a", "connectivity_net6"],
+        ["t_b", "connectivity_net6"],
+        ["v_a", null],
+        ["v_b", null]
+      ],
+      "expectedErrors": []
+    },
+    {
+      "name": "angled via-wire scaled contact ULP 0 origin 123.456,-78.901",
+      "logicalNets": [
+        ["net", "connectivity_net6"],
+        ["port_a", "connectivity_net6"],
+        ["port_b", "connectivity_net6"],
+        ["pad_a", "connectivity_net6"],
+        ["pad_b", "connectivity_net6"],
+        ["t_a", "connectivity_net6"],
+        ["t_b", "connectivity_net6"],
+        ["v", null]
+      ],
+      "expectedErrors": []
+    },
+    {
+      "name": "angled via-via scaled contact ULP 0 origin 123.456,-78.901",
+      "logicalNets": [
+        ["net", "connectivity_net6"],
+        ["port_a", "connectivity_net6"],
+        ["port_b", "connectivity_net6"],
+        ["pad_a", "connectivity_net6"],
+        ["pad_b", "connectivity_net6"],
+        ["t_a", "connectivity_net6"],
+        ["t_b", "connectivity_net6"],
+        ["v_a", null],
+        ["v_b", null]
+      ],
+      "expectedErrors": []
+    },
+    {
+      "name": "angled via-wire scaled contact ULP 1 origin 123.456,-78.901",
+      "logicalNets": [
+        ["net", "connectivity_net6"],
+        ["port_a", "connectivity_net6"],
+        ["port_b", "connectivity_net6"],
+        ["pad_a", "connectivity_net6"],
+        ["pad_b", "connectivity_net6"],
+        ["t_a", "connectivity_net6"],
+        ["t_b", "connectivity_net6"],
+        ["v", null]
+      ],
+      "expectedErrors": []
+    },
+    {
+      "name": "angled via-via scaled contact ULP 1 origin 123.456,-78.901",
+      "logicalNets": [
+        ["net", "connectivity_net6"],
+        ["port_a", "connectivity_net6"],
+        ["port_b", "connectivity_net6"],
+        ["pad_a", "connectivity_net6"],
+        ["pad_b", "connectivity_net6"],
+        ["t_a", "connectivity_net6"],
+        ["t_b", "connectivity_net6"],
+        ["v_a", null],
+        ["v_b", null]
+      ],
+      "expectedErrors": []
+    },
+    {
+      "name": "physical via graph retains a nonzero 1e-10 conductor",
+      "logicalNets": [
+        ["net", "connectivity_net6"],
+        ["port_a", "connectivity_net6"],
+        ["port_b", "connectivity_net6"],
+        ["pad_a", "connectivity_net6"],
+        ["pad_b", "connectivity_net6"],
+        ["t_a", "connectivity_net6"],
+        ["t_b", "connectivity_net6"],
+        ["v", null]
+      ],
+      "expectedErrors": []
+    },
+    {
+      "name": "duplicate trace id names first routes while physical topology uses last",
+      "logicalNets": [
+        ["source_a", "connectivity_net10"],
+        ["port_a", "connectivity_net10"],
+        ["port_b", "connectivity_net10"],
+        ["source_b", "connectivity_net10"],
+        ["port_c", "connectivity_net10"],
+        ["port_d", "connectivity_net10"],
+        ["pad_a", "connectivity_net10"],
+        ["pad_b", "connectivity_net10"],
+        ["pad_c", "connectivity_net10"],
+        ["pad_d", "connectivity_net10"],
+        ["duplicate", "connectivity_net10"],
+        ["v", null]
+      ],
+      "expectedErrors": [
+        {
+          "type": "pcb_trace_error",
+          "error_type": "pcb_trace_error",
+          "pcb_trace_error_id": "missing_layer_connection_duplicate_0_port_c",
+          "pcb_trace_id": "duplicate",
+          "source_trace_id": "source_b",
+          "pcb_port_ids": ["port_c"],
+          "pcb_component_ids": [],
+          "center": {
+            "x": -1,
+            "y": 1
+          },
+          "message": "Trace [trace[port[port_a], port[port_b]]] on bottom is missing a via connection to port [pcb_port[#port_c]] on top."
+        },
+        {
+          "type": "pcb_trace_error",
+          "error_type": "pcb_trace_error",
+          "pcb_trace_error_id": "missing_layer_connection_duplicate_2_port_d",
+          "pcb_trace_id": "duplicate",
+          "source_trace_id": "source_b",
+          "pcb_port_ids": ["port_d"],
+          "pcb_component_ids": [],
+          "center": {
+            "x": 1,
+            "y": 1
+          },
+          "message": "Trace [trace[port[port_a], port[port_b]]] on bottom is missing a via connection to port [pcb_port[#port_d]] on top."
+        },
+        {
+          "type": "pcb_trace_error",
+          "message": "Via in trace [trace[port[port_a], port[port_b]]] is misaligned at position {x: 0, y: 1}.",
+          "source_trace_id": "source_b",
+          "error_type": "pcb_trace_error",
+          "pcb_trace_id": "duplicate",
+          "pcb_trace_error_id": "misaligned_via_duplicate_1",
+          "pcb_component_ids": [],
+          "pcb_port_ids": []
+        },
+        {
+          "type": "pcb_trace_error",
+          "message": "Trace [trace[port[port_a], port[port_b]]] is missing a connection to smtpad[#port_c]",
+          "source_trace_id": "source_b",
+          "error_type": "pcb_trace_error",
+          "pcb_trace_id": "duplicate",
+          "pcb_trace_error_id": "missing_connection_duplicate_port_c",
+          "center": {
+            "x": -1,
+            "y": 1
+          },
+          "pcb_component_ids": [],
+          "pcb_port_ids": ["port_c"]
+        },
+        {
+          "type": "pcb_trace_error",
+          "message": "Trace [trace[port[port_a], port[port_b]]] is missing a connection to smtpad[#port_d]",
+          "source_trace_id": "source_b",
+          "error_type": "pcb_trace_error",
+          "pcb_trace_id": "duplicate",
+          "pcb_trace_error_id": "missing_connection_duplicate_port_d",
+          "center": {
+            "x": 1,
+            "y": 1
+          },
+          "pcb_component_ids": [],
+          "pcb_port_ids": ["port_d"]
+        }
+      ]
+    },
+    {
+      "name": "SDK19 inner wire-pair layer semantics remain unchanged",
+      "logicalNets": [
+        ["net", "connectivity_net6"],
+        ["port_a", "connectivity_net6"],
+        ["port_b", "connectivity_net6"],
+        ["pad_a", "connectivity_net6"],
+        ["pad_b", "connectivity_net6"],
+        ["t_a", "connectivity_net6"],
+        ["t_b", "connectivity_net6"]
+      ],
+      "expectedErrors": [
+        {
+          "type": "pcb_trace_error",
+          "message": "Via in trace [trace[t_a]] is misaligned at position {x: 1, y: 1}.",
+          "source_trace_id": "net",
+          "error_type": "pcb_trace_error",
+          "pcb_trace_id": "t_a",
+          "pcb_trace_error_id": "misaligned_via_t_a_3",
+          "pcb_component_ids": [],
+          "pcb_port_ids": []
+        },
+        {
+          "type": "pcb_trace_error",
+          "message": "Via in trace [trace[t_b]] is misaligned at position {x: 0.1, y: 0}.",
+          "source_trace_id": "net",
+          "error_type": "pcb_trace_error",
+          "pcb_trace_id": "t_b",
+          "pcb_trace_error_id": "misaligned_via_t_b_2",
+          "pcb_component_ids": [],
+          "pcb_port_ids": []
+        }
+      ]
+    }
+  ]
+}
