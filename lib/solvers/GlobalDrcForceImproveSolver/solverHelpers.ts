@@ -50,6 +50,11 @@ import {
   createBroadNetMatchers,
   type BroadNetMatchers,
 } from "./broadNetMatchers"
+import { hasClosedBroadForceContext } from "./broadForceContext"
+import {
+  areLiveSegmentPairForcesSeparated,
+  areLiveSegmentRectForcesSeparated,
+} from "./liveForceSeparation"
 
 const cloneRoute = (route: HighDensityRoute): MutableRoute => ({
   ...route,
@@ -2688,6 +2693,7 @@ const pushSegmentSegmentPair = (
   srj: SimpleRouteJson,
   connMap?: ConnectivityMap,
   netMatchers?: BroadNetMatchers,
+  closedForceContext: boolean = false,
 ) => {
   if (
     left.z !== right.z ||
@@ -2695,6 +2701,10 @@ const pushSegmentSegmentPair = (
       ? netMatchers.routesShareNet(left, right)
       : sharesNet(left.rootConnectionName, right.rootConnectionName, connMap))
   ) {
+    return false
+  }
+
+  if (closedForceContext && areLiveSegmentPairForcesSeparated(left, right)) {
     return false
   }
 
@@ -2808,7 +2818,15 @@ const getSegmentRectRepulsion = (
   segment: Segment,
   obstacle: SimpleRouteJson["obstacles"][number],
   requiredDistance: number,
+  closedForceContext: boolean = false,
 ) => {
+  if (
+    closedForceContext &&
+    areLiveSegmentRectForcesSeparated(segment, obstacle, requiredDistance)
+  ) {
+    return undefined
+  }
+
   const halfWidth = obstacle.width / 2
   const halfHeight = obstacle.height / 2
   const obstacleCorners = [
@@ -2903,6 +2921,7 @@ const pushMovablesAwayFromObstacles = (
   spatialCellSize: number,
   connMap?: ConnectivityMap,
   netMatchers?: BroadNetMatchers,
+  closedForceContext: boolean = false,
 ) => {
   let changed = false
   const requiredTraceObstacleDistance =
@@ -2968,6 +2987,7 @@ const pushMovablesAwayFromObstacles = (
         segment,
         obstacle,
         requiredTraceObstacleDistance,
+        closedForceContext,
       )
       if (!repulsion) continue
       const move = Math.min(BROAD_MAX_MOVE, repulsion.penetration)
@@ -2992,6 +3012,7 @@ const applyBroadRepulsionPass = (
   connMap?: ConnectivityMap,
   allowSameNetViaPairs = false,
   netMatchers?: BroadNetMatchers,
+  closedForceContext: boolean = false,
 ): boolean => {
   let changed = false
   const vias = collectViaNodes(routes)
@@ -3088,6 +3109,7 @@ const applyBroadRepulsionPass = (
           srj,
           connMap,
           netMatchers,
+          closedForceContext,
         ) || changed
     }
   }
@@ -3103,6 +3125,7 @@ const applyBroadRepulsionPass = (
       spatialCellSize,
       connMap,
       netMatchers,
+      closedForceContext,
     ) || changed
   )
 }
@@ -3167,6 +3190,15 @@ export const applyBroadRepulsionForces = (
   allowSameNetViaPairs = false,
   runFinalViaSegmentCleanup = true,
 ) => {
+  const closedForceContext = hasClosedBroadForceContext(
+    srj,
+    routes,
+    effort,
+    passMultiplier,
+    connMap,
+    allowSameNetViaPairs,
+    runFinalViaSegmentCleanup,
+  )
   const mutableRoutes = cloneRoutes(routes)
   const netMatchers = createBroadNetMatchers(
     mutableRoutes.length,
@@ -3186,6 +3218,7 @@ export const applyBroadRepulsionForces = (
       connMap,
       allowSameNetViaPairs,
       netMatchers,
+      closedForceContext,
     )
     if (!passChanged) break
     changed = true
