@@ -1146,18 +1146,169 @@ const getRoutePointIndexesMinBoardClearance = (
   return minClearance
 }
 
-const getSafeTranslationForPointIndexes = (
+const canCertifyInteriorBoardTranslation = (
   srj: SimpleRouteJson,
   route: MutableRoute,
   pointIndexes: number[],
   dx: number,
   dy: number,
   featureRadius: number,
-) => {
+): boolean => {
+  // The original geometry remains authoritative near edges and for arbitrary
+  // outlines. Only certify a finite, data-only rectangle's strict interior.
+  const coordinateLimit = 10_000
+  const outlineDescriptor = Object.getOwnPropertyDescriptor(srj, "outline")
+  const outline = outlineDescriptor?.value
+  if (
+    !Array.isArray(outline) ||
+    (outline.length !== 4 && outline.length !== 5)
+  ) {
+    return false
+  }
+  const marginDescriptor = Object.getOwnPropertyDescriptor(
+    srj,
+    "defaultObstacleMargin",
+  )
+  if (
+    (marginDescriptor && !("value" in marginDescriptor)) ||
+    (!marginDescriptor && "defaultObstacleMargin" in srj)
+  ) {
+    return false
+  }
+  const clearanceDescriptor = Object.getOwnPropertyDescriptor(
+    RELAXED_DRC_OPTIONS,
+    "traceClearance",
+  )
+  if (!clearanceDescriptor || !("value" in clearanceDescriptor)) return false
+  const margin = marginDescriptor?.value ?? 0
+  const traceClearance = clearanceDescriptor.value ?? 0.1
+  if (
+    !Number.isFinite(dx) ||
+    !Number.isFinite(dy) ||
+    !Number.isFinite(featureRadius) ||
+    featureRadius < 0 ||
+    Math.abs(dx) > coordinateLimit ||
+    Math.abs(dy) > coordinateLimit ||
+    !Number.isFinite(margin) ||
+    !Number.isFinite(traceClearance)
+  ) {
+    return false
+  }
+
+  const vertices: Point[] = []
+  for (let index = 0; index < outline.length; index += 1) {
+    const vertex = Object.getOwnPropertyDescriptor(outline, index)?.value
+    if (!vertex || typeof vertex !== "object") return false
+    const x = Object.getOwnPropertyDescriptor(vertex, "x")?.value
+    const y = Object.getOwnPropertyDescriptor(vertex, "y")?.value
+    if (
+      !Number.isFinite(x) ||
+      !Number.isFinite(y) ||
+      Math.abs(x) > coordinateLimit ||
+      Math.abs(y) > coordinateLimit
+    ) {
+      return false
+    }
+    vertices.push({ x, y })
+  }
+  const [first, second, third, fourth, closing] = vertices
+  if (!first || !second || !third || !fourth) return false
+  if (closing && (closing.x !== first.x || closing.y !== first.y)) return false
+  const startsVertical =
+    first.x === second.x &&
+    second.y === third.y &&
+    third.x === fourth.x &&
+    fourth.y === first.y
+  const startsHorizontal =
+    first.y === second.y &&
+    second.x === third.x &&
+    third.y === fourth.y &&
+    fourth.x === first.x
+  if (!startsVertical && !startsHorizontal) return false
+  const minX = Math.min(first.x, third.x)
+  const maxX = Math.max(first.x, third.x)
+  const minY = Math.min(first.y, third.y)
+  const maxY = Math.max(first.y, third.y)
+  if (maxX - minX < 1 || maxY - minY < 1) return false
+
+  const points = Object.getOwnPropertyDescriptor(route, "route")?.value
+  if (!Array.isArray(points)) return false
+  const threshold =
+    featureRadius +
+    Math.max(PREFERRED_TRACE_TO_PAD_CLEARANCE, margin, traceClearance)
+  // For coordinates bounded by 10,000 and rectangle sides at least 1,
+  // edge-projection error is below 1e-8. Normalizing at clearance >= 0.16
+  // bounds normal error by 1e-8, and L1 motion here is below 10,000, so
+  // outward-dot roundoff stays below 1e-4. Reserve an extra 0.001 beyond
+  // the original coordinate epsilon for these errors.
+  // A rectangle's incident segments stay in the endpoints' convex interior;
+  // L1 displacement also bounds outward motion along every unit normal.
+  const interiorMargin = threshold + 2 * COORDINATE_EPSILON
+  const movement = Math.abs(dx) + Math.abs(dy)
+  for (const pointIndex of pointIndexes) {
+    if (
+      !Number.isInteger(pointIndex) ||
+      pointIndex < 0 ||
+      pointIndex >= points.length
+    ) {
+      return false
+    }
+    for (let index = pointIndex - 1; index <= pointIndex + 1; index += 1) {
+      if (index < 0 || index >= points.length) continue
+      const point = Object.getOwnPropertyDescriptor(points, index)?.value
+      if (!point || typeof point !== "object") return false
+      const x = Object.getOwnPropertyDescriptor(point, "x")?.value
+      const y = Object.getOwnPropertyDescriptor(point, "y")?.value
+      if (
+        !Number.isFinite(x) ||
+        !Number.isFinite(y) ||
+        Math.abs(x) > coordinateLimit ||
+        Math.abs(y) > coordinateLimit
+      ) {
+        return false
+      }
+      const requiredClearance =
+        interiorMargin + (index === pointIndex ? movement : 0)
+      if (
+        x - minX <= requiredClearance ||
+        maxX - x <= requiredClearance ||
+        y - minY <= requiredClearance ||
+        maxY - y <= requiredClearance
+      ) {
+        return false
+      }
+    }
+  }
+  return true
+}
+
+export const getSafeTranslationForPointIndexes = (
+  srj: SimpleRouteJson,
+  route: MutableRoute,
+  pointIndexes: number[],
+  dx: number,
+  dy: number,
+  featureRadius: number,
+): Point | undefined => {
   const sortedPointIndexes = [...new Set(pointIndexes)].sort(
     (left, right) => left - right,
   )
   if (sortedPointIndexes.length === 0) return undefined
+  if (
+    canCertifyInteriorBoardTranslation(
+      srj,
+      route,
+      sortedPointIndexes,
+      dx,
+      dy,
+      featureRadius,
+    )
+  ) {
+    return Math.abs(dx) <= POSITION_EPSILON &&
+      Math.abs(dy) <= POSITION_EPSILON
+      ? undefined
+      : { x: dx, y: dy }
+  }
   const translation = clipPointIndexesTranslationAwayFromBoardEdge(
     srj,
     route,
