@@ -48,9 +48,7 @@ test("board reflection hooks disable closed force kernels without early callback
     expect(output).toEqual(expected.output as HighDensityRoute[])
     expect(fixture.events.length).toBe(expected.eventCount)
     expect(
-      createHash("sha256")
-        .update(JSON.stringify(fixture.events))
-        .digest("hex"),
+      createHash("sha256").update(JSON.stringify(fixture.events)).digest("hex"),
     ).toBe(expected.eventSha256)
     if (expected.variant === "descriptor-clone-mutation") {
       expect(fixture.events).toContain("mutate-cloned-point")
