@@ -46,6 +46,10 @@ import type { SimpleRouteJson, SimplifiedPcbTraces } from "../../types"
 import type { HighDensityRoute } from "../../types/high-density-types"
 import { convertHdRouteToSimplifiedRoute } from "../../utils/convertHdRouteToSimplifiedRoute"
 import { mapZToLayerName } from "../../utils/mapZToLayerName"
+import {
+  createBroadNetMatchers,
+  type BroadNetMatchers,
+} from "./broadNetMatchers"
 
 const cloneRoute = (route: HighDensityRoute): MutableRoute => ({
   ...route,
@@ -98,6 +102,7 @@ export const isTraceObstacleDrcError = (error: Record<string, unknown>) => {
 const createSimplifiedTraces = (
   srj: SimpleRouteJson,
   routes: HighDensityRoute[],
+  includeTraces = true,
 ): {
   traces: SimplifiedPcbTraces
   traceRouteIndexById: Map<string, number>
@@ -127,27 +132,28 @@ const createSimplifiedTraces = (
       if (!hdRoute) continue
       const traceId = `${connection.name}_${i}`
 
-      traces.push({
-        type: "pcb_trace",
-        pcb_trace_id: traceId,
-        connection_name:
-          connection.netConnectionName ??
-          connection.rootConnectionName ??
-          connection.name,
-        route: convertHdRouteToSimplifiedRoute(
-          hdRoute.route.route,
-          srj.layerCount,
-          {
-            traceThickness:
-              hdRoute.route.traceThickness ??
-              connection.nominalTraceWidth ??
-              srj.nominalTraceWidth ??
-              srj.minTraceWidth,
-            viaDiameter: hdRoute.route.viaDiameter ?? srj.minViaDiameter,
-            connectionPoints: connection.pointsToConnect,
-          },
-        ),
-      })
+      if (includeTraces)
+        traces.push({
+          type: "pcb_trace",
+          pcb_trace_id: traceId,
+          connection_name:
+            connection.netConnectionName ??
+            connection.rootConnectionName ??
+            connection.name,
+          route: convertHdRouteToSimplifiedRoute(
+            hdRoute.route.route,
+            srj.layerCount,
+            {
+              traceThickness:
+                hdRoute.route.traceThickness ??
+                connection.nominalTraceWidth ??
+                srj.nominalTraceWidth ??
+                srj.minTraceWidth,
+              viaDiameter: hdRoute.route.viaDiameter ?? srj.minViaDiameter,
+              connectionPoints: connection.pointsToConnect,
+            },
+          ),
+        })
       traceRouteIndexById.set(traceId, hdRoute.routeIndex)
     }
   }
@@ -236,11 +242,16 @@ const createDrcSnapshot = (
   autoroutingDrcEngine?: AutoroutingDrcEngine,
   policy: DrcSnapshotPolicy = STANDARD_DRC_SNAPSHOT_POLICY,
 ): DrcSnapshot => {
-  const drcSrj =
-    autoroutingDrcEngine && !drcEvaluator
+  const routesOnlyEvaluator = drcEvaluator?.inputMode === "routes-only"
+  let drcSrj =
+    (autoroutingDrcEngine && !drcEvaluator) || routesOnlyEvaluator
       ? srj
       : getConnMapAwareSrj(srj, connMap)
-  const { traces, traceRouteIndexById } = createSimplifiedTraces(drcSrj, routes)
+  let { traces, traceRouteIndexById } = createSimplifiedTraces(
+    drcSrj,
+    routes,
+    !routesOnlyEvaluator,
+  )
   const drcResult = drcEvaluator?.({
     srj: drcSrj,
     routes,
@@ -267,6 +278,15 @@ const createDrcSnapshot = (
       ),
       traceRouteIndexById,
     }
+  }
+
+  // Preserve the established fallback input even if an opted-in external
+  // evaluator returns no result at runtime.
+  if (routesOnlyEvaluator) {
+    drcSrj = getConnMapAwareSrj(srj, connMap)
+    const fallbackInput = createSimplifiedTraces(drcSrj, routes)
+    traces = fallbackInput.traces
+    traceRouteIndexById = fallbackInput.traceRouteIndexById
   }
 
   const drc =
@@ -1968,23 +1988,50 @@ const translateVia = (
   return true
 }
 
-const getSameRootViaSite = (routes: MutableRoute[], via: ViaNode) => {
-  const currentVias = collectViaNodes(routes)
-  const currentVia = currentVias.find(
-    (candidate) =>
-      candidate.routeIndex === via.routeIndex &&
-      candidate.pointIndexes.some((pointIndex) =>
-        via.pointIndexes.includes(pointIndex),
-      ),
+export const getSameRootViaSite = (
+  routes: MutableRoute[],
+  via: ViaNode,
+): ViaNode[] => {
+  if (!Number.isInteger(via.routeIndex)) return []
+  const currentRoute = routes[via.routeIndex]
+  if (!currentRoute || via.routeIndex < 0 || via.routeIndex >= routes.length)
+    return []
+
+  const currentRouteVias = collectViaNodes([currentRoute])
+  const currentVia = currentRouteVias.find((candidate) =>
+    candidate.pointIndexes.some((pointIndex) =>
+      via.pointIndexes.includes(pointIndex),
+    ),
   )
   if (!currentVia) return []
 
-  return currentVias.filter(
-    (candidate) =>
-      candidate.rootConnectionName === currentVia.rootConnectionName &&
-      Math.hypot(candidate.x - currentVia.x, candidate.y - currentVia.y) <=
-        COORDINATE_EPSILON,
-  )
+  const siteVias: ViaNode[] = []
+  for (let routeIndex = 0; routeIndex < routes.length; routeIndex += 1) {
+    const route = routes[routeIndex]
+    if (
+      !route ||
+      getRootConnectionName(route) !== currentVia.rootConnectionName
+    )
+      continue
+
+    // Grouping remains live and route-local. Reuse only the target route's
+    // collection; unrelated roots cannot contribute to the filtered site.
+    const routeVias =
+      routeIndex === via.routeIndex
+        ? currentRouteVias
+        : collectViaNodes([route])
+    for (const candidate of routeVias) {
+      candidate.routeIndex = routeIndex
+      if (
+        candidate.rootConnectionName === currentVia.rootConnectionName &&
+        Math.hypot(candidate.x - currentVia.x, candidate.y - currentVia.y) <=
+          COORDINATE_EPSILON
+      ) {
+        siteVias.push(candidate)
+      }
+    }
+  }
+  return siteVias
 }
 
 const translateSameRootViaSite = (
@@ -2456,10 +2503,13 @@ const pushViaViaPair = (
   connMap?: ConnectivityMap,
   maxMove = BROAD_MAX_MOVE,
   allowSameNet = false,
+  netMatchers?: BroadNetMatchers,
 ) => {
   if (
     !allowSameNet &&
-    sharesNet(left.rootConnectionName, right.rootConnectionName, connMap)
+    (netMatchers
+      ? netMatchers.routesShareNet(left, right)
+      : sharesNet(left.rootConnectionName, right.rootConnectionName, connMap))
   ) {
     return false
   }
@@ -2573,8 +2623,13 @@ const pushViaSegmentPair = (
   maxMove = BROAD_MAX_MOVE,
   moveDivisor = 2,
   translateSharedViaSite = false,
+  netMatchers?: BroadNetMatchers,
 ) => {
-  if (sharesNet(via.rootConnectionName, segment.rootConnectionName, connMap))
+  if (
+    netMatchers
+      ? netMatchers.routesShareNet(via, segment)
+      : sharesNet(via.rootConnectionName, segment.rootConnectionName, connMap)
+  )
     return false
 
   const projection = pointToSegmentProjection(via, segment)
@@ -2632,10 +2687,13 @@ const pushSegmentSegmentPair = (
   right: Segment,
   srj: SimpleRouteJson,
   connMap?: ConnectivityMap,
+  netMatchers?: BroadNetMatchers,
 ) => {
   if (
     left.z !== right.z ||
-    sharesNet(left.rootConnectionName, right.rootConnectionName, connMap)
+    (netMatchers
+      ? netMatchers.routesShareNet(left, right)
+      : sharesNet(left.rootConnectionName, right.rootConnectionName, connMap))
   ) {
     return false
   }
@@ -2844,6 +2902,7 @@ const pushMovablesAwayFromObstacles = (
   segmentSpatialIndex: Map<string, number[]>,
   spatialCellSize: number,
   connMap?: ConnectivityMap,
+  netMatchers?: BroadNetMatchers,
 ) => {
   let changed = false
   const requiredTraceObstacleDistance =
@@ -2856,6 +2915,7 @@ const pushMovablesAwayFromObstacles = (
   for (const obstacle of srj.obstacles) {
     if (obstacle.isCopperPour) continue
     const obstacleBounds = getObstacleBounds(obstacle)
+    const sharesObstacleNet = netMatchers?.forObstacle(obstacle)
 
     const nearbyViaIndexes = getSpatialCandidateIndexes(
       viaSpatialIndex,
@@ -2865,7 +2925,12 @@ const pushMovablesAwayFromObstacles = (
     for (const viaIndex of nearbyViaIndexes) {
       const via = vias[viaIndex]
       if (!via) continue
-      if (obstacleSharesNet(via.rootConnectionName, obstacle, connMap)) continue
+      if (
+        sharesObstacleNet
+          ? sharesObstacleNet(via)
+          : obstacleSharesNet(via.rootConnectionName, obstacle, connMap)
+      )
+        continue
       const repulsion = getRectRepulsion(
         via,
         obstacle,
@@ -2892,7 +2957,9 @@ const pushMovablesAwayFromObstacles = (
       const segment = segments[segmentIndex]
       if (!segment) continue
       if (
-        obstacleSharesNet(segment.rootConnectionName, obstacle, connMap) ||
+        (sharesObstacleNet
+          ? sharesObstacleNet(segment)
+          : obstacleSharesNet(segment.rootConnectionName, obstacle, connMap)) ||
         !obstacleAppliesToSegment(obstacle, segment, srj.layerCount)
       ) {
         continue
@@ -2924,6 +2991,7 @@ const applyBroadRepulsionPass = (
   routes: MutableRoute[],
   connMap?: ConnectivityMap,
   allowSameNetViaPairs = false,
+  netMatchers?: BroadNetMatchers,
 ): boolean => {
   let changed = false
   const vias = collectViaNodes(routes)
@@ -2969,6 +3037,7 @@ const applyBroadRepulsionPass = (
           connMap,
           BROAD_MAX_MOVE,
           allowSameNetViaPairs,
+          netMatchers,
         ) || changed
     }
   }
@@ -2985,7 +3054,17 @@ const applyBroadRepulsionPass = (
       const segment = segments[segmentIndex]
       if (!segment) continue
       changed =
-        pushViaSegmentPair(routes, via, segment, srj, connMap) || changed
+        pushViaSegmentPair(
+          routes,
+          via,
+          segment,
+          srj,
+          connMap,
+          BROAD_MAX_MOVE,
+          2,
+          false,
+          netMatchers,
+        ) || changed
     }
   }
 
@@ -3002,7 +3081,14 @@ const applyBroadRepulsionPass = (
       const right = segments[rightIndex]
       if (!right) continue
       changed =
-        pushSegmentSegmentPair(routes, left, right, srj, connMap) || changed
+        pushSegmentSegmentPair(
+          routes,
+          left,
+          right,
+          srj,
+          connMap,
+          netMatchers,
+        ) || changed
     }
   }
 
@@ -3016,6 +3102,7 @@ const applyBroadRepulsionPass = (
       segmentSpatialIndex,
       spatialCellSize,
       connMap,
+      netMatchers,
     ) || changed
   )
 }
@@ -3024,6 +3111,7 @@ const applyBroadViaSegmentCleanupPass = (
   srj: SimpleRouteJson,
   routes: MutableRoute[],
   connMap?: ConnectivityMap,
+  netMatchers?: BroadNetMatchers,
 ): boolean => {
   let changed = false
   const vias = collectViaNodes(routes)
@@ -3061,6 +3149,8 @@ const applyBroadViaSegmentCleanupPass = (
           connMap,
           BROAD_MAX_MOVE,
           1.75,
+          false,
+          netMatchers,
         ) || changed
     }
   }
@@ -3078,6 +3168,11 @@ export const applyBroadRepulsionForces = (
   runFinalViaSegmentCleanup = true,
 ) => {
   const mutableRoutes = cloneRoutes(routes)
+  const netMatchers = createBroadNetMatchers(
+    mutableRoutes.length,
+    srj.obstacles.length,
+    connMap,
+  )
   const maxPasses = Math.max(
     2,
     Math.round(BROAD_FORCE_PASSES * Math.max(1, effort) * passMultiplier),
@@ -3090,13 +3185,14 @@ export const applyBroadRepulsionForces = (
       mutableRoutes,
       connMap,
       allowSameNetViaPairs,
+      netMatchers,
     )
     if (!passChanged) break
     changed = true
   }
 
   if (changed && runFinalViaSegmentCleanup) {
-    applyBroadViaSegmentCleanupPass(srj, mutableRoutes, connMap)
+    applyBroadViaSegmentCleanupPass(srj, mutableRoutes, connMap, netMatchers)
   }
 
   return changed ? materializeRoutes(mutableRoutes) : routes
