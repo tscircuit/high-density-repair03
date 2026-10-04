@@ -12,6 +12,7 @@ import type {
   SimplifiedPcbTraces,
 } from "../types"
 import { getViaLayers } from "../utils/getViaLayers"
+import type { NativeDrcContactWorkspace } from "./native/NativeDrcContactWorkspace"
 
 type Point = { x: number; y: number }
 
@@ -663,17 +664,25 @@ export class AutoroutingDrcEngine {
   private checkTracePair(
     segmentA: TraceSegment,
     segmentB: TraceSegment,
+    contacts?: NativeDrcContactWorkspace,
   ): AutoroutingDrcError | undefined {
     if (this.areConnected(segmentA.netId, segmentB.netId)) return undefined
     this.lastRunStats.exactCheckCount += 1
 
     const gap =
-      segmentToSegmentMinDistance(
-        segmentA.start,
-        segmentA.end,
-        segmentB.start,
-        segmentB.end,
-      ) -
+      (contacts
+        ? contacts.segmentDistance(
+            segmentA.start,
+            segmentA.end,
+            segmentB.start,
+            segmentB.end,
+          )
+        : segmentToSegmentMinDistance(
+            segmentA.start,
+            segmentA.end,
+            segmentB.start,
+            segmentB.end,
+          )) -
       segmentA.width / 2 -
       segmentB.width / 2
     if (gap > this.traceClearance - DRC_EPSILON) return undefined
@@ -704,16 +713,23 @@ export class AutoroutingDrcEngine {
   private checkTraceVia(
     segment: TraceSegment,
     via: Via,
+    contacts?: NativeDrcContactWorkspace,
   ): AutoroutingDrcError | undefined {
     if (this.areConnected(segment.netId, via.netId)) return undefined
     this.lastRunStats.exactCheckCount += 1
 
     const gap =
-      segmentToCircleMinDistance(segment.start, segment.end, {
-        x: via.x,
-        y: via.y,
-        radius: via.diameter / 2,
-      }) -
+      (contacts
+        ? contacts.circleDistance(segment.start, segment.end, {
+            x: via.x,
+            y: via.y,
+            radius: via.diameter / 2,
+          })
+        : segmentToCircleMinDistance(segment.start, segment.end, {
+            x: via.x,
+            y: via.y,
+            radius: via.diameter / 2,
+          })) -
       segment.width / 2
     if (gap > this.traceClearance - DRC_EPSILON) return undefined
 
@@ -748,6 +764,7 @@ export class AutoroutingDrcEngine {
   private checkTraceObstacle(
     segment: TraceSegment,
     obstacle: StaticObstacle,
+    contacts?: NativeDrcContactWorkspace,
   ): AutoroutingDrcError | undefined {
     if (this.obstacleSharesNet(segment.netId, obstacle)) return undefined
     this.lastRunStats.exactCheckCount += 1
@@ -756,11 +773,17 @@ export class AutoroutingDrcEngine {
     const shapeDistance =
       obstacle.radius === undefined
         ? segmentToBoundsMinDistance(segment.start, segment.end, obstacleBounds)
-        : segmentToCircleMinDistance(segment.start, segment.end, {
-            x: obstacle.x,
-            y: obstacle.y,
-            radius: obstacle.radius,
-          })
+        : contacts
+          ? contacts.circleDistance(segment.start, segment.end, {
+              x: obstacle.x,
+              y: obstacle.y,
+              radius: obstacle.radius,
+            })
+          : segmentToCircleMinDistance(segment.start, segment.end, {
+              x: obstacle.x,
+              y: obstacle.y,
+              radius: obstacle.radius,
+            })
     const gap = shapeDistance - segment.width / 2
     if (gap + DRC_EPSILON >= this.traceClearance) return undefined
 
@@ -889,8 +912,13 @@ export class AutoroutingDrcEngine {
     return errors
   }
 
-  evaluate(traces: SimplifiedPcbTraces): AutoroutingDrcResult {
-    return this.evaluateInternal(traces, true)
+  evaluate(
+    traces: SimplifiedPcbTraces,
+    contacts?: NativeDrcContactWorkspace,
+  ): AutoroutingDrcResult {
+    return contacts
+      ? this.evaluateInternal(traces, true, contacts)
+      : this.evaluateInternal(traces, true)
   }
 
   /**
@@ -898,13 +926,19 @@ export class AutoroutingDrcEngine {
    * stage. Via-to-pad errors remain part of the normal complete evaluation and
    * are handled by the subsequent staged repair pass.
    */
-  evaluateLegacy(traces: SimplifiedPcbTraces): AutoroutingDrcResult {
-    return this.evaluateInternal(traces, false)
+  evaluateLegacy(
+    traces: SimplifiedPcbTraces,
+    contacts?: NativeDrcContactWorkspace,
+  ): AutoroutingDrcResult {
+    return contacts
+      ? this.evaluateInternal(traces, false, contacts)
+      : this.evaluateInternal(traces, false)
   }
 
   private evaluateInternal(
     traces: SimplifiedPcbTraces,
     includeViaPadErrors: boolean,
+    contacts?: NativeDrcContactWorkspace,
   ): AutoroutingDrcResult {
     const { segments, vias } = this.collectDynamicGeometry(traces)
     const dynamicIndexesByLayer = this.buildDynamicIndexes(segments, vias)
@@ -936,8 +970,11 @@ export class AutoroutingDrcEngine {
           continue
         }
 
-        const error =
-          candidate.kind === "trace_segment"
+        const error = contacts
+          ? candidate.kind === "trace_segment"
+            ? this.checkTracePair(segment, candidate, contacts)
+            : this.checkTraceVia(segment, candidate, contacts)
+          : candidate.kind === "trace_segment"
             ? this.checkTracePair(segment, candidate)
             : this.checkTraceVia(segment, candidate)
         if (error) detectedTraceErrors.push(error)
@@ -945,7 +982,9 @@ export class AutoroutingDrcEngine {
 
       for (const obstacle of obstacleCandidates) {
         this.lastRunStats.broadPhaseCandidateCount += 1
-        const error = this.checkTraceObstacle(segment, obstacle)
+        const error = contacts
+          ? this.checkTraceObstacle(segment, obstacle, contacts)
+          : this.checkTraceObstacle(segment, obstacle)
         if (error) detectedTraceErrors.push(error)
       }
     }

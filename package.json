@@ -19,6 +19,7 @@
     "formatcheck": "biome format ."
   },
   "dependencies": {
+    "@flatten-js/core": "1.6.14",
     "@tscircuit/checks": "^0.0.123",
     "@tscircuit/circuit-json-util": "^0.0.94",
     "@tscircuit/math-utils": "^0.0.36",
