@@ -164,7 +164,7 @@ const haveNativeOperations = (): boolean => {
       if (
         !current ||
         !original ||
-        ("value" in current) !== ("value" in original) ||
+        "value" in current !== "value" in original ||
         current.writable !== original.writable ||
         current.enumerable !== original.enumerable ||
         current.configurable !== original.configurable

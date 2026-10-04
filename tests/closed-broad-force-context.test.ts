@@ -52,9 +52,7 @@ test("closed broad contexts preserve original forces and all unsupported hook or
     expect(output).toEqual(expected.output as HighDensityRoute[])
     expect(fixture.events.length).toBe(expected.eventCount)
     expect(
-      createHash("sha256")
-        .update(JSON.stringify(fixture.events))
-        .digest("hex"),
+      createHash("sha256").update(JSON.stringify(fixture.events)).digest("hex"),
     ).toBe(expected.eventSha256)
   }
 
