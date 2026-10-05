@@ -5,6 +5,7 @@ import {
 import type { ConnectivityMap } from "circuit-json-to-connectivity-map"
 import type { AutoroutingDrcEngine } from "../../drc"
 import { RELAXED_DRC_OPTIONS } from "./drcPresets"
+import { hasClosedBroadForceContext } from "./broadForceContext"
 import { PREFERRED_VIA_TO_VIA_CLEARANCE, getDrcErrors } from "./getDrcErrors"
 import { convertToCircuitJson } from "../utils/convertToCircuitJson"
 import {
@@ -1282,6 +1283,170 @@ const canCertifyInteriorBoardTranslation = (
   return true
 }
 
+type ClosedBoardTranslationContext = {
+  srj: SimpleRouteJson
+  minX: number
+  maxX: number
+  minY: number
+  maxY: number
+  preferredClearance: number
+}
+
+const closedBoardContextByRoute = new WeakMap<
+  MutableRoute,
+  ClosedBoardTranslationContext
+>()
+// Public calls keep their live descriptor path even if callers replace WeakMap
+// methods. Only owned clones inside a certified synchronous broad call enter.
+const getClosedBoardContext = closedBoardContextByRoute.get.bind(
+  closedBoardContextByRoute,
+)
+const deleteClosedBoardContext = closedBoardContextByRoute.delete.bind(
+  closedBoardContextByRoute,
+)
+
+const prepareClosedBoardTranslationContext = (
+  srj: SimpleRouteJson,
+): ClosedBoardTranslationContext | undefined => {
+  const coordinateLimit = 10_000
+  const outlineDescriptor = Object.getOwnPropertyDescriptor(srj, "outline")
+  const outline = outlineDescriptor?.value
+  if (
+    !Array.isArray(outline) ||
+    (outline.length !== 4 && outline.length !== 5)
+  ) {
+    return undefined
+  }
+  const marginDescriptor = Object.getOwnPropertyDescriptor(
+    srj,
+    "defaultObstacleMargin",
+  )
+  if (
+    (marginDescriptor && !("value" in marginDescriptor)) ||
+    (!marginDescriptor && "defaultObstacleMargin" in srj)
+  ) {
+    return undefined
+  }
+  const clearanceDescriptor = Object.getOwnPropertyDescriptor(
+    RELAXED_DRC_OPTIONS,
+    "traceClearance",
+  )
+  if (!clearanceDescriptor || !("value" in clearanceDescriptor))
+    return undefined
+  const margin = marginDescriptor?.value ?? 0
+  const traceClearance = clearanceDescriptor.value ?? 0.1
+  if (!Number.isFinite(margin) || !Number.isFinite(traceClearance))
+    return undefined
+  const vertices: Point[] = []
+  for (let index = 0; index < outline.length; index += 1) {
+    const vertex = Object.getOwnPropertyDescriptor(outline, index)?.value
+    if (!vertex || typeof vertex !== "object") return undefined
+    const x = Object.getOwnPropertyDescriptor(vertex, "x")?.value
+    const y = Object.getOwnPropertyDescriptor(vertex, "y")?.value
+    if (
+      !Number.isFinite(x) ||
+      !Number.isFinite(y) ||
+      Math.abs(x) > coordinateLimit ||
+      Math.abs(y) > coordinateLimit
+    ) {
+      return undefined
+    }
+    vertices.push({ x, y })
+  }
+  const [first, second, third, fourth, closing] = vertices
+  if (!first || !second || !third || !fourth) return undefined
+  if (closing && (closing.x !== first.x || closing.y !== first.y))
+    return undefined
+  const startsVertical =
+    first.x === second.x &&
+    second.y === third.y &&
+    third.x === fourth.x &&
+    fourth.y === first.y
+  const startsHorizontal =
+    first.y === second.y &&
+    second.x === third.x &&
+    third.y === fourth.y &&
+    fourth.x === first.x
+  if (!startsVertical && !startsHorizontal) return undefined
+  const minX = Math.min(first.x, third.x)
+  const maxX = Math.max(first.x, third.x)
+  const minY = Math.min(first.y, third.y)
+  const maxY = Math.max(first.y, third.y)
+  if (maxX - minX < 1 || maxY - minY < 1) return undefined
+  return {
+    srj,
+    minX,
+    maxX,
+    minY,
+    maxY,
+    preferredClearance: Math.max(
+      PREFERRED_TRACE_TO_PAD_CLEARANCE,
+      margin,
+      traceClearance,
+    ),
+  }
+}
+
+const canCertifyClosedInteriorBoardTranslation = (
+  context: ClosedBoardTranslationContext,
+  route: MutableRoute,
+  pointIndexes: number[],
+  dx: number,
+  dy: number,
+  featureRadius: number,
+): boolean => {
+  const coordinateLimit = 10_000
+  if (
+    !Number.isFinite(dx) ||
+    !Number.isFinite(dy) ||
+    !Number.isFinite(featureRadius) ||
+    featureRadius < 0 ||
+    Math.abs(dx) > coordinateLimit ||
+    Math.abs(dy) > coordinateLimit
+  ) {
+    return false
+  }
+  const points = route.route
+  const threshold = featureRadius + context.preferredClearance
+  const interiorMargin = threshold + 2 * COORDINATE_EPSILON
+  const movement = Math.abs(dx) + Math.abs(dy)
+  for (const pointIndex of pointIndexes) {
+    if (
+      !Number.isInteger(pointIndex) ||
+      pointIndex < 0 ||
+      pointIndex >= points.length
+    ) {
+      return false
+    }
+    for (let index = pointIndex - 1; index <= pointIndex + 1; index += 1) {
+      if (index < 0 || index >= points.length) continue
+      const point = points[index]
+      if (!point || typeof point !== "object") return false
+      const x = point.x
+      const y = point.y
+      if (
+        !Number.isFinite(x) ||
+        !Number.isFinite(y) ||
+        Math.abs(x) > coordinateLimit ||
+        Math.abs(y) > coordinateLimit
+      ) {
+        return false
+      }
+      const requiredClearance =
+        interiorMargin + (index === pointIndex ? movement : 0)
+      if (
+        x - context.minX <= requiredClearance ||
+        context.maxX - x <= requiredClearance ||
+        y - context.minY <= requiredClearance ||
+        context.maxY - y <= requiredClearance
+      ) {
+        return false
+      }
+    }
+  }
+  return true
+}
+
 export const getSafeTranslationForPointIndexes = (
   srj: SimpleRouteJson,
   route: MutableRoute,
@@ -1294,15 +1459,25 @@ export const getSafeTranslationForPointIndexes = (
     (left, right) => left - right,
   )
   if (sortedPointIndexes.length === 0) return undefined
+  const closedBoardContext = getClosedBoardContext(route)
   if (
-    canCertifyInteriorBoardTranslation(
-      srj,
-      route,
-      sortedPointIndexes,
-      dx,
-      dy,
-      featureRadius,
-    )
+    closedBoardContext?.srj === srj
+      ? canCertifyClosedInteriorBoardTranslation(
+          closedBoardContext,
+          route,
+          sortedPointIndexes,
+          dx,
+          dy,
+          featureRadius,
+        )
+      : canCertifyInteriorBoardTranslation(
+          srj,
+          route,
+          sortedPointIndexes,
+          dx,
+          dy,
+          featureRadius,
+        )
   ) {
     return Math.abs(dx) <= POSITION_EPSILON && Math.abs(dy) <= POSITION_EPSILON
       ? undefined
@@ -3317,6 +3492,17 @@ export const applyBroadRepulsionForces = (
   allowSameNetViaPairs = false,
   runFinalViaSegmentCleanup = true,
 ) => {
+  // This certificate enables only board translation preparation here. It does
+  // not activate force-pair rejection or change this branch's force geometry.
+  const closedBoardEligible = hasClosedBroadForceContext(
+    srj,
+    routes,
+    effort,
+    passMultiplier,
+    connMap,
+    allowSameNetViaPairs,
+    runFinalViaSegmentCleanup,
+  )
   const mutableRoutes = cloneRoutes(routes)
   const netMatchers = createBroadNetMatchers(
     mutableRoutes.length,
@@ -3327,25 +3513,38 @@ export const applyBroadRepulsionForces = (
     2,
     Math.round(BROAD_FORCE_PASSES * Math.max(1, effort) * passMultiplier),
   )
-  let changed = false
-
-  for (let pass = 0; pass < maxPasses; pass += 1) {
-    const passChanged = applyBroadRepulsionPass(
-      srj,
-      mutableRoutes,
-      connMap,
-      allowSameNetViaPairs,
-      netMatchers,
-    )
-    if (!passChanged) break
-    changed = true
+  const closedBoardContext = closedBoardEligible
+    ? prepareClosedBoardTranslationContext(srj)
+    : undefined
+  if (closedBoardContext) {
+    for (const route of mutableRoutes)
+      closedBoardContextByRoute.set(route, closedBoardContext)
   }
+  try {
+    let changed = false
 
-  if (changed && runFinalViaSegmentCleanup) {
-    applyBroadViaSegmentCleanupPass(srj, mutableRoutes, connMap, netMatchers)
+    for (let pass = 0; pass < maxPasses; pass += 1) {
+      const passChanged = applyBroadRepulsionPass(
+        srj,
+        mutableRoutes,
+        connMap,
+        allowSameNetViaPairs,
+        netMatchers,
+      )
+      if (!passChanged) break
+      changed = true
+    }
+
+    if (changed && runFinalViaSegmentCleanup) {
+      applyBroadViaSegmentCleanupPass(srj, mutableRoutes, connMap, netMatchers)
+    }
+
+    return changed ? materializeRoutes(mutableRoutes) : routes
+  } finally {
+    if (closedBoardContext) {
+      for (const route of mutableRoutes) deleteClosedBoardContext(route)
+    }
   }
-
-  return changed ? materializeRoutes(mutableRoutes) : routes
 }
 
 const deriveVias = (route: MutableRoute): MutableRoute["vias"] => {
