@@ -26,7 +26,7 @@ const getSpatialCellRange = (bounds: Bounds2D, cellSize: number) => ({
   maxCellY: Math.floor(bounds.maxY / cellSize),
 })
 
-const getSpatialCellKey = (cellX: number, cellY: number) => `${cellX}:${cellY}`
+export type SpatialIndex = Map<number, Map<number, number[]>>
 
 type SpatialQueryScratch = {
   bits: Uint32Array
@@ -34,17 +34,14 @@ type SpatialQueryScratch = {
   generation: number
 }
 
-const queryScratchByIndex = new WeakMap<
-  Map<string, number[]>,
-  SpatialQueryScratch
->()
+const queryScratchByIndex = new WeakMap<SpatialIndex, SpatialQueryScratch>()
 
 export const createSpatialIndex = <T>(
   items: T[],
   getBounds: (item: T) => Bounds2D,
   cellSize: number,
-) => {
-  const index = new Map<string, number[]>()
+): SpatialIndex => {
+  const index: SpatialIndex = new Map()
   const wordCount = Math.ceil(items.length / 32)
   queryScratchByIndex.set(index, {
     bits: new Uint32Array(wordCount),
@@ -62,17 +59,21 @@ export const createSpatialIndex = <T>(
       cellX <= cellRange.maxCellX;
       cellX += 1
     ) {
+      let column = index.get(cellX)
       for (
         let cellY = cellRange.minCellY;
         cellY <= cellRange.maxCellY;
         cellY += 1
       ) {
-        const key = getSpatialCellKey(cellX, cellY)
-        const existingIndexes = index.get(key)
+        if (!column) {
+          column = new Map()
+          index.set(cellX, column)
+        }
+        const existingIndexes = column.get(cellY)
         if (existingIndexes) {
           existingIndexes.push(itemIndex)
         } else {
-          index.set(key, [itemIndex])
+          column.set(cellY, [itemIndex])
         }
       }
     }
@@ -82,7 +83,7 @@ export const createSpatialIndex = <T>(
 }
 
 export const getSpatialCandidateIndexes = (
-  spatialIndex: Map<string, number[]>,
+  spatialIndex: SpatialIndex,
   bounds: Bounds2D,
   cellSize: number,
 ): number[] => {
@@ -110,12 +111,13 @@ export const getSpatialCandidateIndexes = (
     cellX <= cellRange.maxCellX;
     cellX += 1
   ) {
+    const column = spatialIndex.get(cellX)
     for (
       let cellY = cellRange.minCellY;
       cellY <= cellRange.maxCellY;
       cellY += 1
     ) {
-      const cellIndexes = spatialIndex.get(getSpatialCellKey(cellX, cellY))
+      const cellIndexes = column?.get(cellY)
       if (!cellIndexes) continue
       for (const index of cellIndexes) {
         const wordIndex = index >>> 5

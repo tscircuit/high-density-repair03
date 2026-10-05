@@ -169,27 +169,29 @@ const getObstacleBounds = (obstacle: StaticObstacle): Bounds => ({
   maxY: obstacle.y + obstacle.height / 2,
 })
 
-const getCellKey = (cellX: number, cellY: number) => `${cellX}:${cellY}`
-
 class SpatialHash<T> {
-  private readonly cells = new Map<string, T[]>()
+  private readonly cells = new Map<number, Map<number, T[]>>()
 
   constructor(private readonly cellSize: number) {}
 
-  insert(item: T, bounds: Bounds) {
+  insert(item: T, bounds: Bounds): void {
     const minCellX = Math.floor(bounds.minX / this.cellSize)
     const maxCellX = Math.floor(bounds.maxX / this.cellSize)
     const minCellY = Math.floor(bounds.minY / this.cellSize)
     const maxCellY = Math.floor(bounds.maxY / this.cellSize)
 
     for (let cellX = minCellX; cellX <= maxCellX; cellX += 1) {
+      let column = this.cells.get(cellX)
+      if (!column && minCellY <= maxCellY) {
+        column = new Map<number, T[]>()
+        this.cells.set(cellX, column)
+      }
       for (let cellY = minCellY; cellY <= maxCellY; cellY += 1) {
-        const key = getCellKey(cellX, cellY)
-        const items = this.cells.get(key)
+        const items = column!.get(cellY)
         if (items) {
           items.push(item)
         } else {
-          this.cells.set(key, [item])
+          column!.set(cellY, [item])
         }
       }
     }
@@ -203,8 +205,17 @@ class SpatialHash<T> {
     const results = new Set<T>()
 
     for (let cellX = minCellX; cellX <= maxCellX; cellX += 1) {
+      const column = this.cells.get(cellX)
+      // Keep the original loop for nonprogressing infinite/unsafe endpoints.
+      if (
+        !column &&
+        minCellY >= -9007199254740991 &&
+        maxCellY <= 9007199254740991
+      ) {
+        continue
+      }
       for (let cellY = minCellY; cellY <= maxCellY; cellY += 1) {
-        const items = this.cells.get(getCellKey(cellX, cellY))
+        const items = column?.get(cellY)
         if (!items) continue
         for (const item of items) results.add(item)
       }
