@@ -33,6 +33,7 @@ import {
   createSpatialIndex,
   expandBounds2d,
   getSpatialCandidateIndexes,
+  type SpatialIndex,
 } from "./spatialIndex"
 import type { DrcEvaluator, DrcSnapshot } from "./types"
 import type {
@@ -50,6 +51,11 @@ import {
   createBroadNetMatchers,
   type BroadNetMatchers,
 } from "./broadNetMatchers"
+import { hasClosedBroadForceContext } from "./broadForceContext"
+import {
+  areLiveSegmentPairForcesSeparated,
+  areLiveSegmentRectForcesSeparated,
+} from "./liveForceSeparation"
 
 const cloneRoute = (route: HighDensityRoute): MutableRoute => ({
   ...route,
@@ -1146,18 +1152,342 @@ const getRoutePointIndexesMinBoardClearance = (
   return minClearance
 }
 
-const getSafeTranslationForPointIndexes = (
+const canCertifyInteriorBoardTranslation = (
   srj: SimpleRouteJson,
   route: MutableRoute,
   pointIndexes: number[],
   dx: number,
   dy: number,
   featureRadius: number,
-) => {
+): boolean => {
+  // The original geometry remains authoritative near edges and for arbitrary
+  // outlines. Only certify a finite, data-only rectangle's strict interior.
+  const coordinateLimit = 10_000
+  const outlineDescriptor = Object.getOwnPropertyDescriptor(srj, "outline")
+  const outline = outlineDescriptor?.value
+  if (
+    !Array.isArray(outline) ||
+    (outline.length !== 4 && outline.length !== 5)
+  ) {
+    return false
+  }
+  const marginDescriptor = Object.getOwnPropertyDescriptor(
+    srj,
+    "defaultObstacleMargin",
+  )
+  if (
+    (marginDescriptor && !("value" in marginDescriptor)) ||
+    (!marginDescriptor && "defaultObstacleMargin" in srj)
+  ) {
+    return false
+  }
+  const clearanceDescriptor = Object.getOwnPropertyDescriptor(
+    RELAXED_DRC_OPTIONS,
+    "traceClearance",
+  )
+  if (!clearanceDescriptor || !("value" in clearanceDescriptor)) return false
+  const margin = marginDescriptor?.value ?? 0
+  const traceClearance = clearanceDescriptor.value ?? 0.1
+  if (
+    !Number.isFinite(dx) ||
+    !Number.isFinite(dy) ||
+    !Number.isFinite(featureRadius) ||
+    featureRadius < 0 ||
+    Math.abs(dx) > coordinateLimit ||
+    Math.abs(dy) > coordinateLimit ||
+    !Number.isFinite(margin) ||
+    !Number.isFinite(traceClearance)
+  ) {
+    return false
+  }
+
+  const vertices: Point[] = []
+  for (let index = 0; index < outline.length; index += 1) {
+    const vertex = Object.getOwnPropertyDescriptor(outline, index)?.value
+    if (!vertex || typeof vertex !== "object") return false
+    const x = Object.getOwnPropertyDescriptor(vertex, "x")?.value
+    const y = Object.getOwnPropertyDescriptor(vertex, "y")?.value
+    if (
+      !Number.isFinite(x) ||
+      !Number.isFinite(y) ||
+      Math.abs(x) > coordinateLimit ||
+      Math.abs(y) > coordinateLimit
+    ) {
+      return false
+    }
+    vertices.push({ x, y })
+  }
+  const [first, second, third, fourth, closing] = vertices
+  if (!first || !second || !third || !fourth) return false
+  if (closing && (closing.x !== first.x || closing.y !== first.y)) return false
+  const startsVertical =
+    first.x === second.x &&
+    second.y === third.y &&
+    third.x === fourth.x &&
+    fourth.y === first.y
+  const startsHorizontal =
+    first.y === second.y &&
+    second.x === third.x &&
+    third.y === fourth.y &&
+    fourth.x === first.x
+  if (!startsVertical && !startsHorizontal) return false
+  const minX = Math.min(first.x, third.x)
+  const maxX = Math.max(first.x, third.x)
+  const minY = Math.min(first.y, third.y)
+  const maxY = Math.max(first.y, third.y)
+  if (maxX - minX < 1 || maxY - minY < 1) return false
+
+  const points = Object.getOwnPropertyDescriptor(route, "route")?.value
+  if (!Array.isArray(points)) return false
+  const threshold =
+    featureRadius +
+    Math.max(PREFERRED_TRACE_TO_PAD_CLEARANCE, margin, traceClearance)
+  // For coordinates bounded by 10,000 and rectangle sides at least 1,
+  // edge-projection error is below 1e-8. Normalizing at clearance >= 0.16
+  // bounds normal error by 1e-8, and L1 motion here is below 10,000, so
+  // outward-dot roundoff stays below 1e-4. Reserve an extra 0.001 beyond
+  // the original coordinate epsilon for these errors.
+  // A rectangle's incident segments stay in the endpoints' convex interior;
+  // L1 displacement also bounds outward motion along every unit normal.
+  const interiorMargin = threshold + 2 * COORDINATE_EPSILON
+  const movement = Math.abs(dx) + Math.abs(dy)
+  for (const pointIndex of pointIndexes) {
+    if (
+      !Number.isInteger(pointIndex) ||
+      pointIndex < 0 ||
+      pointIndex >= points.length
+    ) {
+      return false
+    }
+    for (let index = pointIndex - 1; index <= pointIndex + 1; index += 1) {
+      if (index < 0 || index >= points.length) continue
+      const point = Object.getOwnPropertyDescriptor(points, index)?.value
+      if (!point || typeof point !== "object") return false
+      const x = Object.getOwnPropertyDescriptor(point, "x")?.value
+      const y = Object.getOwnPropertyDescriptor(point, "y")?.value
+      if (
+        !Number.isFinite(x) ||
+        !Number.isFinite(y) ||
+        Math.abs(x) > coordinateLimit ||
+        Math.abs(y) > coordinateLimit
+      ) {
+        return false
+      }
+      const requiredClearance =
+        interiorMargin + (index === pointIndex ? movement : 0)
+      if (
+        x - minX <= requiredClearance ||
+        maxX - x <= requiredClearance ||
+        y - minY <= requiredClearance ||
+        maxY - y <= requiredClearance
+      ) {
+        return false
+      }
+    }
+  }
+  return true
+}
+
+type ClosedBoardTranslationContext = {
+  srj: SimpleRouteJson
+  minX: number
+  maxX: number
+  minY: number
+  maxY: number
+  preferredClearance: number
+}
+
+const closedBoardContextByRoute = new WeakMap<
+  MutableRoute,
+  ClosedBoardTranslationContext
+>()
+// Public calls keep their live descriptor path even if callers replace WeakMap
+// methods. Only owned clones inside a certified synchronous broad call enter.
+const getClosedBoardContext = closedBoardContextByRoute.get.bind(
+  closedBoardContextByRoute,
+)
+const deleteClosedBoardContext = closedBoardContextByRoute.delete.bind(
+  closedBoardContextByRoute,
+)
+
+const prepareClosedBoardTranslationContext = (
+  srj: SimpleRouteJson,
+): ClosedBoardTranslationContext | undefined => {
+  const coordinateLimit = 10_000
+  const outlineDescriptor = Object.getOwnPropertyDescriptor(srj, "outline")
+  const outline = outlineDescriptor?.value
+  if (
+    !Array.isArray(outline) ||
+    (outline.length !== 4 && outline.length !== 5)
+  ) {
+    return undefined
+  }
+  const marginDescriptor = Object.getOwnPropertyDescriptor(
+    srj,
+    "defaultObstacleMargin",
+  )
+  if (
+    (marginDescriptor && !("value" in marginDescriptor)) ||
+    (!marginDescriptor && "defaultObstacleMargin" in srj)
+  ) {
+    return undefined
+  }
+  const clearanceDescriptor = Object.getOwnPropertyDescriptor(
+    RELAXED_DRC_OPTIONS,
+    "traceClearance",
+  )
+  if (!clearanceDescriptor || !("value" in clearanceDescriptor))
+    return undefined
+  const margin = marginDescriptor?.value ?? 0
+  const traceClearance = clearanceDescriptor.value ?? 0.1
+  if (!Number.isFinite(margin) || !Number.isFinite(traceClearance))
+    return undefined
+  const vertices: Point[] = []
+  for (let index = 0; index < outline.length; index += 1) {
+    const vertex = Object.getOwnPropertyDescriptor(outline, index)?.value
+    if (!vertex || typeof vertex !== "object") return undefined
+    const x = Object.getOwnPropertyDescriptor(vertex, "x")?.value
+    const y = Object.getOwnPropertyDescriptor(vertex, "y")?.value
+    if (
+      !Number.isFinite(x) ||
+      !Number.isFinite(y) ||
+      Math.abs(x) > coordinateLimit ||
+      Math.abs(y) > coordinateLimit
+    ) {
+      return undefined
+    }
+    vertices.push({ x, y })
+  }
+  const [first, second, third, fourth, closing] = vertices
+  if (!first || !second || !third || !fourth) return undefined
+  if (closing && (closing.x !== first.x || closing.y !== first.y))
+    return undefined
+  const startsVertical =
+    first.x === second.x &&
+    second.y === third.y &&
+    third.x === fourth.x &&
+    fourth.y === first.y
+  const startsHorizontal =
+    first.y === second.y &&
+    second.x === third.x &&
+    third.y === fourth.y &&
+    fourth.x === first.x
+  if (!startsVertical && !startsHorizontal) return undefined
+  const minX = Math.min(first.x, third.x)
+  const maxX = Math.max(first.x, third.x)
+  const minY = Math.min(first.y, third.y)
+  const maxY = Math.max(first.y, third.y)
+  if (maxX - minX < 1 || maxY - minY < 1) return undefined
+  return {
+    srj,
+    minX,
+    maxX,
+    minY,
+    maxY,
+    preferredClearance: Math.max(
+      PREFERRED_TRACE_TO_PAD_CLEARANCE,
+      margin,
+      traceClearance,
+    ),
+  }
+}
+
+const canCertifyClosedInteriorBoardTranslation = (
+  context: ClosedBoardTranslationContext,
+  route: MutableRoute,
+  pointIndexes: number[],
+  dx: number,
+  dy: number,
+  featureRadius: number,
+): boolean => {
+  const coordinateLimit = 10_000
+  if (
+    !Number.isFinite(dx) ||
+    !Number.isFinite(dy) ||
+    !Number.isFinite(featureRadius) ||
+    featureRadius < 0 ||
+    Math.abs(dx) > coordinateLimit ||
+    Math.abs(dy) > coordinateLimit
+  ) {
+    return false
+  }
+  const points = route.route
+  const threshold = featureRadius + context.preferredClearance
+  const interiorMargin = threshold + 2 * COORDINATE_EPSILON
+  const movement = Math.abs(dx) + Math.abs(dy)
+  for (const pointIndex of pointIndexes) {
+    if (
+      !Number.isInteger(pointIndex) ||
+      pointIndex < 0 ||
+      pointIndex >= points.length
+    ) {
+      return false
+    }
+    for (let index = pointIndex - 1; index <= pointIndex + 1; index += 1) {
+      if (index < 0 || index >= points.length) continue
+      const point = points[index]
+      if (!point || typeof point !== "object") return false
+      const x = point.x
+      const y = point.y
+      if (
+        !Number.isFinite(x) ||
+        !Number.isFinite(y) ||
+        Math.abs(x) > coordinateLimit ||
+        Math.abs(y) > coordinateLimit
+      ) {
+        return false
+      }
+      const requiredClearance =
+        interiorMargin + (index === pointIndex ? movement : 0)
+      if (
+        x - context.minX <= requiredClearance ||
+        context.maxX - x <= requiredClearance ||
+        y - context.minY <= requiredClearance ||
+        context.maxY - y <= requiredClearance
+      ) {
+        return false
+      }
+    }
+  }
+  return true
+}
+
+export const getSafeTranslationForPointIndexes = (
+  srj: SimpleRouteJson,
+  route: MutableRoute,
+  pointIndexes: number[],
+  dx: number,
+  dy: number,
+  featureRadius: number,
+): Point | undefined => {
   const sortedPointIndexes = [...new Set(pointIndexes)].sort(
     (left, right) => left - right,
   )
   if (sortedPointIndexes.length === 0) return undefined
+  const closedBoardContext = getClosedBoardContext(route)
+  if (
+    closedBoardContext?.srj === srj
+      ? canCertifyClosedInteriorBoardTranslation(
+          closedBoardContext,
+          route,
+          sortedPointIndexes,
+          dx,
+          dy,
+          featureRadius,
+        )
+      : canCertifyInteriorBoardTranslation(
+          srj,
+          route,
+          sortedPointIndexes,
+          dx,
+          dy,
+          featureRadius,
+        )
+  ) {
+    return Math.abs(dx) <= POSITION_EPSILON && Math.abs(dy) <= POSITION_EPSILON
+      ? undefined
+      : { x: dx, y: dy }
+  }
   const translation = clipPointIndexesTranslationAwayFromBoardEdge(
     srj,
     route,
@@ -2688,6 +3018,7 @@ const pushSegmentSegmentPair = (
   srj: SimpleRouteJson,
   connMap?: ConnectivityMap,
   netMatchers?: BroadNetMatchers,
+  closedForceContext: boolean = false,
 ) => {
   if (
     left.z !== right.z ||
@@ -2695,6 +3026,10 @@ const pushSegmentSegmentPair = (
       ? netMatchers.routesShareNet(left, right)
       : sharesNet(left.rootConnectionName, right.rootConnectionName, connMap))
   ) {
+    return false
+  }
+
+  if (closedForceContext && areLiveSegmentPairForcesSeparated(left, right)) {
     return false
   }
 
@@ -2808,7 +3143,15 @@ const getSegmentRectRepulsion = (
   segment: Segment,
   obstacle: SimpleRouteJson["obstacles"][number],
   requiredDistance: number,
+  closedForceContext: boolean = false,
 ) => {
+  if (
+    closedForceContext &&
+    areLiveSegmentRectForcesSeparated(segment, obstacle, requiredDistance)
+  ) {
+    return undefined
+  }
+
   const halfWidth = obstacle.width / 2
   const halfHeight = obstacle.height / 2
   const obstacleCorners = [
@@ -2898,11 +3241,12 @@ const pushMovablesAwayFromObstacles = (
   routes: MutableRoute[],
   vias: ViaNode[],
   segments: Segment[],
-  viaSpatialIndex: Map<string, number[]>,
-  segmentSpatialIndex: Map<string, number[]>,
+  viaSpatialIndex: SpatialIndex,
+  segmentSpatialIndex: SpatialIndex,
   spatialCellSize: number,
   connMap?: ConnectivityMap,
   netMatchers?: BroadNetMatchers,
+  closedForceContext: boolean = false,
 ) => {
   let changed = false
   const requiredTraceObstacleDistance =
@@ -2968,6 +3312,7 @@ const pushMovablesAwayFromObstacles = (
         segment,
         obstacle,
         requiredTraceObstacleDistance,
+        closedForceContext,
       )
       if (!repulsion) continue
       const move = Math.min(BROAD_MAX_MOVE, repulsion.penetration)
@@ -2992,6 +3337,7 @@ const applyBroadRepulsionPass = (
   connMap?: ConnectivityMap,
   allowSameNetViaPairs = false,
   netMatchers?: BroadNetMatchers,
+  closedForceContext: boolean = false,
 ): boolean => {
   let changed = false
   const vias = collectViaNodes(routes)
@@ -3088,6 +3434,7 @@ const applyBroadRepulsionPass = (
           srj,
           connMap,
           netMatchers,
+          closedForceContext,
         ) || changed
     }
   }
@@ -3103,6 +3450,7 @@ const applyBroadRepulsionPass = (
       spatialCellSize,
       connMap,
       netMatchers,
+      closedForceContext,
     ) || changed
   )
 }
@@ -3167,6 +3515,15 @@ export const applyBroadRepulsionForces = (
   allowSameNetViaPairs = false,
   runFinalViaSegmentCleanup = true,
 ) => {
+  const closedForceContext = hasClosedBroadForceContext(
+    srj,
+    routes,
+    effort,
+    passMultiplier,
+    connMap,
+    allowSameNetViaPairs,
+    runFinalViaSegmentCleanup,
+  )
   const mutableRoutes = cloneRoutes(routes)
   const netMatchers = createBroadNetMatchers(
     mutableRoutes.length,
@@ -3177,25 +3534,39 @@ export const applyBroadRepulsionForces = (
     2,
     Math.round(BROAD_FORCE_PASSES * Math.max(1, effort) * passMultiplier),
   )
-  let changed = false
-
-  for (let pass = 0; pass < maxPasses; pass += 1) {
-    const passChanged = applyBroadRepulsionPass(
-      srj,
-      mutableRoutes,
-      connMap,
-      allowSameNetViaPairs,
-      netMatchers,
-    )
-    if (!passChanged) break
-    changed = true
+  const closedBoardContext = closedForceContext
+    ? prepareClosedBoardTranslationContext(srj)
+    : undefined
+  if (closedBoardContext) {
+    for (const route of mutableRoutes)
+      closedBoardContextByRoute.set(route, closedBoardContext)
   }
+  try {
+    let changed = false
 
-  if (changed && runFinalViaSegmentCleanup) {
-    applyBroadViaSegmentCleanupPass(srj, mutableRoutes, connMap, netMatchers)
+    for (let pass = 0; pass < maxPasses; pass += 1) {
+      const passChanged = applyBroadRepulsionPass(
+        srj,
+        mutableRoutes,
+        connMap,
+        allowSameNetViaPairs,
+        netMatchers,
+        closedForceContext,
+      )
+      if (!passChanged) break
+      changed = true
+    }
+
+    if (changed && runFinalViaSegmentCleanup) {
+      applyBroadViaSegmentCleanupPass(srj, mutableRoutes, connMap, netMatchers)
+    }
+
+    return changed ? materializeRoutes(mutableRoutes) : routes
+  } finally {
+    if (closedBoardContext) {
+      for (const route of mutableRoutes) deleteClosedBoardContext(route)
+    }
   }
-
-  return changed ? materializeRoutes(mutableRoutes) : routes
 }
 
 const deriveVias = (route: MutableRoute): MutableRoute["vias"] => {
