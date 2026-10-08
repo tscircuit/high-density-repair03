@@ -2402,7 +2402,7 @@ const moveViaAwayFromPoint = (
   const directionX = distance > POSITION_EPSILON ? separationX / distance : 1
   const directionY = distance > POSITION_EPSILON ? separationY / distance : 0
 
-  return moveVia(
+  return translateSameRootViaSite(
     routes,
     via,
     directionX * MAX_ERROR_MOVE,
