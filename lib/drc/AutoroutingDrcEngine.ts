@@ -169,27 +169,55 @@ const getObstacleBounds = (obstacle: StaticObstacle): Bounds => ({
   maxY: obstacle.y + obstacle.height / 2,
 })
 
-const getCellKey = (cellX: number, cellY: number) => `${cellX}:${cellY}`
-
 class SpatialHash<T> {
-  private readonly cells = new Map<string, T[]>()
+  private readonly cells = new Map<number, Map<number, number[]>>()
+  private readonly itemIds = new Map<T, number>()
+  private readonly rowItems: T[] = []
+  private visitedGenerations = new Uint32Array(0)
+  private queryGeneration = 0
 
   constructor(private readonly cellSize: number) {}
 
-  insert(item: T, bounds: Bounds) {
+  private registerItem(item: T): number {
+    const existingId = this.itemIds.get(item)
+    if (existingId !== undefined) return existingId
+
+    const itemId = this.rowItems.length
+    if (itemId >= this.visitedGenerations.length) {
+      const generations = new Uint32Array(
+        this.visitedGenerations.length === 0
+          ? 16
+          : this.visitedGenerations.length * 2,
+      )
+      generations.set(this.visitedGenerations)
+      this.visitedGenerations = generations
+    }
+    this.itemIds.set(item, itemId)
+    // Set iteration canonicalizes primitive negative zero to positive zero.
+    this.rowItems.push(item === 0 ? (0 as T) : item)
+    return itemId
+  }
+
+  insert(item: T, bounds: Bounds): void {
     const minCellX = Math.floor(bounds.minX / this.cellSize)
     const maxCellX = Math.floor(bounds.maxX / this.cellSize)
     const minCellY = Math.floor(bounds.minY / this.cellSize)
     const maxCellY = Math.floor(bounds.maxY / this.cellSize)
+    let itemId: number | undefined
 
     for (let cellX = minCellX; cellX <= maxCellX; cellX += 1) {
+      let column = this.cells.get(cellX)
+      if (!column && minCellY <= maxCellY) {
+        column = new Map<number, number[]>()
+        this.cells.set(cellX, column)
+      }
       for (let cellY = minCellY; cellY <= maxCellY; cellY += 1) {
-        const key = getCellKey(cellX, cellY)
-        const items = this.cells.get(key)
+        const items = column!.get(cellY)
+        if (itemId === undefined) itemId = this.registerItem(item)
         if (items) {
-          items.push(item)
+          items.push(itemId)
         } else {
-          this.cells.set(key, [item])
+          column!.set(cellY, [itemId])
         }
       }
     }
@@ -200,17 +228,36 @@ class SpatialHash<T> {
     const maxCellX = Math.floor(bounds.maxX / this.cellSize)
     const minCellY = Math.floor(bounds.minY / this.cellSize)
     const maxCellY = Math.floor(bounds.maxY / this.cellSize)
-    const results = new Set<T>()
+    let generation = this.queryGeneration + 1
+    if (generation > 0xffffffff) {
+      this.visitedGenerations.fill(0)
+      generation = 1
+    }
+    this.queryGeneration = generation
+    const results: T[] = []
 
     for (let cellX = minCellX; cellX <= maxCellX; cellX += 1) {
+      const column = this.cells.get(cellX)
+      // Keep the original loop for nonprogressing infinite/unsafe endpoints.
+      if (
+        !column &&
+        minCellY >= -9007199254740991 &&
+        maxCellY <= 9007199254740991
+      ) {
+        continue
+      }
       for (let cellY = minCellY; cellY <= maxCellY; cellY += 1) {
-        const items = this.cells.get(getCellKey(cellX, cellY))
+        const items = column?.get(cellY)
         if (!items) continue
-        for (const item of items) results.add(item)
+        for (const itemId of items) {
+          if (this.visitedGenerations[itemId] === generation) continue
+          this.visitedGenerations[itemId] = generation
+          results.push(this.rowItems[itemId]!)
+        }
       }
     }
 
-    return [...results]
+    return results
   }
 }
 
