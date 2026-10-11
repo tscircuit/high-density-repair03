@@ -461,10 +461,13 @@ export class AutoroutingDrcEngine {
       !Number.isSafeInteger(queryPatternCacheSize) ||
       queryPatternCacheSize < 0
     ) {
-      throw new Error("queryPatternCacheSize must be a nonnegative safe integer")
+      throw new Error(
+        "queryPatternCacheSize must be a nonnegative safe integer",
+      )
     }
     this.primitivePatternBudget = Math.floor(queryPatternCacheSize / 4)
-    this.queryPatternBudget = queryPatternCacheSize - this.primitivePatternBudget
+    this.queryPatternBudget =
+      queryPatternCacheSize - this.primitivePatternBudget
     this.traceClearance = options.traceClearance ?? DEFAULT_TRACE_CLEARANCE
     this.viaClearance = Math.max(
       options.viaClearance ?? MIN_VIA_CLEARANCE,
@@ -710,7 +713,8 @@ export class AutoroutingDrcEngine {
         viaLocations.add(locationKey)
 
         const viaId = `via_${vias.length}`
-        const diameter = routePoint.via_diameter ?? this.srj.minViaDiameter ?? 0.3
+        const diameter =
+          routePoint.via_diameter ?? this.srj.minViaDiameter ?? 0.3
         const layers = getViaLayers(routePoint, this.srj.layerCount)
         vias.push({
           kind: "via",
@@ -799,7 +803,8 @@ export class AutoroutingDrcEngine {
       return undefined
     while (this.primitivePatternUnits + units > this.primitivePatternBudget) {
       const oldestKey = this.primitivePatternIds.keys().next().value!
-      this.primitivePatternUnits -= this.primitivePatternIds.get(oldestKey)!.units
+      this.primitivePatternUnits -=
+        this.primitivePatternIds.get(oldestKey)!.units
       this.primitivePatternIds.delete(oldestKey)
     }
     const id = this.nextPrimitivePatternId++
@@ -847,7 +852,8 @@ export class AutoroutingDrcEngine {
     }
     this.queryPatterns.set(key, {
       errors: errors.length ? structuredClone(errors) : [],
-      exactCheckCount: this.lastRunStats.exactCheckCount - initialExactCheckCount,
+      exactCheckCount:
+        this.lastRunStats.exactCheckCount - initialExactCheckCount,
       broadPhaseCandidateCount:
         this.lastRunStats.broadPhaseCandidateCount -
         initialBroadPhaseCandidateCount,
