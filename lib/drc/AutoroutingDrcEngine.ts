@@ -37,6 +37,7 @@ type TraceSegment = {
   width: number
   layer: string
   pcbPortIds: string[]
+  patternId?: number
 }
 
 type Via = {
@@ -49,6 +50,7 @@ type Via = {
   y: number
   diameter: number
   layers: string[]
+  patternId?: number
 }
 
 type StaticObstacle = {
@@ -117,6 +119,11 @@ export interface AutoroutingDrcEngineOptions {
    * Defaults to false so legacy callers receive the original error shape.
    */
   includeTraceViaOwnerMetadata?: boolean
+  /**
+   * Budget for retained serialized pattern characters, ids, and entry overhead.
+   * Defaults to 8,000,000 units; zero disables query caching.
+   */
+  queryPatternCacheSize?: number
 }
 
 export interface AutoroutingDrcEngineRunStats {
@@ -411,6 +418,26 @@ export class AutoroutingDrcEngine {
   private readonly canonicalNetByAlias = new Map<string, string>()
   private readonly connMapNetByCanonicalNet = new Map<string, string>()
   private readonly obstacles: StaticObstacle[]
+  private readonly queryPatternBudget: number
+  private readonly primitivePatternBudget: number
+  private readonly primitivePatternIds = new Map<
+    string,
+    { id: number; units: number }
+  >()
+  private primitivePatternUnits = 0
+  private nextPrimitivePatternId = 0
+  private readonly obstaclePatternIds = new WeakMap<StaticObstacle, number>()
+  private readonly queryPatterns = new Map<
+    string,
+    {
+      errors: AutoroutingDrcError[]
+      exactCheckCount: number
+      broadPhaseCandidateCount: number
+      units: number
+    }
+  >()
+  private queryPatternUnits = 0
+  private cachedNetContextPattern?: string
   private readonly obstacleIndexesByLayer = new Map<
     string,
     SpatialHash<StaticObstacle>
@@ -429,6 +456,18 @@ export class AutoroutingDrcEngine {
     private readonly srj: SimpleRouteJson,
     options: AutoroutingDrcEngineOptions = {},
   ) {
+    const queryPatternCacheSize = options.queryPatternCacheSize ?? 8_000_000
+    if (
+      !Number.isSafeInteger(queryPatternCacheSize) ||
+      queryPatternCacheSize < 0
+    ) {
+      throw new Error(
+        "queryPatternCacheSize must be a nonnegative safe integer",
+      )
+    }
+    this.primitivePatternBudget = Math.floor(queryPatternCacheSize / 4)
+    this.queryPatternBudget =
+      queryPatternCacheSize - this.primitivePatternBudget
     this.traceClearance = options.traceClearance ?? DEFAULT_TRACE_CLEARANCE
     this.viaClearance = Math.max(
       options.viaClearance ?? MIN_VIA_CLEARANCE,
@@ -461,6 +500,9 @@ export class AutoroutingDrcEngine {
 
     this.compileConnectionAliases()
     this.obstacles = this.compileStaticObstacles()
+    this.obstacles.forEach((obstacle, index) =>
+      this.obstaclePatternIds.set(obstacle, index),
+    )
     this.indexStaticObstacles()
   }
 
@@ -617,6 +659,9 @@ export class AutoroutingDrcEngine {
     for (const trace of traces) {
       const netId = this.resolveNetId(trace.connection_name)
       const pcbPortIds = getTracePortIds(trace)
+      const traceOwnershipPattern = this.queryPatternBudget
+        ? JSON.stringify([trace.pcb_trace_id, netId, pcbPortIds])
+        : undefined
 
       for (let index = 0; index < trace.route.length - 1; index += 1) {
         const start = trace.route[index]
@@ -645,6 +690,19 @@ export class AutoroutingDrcEngine {
           width: getWireWidth(start, end),
           layer: start.layer,
           pcbPortIds,
+          patternId:
+            traceOwnershipPattern === undefined
+              ? undefined
+              : this.getPrimitivePatternId([
+                  "trace",
+                  traceOwnershipPattern,
+                  start.x,
+                  start.y,
+                  end.x,
+                  end.y,
+                  getWireWidth(start, end),
+                  start.layer,
+                ]),
         })
       }
 
@@ -654,16 +712,32 @@ export class AutoroutingDrcEngine {
         if (viaLocations.has(locationKey)) continue
         viaLocations.add(locationKey)
 
+        const viaId = `via_${vias.length}`
+        const diameter =
+          routePoint.via_diameter ?? this.srj.minViaDiameter ?? 0.3
+        const layers = getViaLayers(routePoint, this.srj.layerCount)
         vias.push({
           kind: "via",
           order: vias.length,
-          viaId: `via_${vias.length}`,
+          viaId,
           traceId: trace.pcb_trace_id,
           netId,
           x: routePoint.x,
           y: routePoint.y,
-          diameter: routePoint.via_diameter ?? this.srj.minViaDiameter ?? 0.3,
-          layers: getViaLayers(routePoint, this.srj.layerCount),
+          diameter,
+          layers,
+          patternId: this.queryPatternBudget
+            ? this.getPrimitivePatternId([
+                "via",
+                viaId,
+                trace.pcb_trace_id,
+                netId,
+                routePoint.x,
+                routePoint.y,
+                diameter,
+                layers,
+              ])
+            : undefined,
         })
       }
     }
@@ -705,6 +779,133 @@ export class AutoroutingDrcEngine {
     return obstacle.connectedTo.some((connectedId) =>
       this.areConnected(netId, connectedId),
     )
+  }
+
+  private getPrimitivePatternId(values: unknown[]): number | undefined {
+    if (!this.primitivePatternBudget) return undefined
+    const key = JSON.stringify(
+      values.map((value) => {
+        if (typeof value !== "number") return value
+        if (Object.is(value, -0)) return "-0"
+        if (Number.isNaN(value)) return "NaN"
+        if (value === Infinity) return "+Infinity"
+        if (value === -Infinity) return "-Infinity"
+        return value
+      }),
+    )
+    const existing = this.primitivePatternIds.get(key)
+    if (existing) return existing.id
+    const units = key.length + 64
+    if (
+      units > this.primitivePatternBudget ||
+      this.nextPrimitivePatternId >= Number.MAX_SAFE_INTEGER
+    )
+      return undefined
+    while (this.primitivePatternUnits + units > this.primitivePatternBudget) {
+      const oldestKey = this.primitivePatternIds.keys().next().value!
+      this.primitivePatternUnits -=
+        this.primitivePatternIds.get(oldestKey)!.units
+      this.primitivePatternIds.delete(oldestKey)
+    }
+    const id = this.nextPrimitivePatternId++
+    this.primitivePatternIds.set(key, { id, units })
+    this.primitivePatternUnits += units
+    return id
+  }
+
+  private getQueryPatternKey(
+    kind: string,
+    ids: Array<number | undefined>,
+  ): string | undefined {
+    if (!this.queryPatternBudget || ids.some((id) => id === undefined))
+      return undefined
+    return `${kind}:${ids.join(",")}`
+  }
+
+  private runQueryPattern(
+    key: string | undefined,
+    compute: () => AutoroutingDrcError[],
+  ): AutoroutingDrcError[] {
+    const existing = key === undefined ? undefined : this.queryPatterns.get(key)
+    if (existing) {
+      // Report the logical work of the original evaluator, including no-error checks.
+      this.lastRunStats.exactCheckCount += existing.exactCheckCount
+      this.lastRunStats.broadPhaseCandidateCount +=
+        existing.broadPhaseCandidateCount
+      return existing.errors.length ? structuredClone(existing.errors) : []
+    }
+    const initialExactCheckCount = this.lastRunStats.exactCheckCount
+    const initialBroadPhaseCandidateCount =
+      this.lastRunStats.broadPhaseCandidateCount
+    const errors = compute()
+    if (key === undefined) return errors
+    const units =
+      key.length +
+      (errors.length ? JSON.stringify(errors).length : 0) +
+      errors.length * 64 +
+      64
+    if (units > this.queryPatternBudget) return errors
+    while (this.queryPatternUnits + units > this.queryPatternBudget) {
+      const oldestKey = this.queryPatterns.keys().next().value!
+      this.queryPatternUnits -= this.queryPatterns.get(oldestKey)!.units
+      this.queryPatterns.delete(oldestKey)
+    }
+    this.queryPatterns.set(key, {
+      errors: errors.length ? structuredClone(errors) : [],
+      exactCheckCount:
+        this.lastRunStats.exactCheckCount - initialExactCheckCount,
+      broadPhaseCandidateCount:
+        this.lastRunStats.broadPhaseCandidateCount -
+        initialBroadPhaseCandidateCount,
+      units,
+    })
+    this.queryPatternUnits += units
+    return errors
+  }
+
+  private checkTraceQuery(
+    segment: TraceSegment,
+    dynamicCandidates: DynamicCollidable[],
+    obstacleCandidates: StaticObstacle[],
+  ): AutoroutingDrcError[] {
+    this.lastRunStats.broadPhaseCandidateCount +=
+      dynamicCandidates.length + obstacleCandidates.length
+    let key: string | undefined
+    if (this.queryPatternBudget) {
+      const ids: Array<number | undefined> = [segment.patternId]
+      for (const candidate of dynamicCandidates) {
+        if (
+          candidate.kind === "trace_segment" &&
+          candidate.order <= segment.order
+        )
+          continue
+        ids.push(candidate.patternId)
+      }
+      ids.push(-1)
+      for (const obstacle of obstacleCandidates)
+        ids.push(this.obstaclePatternIds.get(obstacle))
+      key = this.getQueryPatternKey("trace", ids)
+    }
+    return this.runQueryPattern(key, () => {
+      const errors: AutoroutingDrcError[] = []
+      for (const candidate of dynamicCandidates) {
+        if (
+          candidate.kind === "trace_segment" &&
+          candidate.order <= segment.order
+        )
+          continue
+        const error =
+          candidate.kind === "trace_segment"
+            ? this.checkTracePair(segment, candidate)
+            : this.checkTraceVia(segment, candidate)
+        if (error) errors.push(error)
+      }
+      for (const obstacle of obstacleCandidates) {
+        const error = this.checkTraceObstacle(segment, obstacle)
+        if (error) errors.push(error)
+      }
+      return errors
+    })
   }
 
   private checkTracePair(
@@ -887,6 +1088,16 @@ export class AutoroutingDrcEngine {
   }
 
   private checkViaPairs(vias: Via[]): AutoroutingDrcError[] {
+    const key = this.queryPatternBudget
+      ? this.getQueryPatternKey(
+          "via-pairs",
+          vias.map((via) => via.patternId),
+        )
+      : undefined
+    return this.runQueryPattern(key, () => this.computeViaPairs(vias))
+  }
+
+  private computeViaPairs(vias: Via[]): AutoroutingDrcError[] {
     if (vias.length < 2) return []
     const errors: AutoroutingDrcError[] = []
     const index = new SpatialHash<Via>(this.cellSize)
@@ -936,6 +1147,26 @@ export class AutoroutingDrcEngine {
     return errors
   }
 
+  private checkViaPadQuery(via: Via): AutoroutingDrcError[] {
+    const key = this.getQueryPatternKey("via-pad", [via.patternId])
+    return this.runQueryPattern(key, () => {
+      const errors: AutoroutingDrcError[] = []
+      const checkedObstacles = new Set<StaticObstacle>()
+      for (const layer of via.layers) {
+        const obstacleCandidates =
+          this.obstacleIndexesByLayer.get(layer)?.query(getViaBounds(via)) ?? []
+        for (const obstacle of obstacleCandidates) {
+          if (checkedObstacles.has(obstacle)) continue
+          checkedObstacles.add(obstacle)
+          this.lastRunStats.broadPhaseCandidateCount += 1
+          const error = this.checkViaObstacle(via, obstacle)
+          if (error) errors.push(error)
+        }
+      }
+      return errors
+    })
+  }
+
   evaluate(traces: SimplifiedPcbTraces): AutoroutingDrcResult {
     return this.evaluateInternal(traces, true)
   }
@@ -953,6 +1184,17 @@ export class AutoroutingDrcEngine {
     traces: SimplifiedPcbTraces,
     includeViaPadErrors: boolean,
   ): AutoroutingDrcResult {
+    if (this.queryPatternBudget) {
+      const context = JSON.stringify([
+        this.connMap?.idToNetMap,
+        this.obstacles.map((obstacle) => obstacle.connectedTo),
+      ])
+      if (context !== this.cachedNetContextPattern) {
+        this.queryPatterns.clear()
+        this.queryPatternUnits = 0
+        this.cachedNetContextPattern = context
+      }
+    }
     const { segments, vias } = this.collectDynamicGeometry(traces)
     const dynamicIndexesByLayer = this.buildDynamicIndexes(segments, vias)
     const detectedTraceErrors: AutoroutingDrcError[] = []
@@ -974,46 +1216,16 @@ export class AutoroutingDrcEngine {
       const obstacleCandidates =
         this.obstacleIndexesByLayer.get(segment.layer)?.query(queryBounds) ?? []
 
-      for (const candidate of dynamicCandidates) {
-        this.lastRunStats.broadPhaseCandidateCount += 1
-        if (
-          candidate.kind === "trace_segment" &&
-          candidate.order <= segment.order
-        ) {
-          continue
-        }
-
-        const error =
-          candidate.kind === "trace_segment"
-            ? this.checkTracePair(segment, candidate)
-            : this.checkTraceVia(segment, candidate)
-        if (error) detectedTraceErrors.push(error)
-      }
-
-      for (const obstacle of obstacleCandidates) {
-        this.lastRunStats.broadPhaseCandidateCount += 1
-        const error = this.checkTraceObstacle(segment, obstacle)
-        if (error) detectedTraceErrors.push(error)
-      }
+      detectedTraceErrors.push(
+        ...this.checkTraceQuery(segment, dynamicCandidates, obstacleCandidates),
+      )
     }
 
     const detectedViaErrors = this.checkViaPairs(vias)
 
     if (includeViaPadErrors) {
       for (const via of vias) {
-        const checkedObstacles = new Set<StaticObstacle>()
-        for (const layer of via.layers) {
-          const obstacleCandidates =
-            this.obstacleIndexesByLayer.get(layer)?.query(getViaBounds(via)) ??
-            []
-          for (const obstacle of obstacleCandidates) {
-            if (checkedObstacles.has(obstacle)) continue
-            checkedObstacles.add(obstacle)
-            this.lastRunStats.broadPhaseCandidateCount += 1
-            const error = this.checkViaObstacle(via, obstacle)
-            if (error) detectedViaPadErrors.push(error)
-          }
-        }
+        detectedViaPadErrors.push(...this.checkViaPadQuery(via))
       }
     }
 
