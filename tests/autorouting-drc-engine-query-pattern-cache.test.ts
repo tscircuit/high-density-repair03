@@ -1,10 +1,7 @@
 import { expect, spyOn, test } from "bun:test"
 import { ConnectivityMap } from "circuit-json-to-connectivity-map"
 import { AutoroutingDrcEngine } from "../lib/drc/AutoroutingDrcEngine"
-import type {
-  SimpleRouteJson,
-  SimplifiedPcbTrace,
-} from "../lib/types"
+import type { SimpleRouteJson, SimplifiedPcbTrace } from "../lib/types"
 
 type WirePoint = Extract<
   SimplifiedPcbTrace["route"][number],
