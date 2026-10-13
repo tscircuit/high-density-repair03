@@ -34,7 +34,7 @@ import {
   expandBounds2d,
   getSpatialCandidateIndexes,
 } from "./spatialIndex"
-import type { DrcEvaluator, DrcSnapshot } from "./types"
+import type { DrcEvaluator, DrcEvaluatorResult, DrcSnapshot } from "./types"
 import type {
   Bounds2D,
   MutableRoute,
@@ -58,6 +58,16 @@ const cloneRoute = (route: HighDensityRoute): MutableRoute => ({
   route: route.route.map((point) => ({ ...point })),
   vias: route.vias.map((via) => ({ ...via })),
 })
+
+/** Only newly constructed points may release their copied boundary metadata. */
+const releaseDerivedCopperBoundary = (
+  point: MutableRoute["route"][number],
+): MutableRoute["route"][number] => {
+  if (point.isFixedToCopperBoundary) {
+    delete point.isFixedToCopperBoundary
+  }
+  return point
+}
 
 export const cloneRoutes = (routes: HighDensityRoute[]): MutableRoute[] =>
   routes.map(cloneRoute)
@@ -236,6 +246,18 @@ const getDrcIssueScore = (
   getErrorSeverity: DrcSnapshotPolicy["getErrorSeverity"] = getDrcErrorSeverity,
 ) => errors.reduce((score, error) => score + getErrorSeverity(error), 0)
 
+export const getCandidateAdmissible = (
+  result: DrcEvaluatorResult,
+): boolean | undefined => {
+  const admissible = Array.isArray(result)
+    ? undefined
+    : result.candidateAdmissible
+  if (admissible !== undefined && typeof admissible !== "boolean") {
+    throw new Error("Candidate admission must be a boolean when supplied")
+  }
+  return admissible
+}
+
 const createDrcSnapshot = (
   srj: SimpleRouteJson,
   routes: HighDensityRoute[],
@@ -261,6 +283,7 @@ const createDrcSnapshot = (
   })
 
   if (drcResult) {
+    const candidateAdmissible = getCandidateAdmissible(drcResult)
     const rawErrors = Array.isArray(drcResult) ? drcResult : drcResult.errors
     const rawErrorsWithCenters = Array.isArray(drcResult)
       ? drcResult
@@ -272,6 +295,7 @@ const createDrcSnapshot = (
 
     return {
       errors: errorsWithCenters,
+      ...(candidateAdmissible !== undefined ? { candidateAdmissible } : {}),
       count: errors.length,
       issueScore: getDrcIssueScore(errorsWithCenters, policy.getErrorSeverity),
       legacyIssueScore: getDrcIssueScore(
@@ -410,6 +434,9 @@ export const collectViaNodes = (
       const hasTaggedTerminal = endpointPointIndexes.some((pointIndex) =>
         Boolean(route.route[pointIndex]?.pcb_port_id),
       )
+      const hasFixedCopperBoundary = uniquePointIndexes.some(
+        (pointIndex) => route.route[pointIndex]?.isFixedToCopperBoundary,
+      )
 
       let minZ = 0
       let maxZ = srj.layerCount - 1
@@ -426,9 +453,10 @@ export const collectViaNodes = (
         x: current.x,
         y: current.y,
         radius: (route.viaDiameter ?? srj.minViaDiameter ?? 0.3) / 2,
-        movable: endpointPointIndexes.length === 0,
+        movable: endpointPointIndexes.length === 0 && !hasFixedCopperBoundary,
         canCanonicalize:
-          endpointPointIndexes.length === 0 || !hasTaggedTerminal,
+          !hasFixedCopperBoundary &&
+          (endpointPointIndexes.length === 0 || !hasTaggedTerminal),
       })
     }
   }
@@ -725,7 +753,10 @@ const getMovableCoincidentPointIndexes = (
   const pointIndexes = getCoincidentPointIndexes(route, pointIndex)
   if (
     pointIndexes.includes(0) ||
-    pointIndexes.includes(route.route.length - 1)
+    pointIndexes.includes(route.route.length - 1) ||
+    pointIndexes.some(
+      (candidateIndex) => route.route[candidateIndex]?.isFixedToCopperBoundary,
+    )
   ) {
     return undefined
   }
@@ -1167,6 +1198,13 @@ const getSafeTranslationForPointIndexes = (
     (left, right) => left - right,
   )
   if (sortedPointIndexes.length === 0) return undefined
+  if (
+    sortedPointIndexes.some(
+      (pointIndex) => route.route[pointIndex]?.isFixedToCopperBoundary,
+    )
+  ) {
+    return undefined
+  }
   const translation = clipPointIndexesTranslationAwayFromBoardEdge(
     srj,
     route,
@@ -1278,6 +1316,7 @@ const getEndpointPointIndexesIfTranslationPreservesConnection = (
   if (
     !point ||
     point.pcb_port_id ||
+    point.isFixedToCopperBoundary ||
     (pointIndex !== 0 && pointIndex !== route.route.length - 1)
   ) {
     return undefined
@@ -1416,7 +1455,7 @@ const routeEndpointPreservesConnectionAfterTranslation = (
 ) => {
   const point = route.route[pointIndex]
   if (!point) return false
-  if (point.pcb_port_id) return false
+  if (point.pcb_port_id || point.isFixedToCopperBoundary) return false
 
   const connectionObstacle = getSameNetObstacleContainingPoint(
     srj,
@@ -1439,7 +1478,9 @@ const getEndpointConnectionObstacle = (
   connMap?: ConnectivityMap,
 ) => {
   const point = route.route[pointIndex]
-  if (!point || point.pcb_port_id) return undefined
+  if (!point || point.pcb_port_id || point.isFixedToCopperBoundary) {
+    return undefined
+  }
   return getSameNetObstacleContainingPoint(srj, route, point, connMap)
 }
 
@@ -1896,11 +1937,11 @@ const insertDetourPointAwayFromPoint = (
   ) {
     return false
   }
-  const detourPoint = {
+  const detourPoint = releaseDerivedCopperBoundary({
     ...route.route[segment.startIndex]!,
     x: projection.x + detourTranslation.x,
     y: projection.y + detourTranslation.y,
-  }
+  })
   clampToBounds(detourPoint, srj.bounds)
   if (
     pointToSegmentDistance(detourPoint, segment.start, segment.end) <=
@@ -2277,7 +2318,9 @@ const moveSegmentAwayFromObstacle = (
     return false
   }
 
-  const normalizedDetourPoints = orderedDetourPoints.map(({ point }) => point)
+  const normalizedDetourPoints = orderedDetourPoints.map(({ point }) =>
+    releaseDerivedCopperBoundary(point),
+  )
   if (
     normalizedDetourPoints.every(
       (point) =>
@@ -3358,6 +3401,7 @@ export const isDrcSnapshotCountBetter = (
   candidateSnapshot: DrcSnapshot,
   bestSnapshot: DrcSnapshot,
 ) => {
+  if (candidateSnapshot.candidateAdmissible === false) return false
   const candidateLegacyCount = getNonViaPadDrcIssueCount(candidateSnapshot)
   const bestLegacyCount = getNonViaPadDrcIssueCount(bestSnapshot)
   if (candidateLegacyCount !== bestLegacyCount) {
@@ -3559,13 +3603,17 @@ const isViaInsideBounds = (
 const appendDistinctRoutePoint = (
   points: MutableRoute["route"],
   point: MutableRoute["route"][number],
+  isDerivedPoint = false,
 ) => {
+  if (isDerivedPoint) releaseDerivedCopperBoundary(point)
   const previous = points.at(-1)
   if (
     previous &&
     areSameXY(previous, point) &&
     previous.z === point.z &&
-    previous.pcb_port_id === point.pcb_port_id
+    previous.pcb_port_id === point.pcb_port_id &&
+    Boolean(previous.isFixedToCopperBoundary) ===
+      Boolean(point.isFixedToCopperBoundary)
   ) {
     return
   }
@@ -3645,6 +3693,13 @@ export const applySafeTraceLayerMoveForError = (
     }
     if (!expanded) break
   }
+  if (
+    originalPoints
+      .slice(spanStartIndex + 1, spanEndIndex)
+      .some((point) => point.isFixedToCopperBoundary)
+  ) {
+    return false
+  }
 
   const movesStartTerminal = spanStartIndex === 0 && first.pcb_port_id
   const movesEndTerminal =
@@ -3718,17 +3773,25 @@ export const applySafeTraceLayerMoveForError = (
 
   if (movesStartTerminal) {
     appendDistinctRoutePoint(movedRoute, first)
-    appendDistinctRoutePoint(movedRoute, {
-      ...first,
-      ...startEscape!,
-      pcb_port_id: undefined,
-    })
-    appendDistinctRoutePoint(movedRoute, {
-      ...first,
-      ...startEscape!,
-      z: targetZ,
-      pcb_port_id: undefined,
-    })
+    appendDistinctRoutePoint(
+      movedRoute,
+      {
+        ...first,
+        ...startEscape!,
+        pcb_port_id: undefined,
+      },
+      true,
+    )
+    appendDistinctRoutePoint(
+      movedRoute,
+      {
+        ...first,
+        ...startEscape!,
+        z: targetZ,
+        pcb_port_id: undefined,
+      },
+      true,
+    )
   } else {
     if (!startsAtExistingTransition) {
       appendDistinctRoutePoint(movedRoute, {
@@ -3736,35 +3799,51 @@ export const applySafeTraceLayerMoveForError = (
         pcb_port_id: undefined,
       })
     }
-    appendDistinctRoutePoint(movedRoute, {
-      ...spanStart,
-      z: targetZ,
-      pcb_port_id: undefined,
-    })
+    appendDistinctRoutePoint(
+      movedRoute,
+      {
+        ...spanStart,
+        z: targetZ,
+        pcb_port_id: undefined,
+      },
+      true,
+    )
   }
 
   const firstMovedIndex = spanStartIndex + 1
   const lastMovedIndex = movesEndTerminal ? spanEndIndex - 1 : spanEndIndex
   for (let index = firstMovedIndex; index <= lastMovedIndex; index += 1) {
-    appendDistinctRoutePoint(movedRoute, {
-      ...originalPoints[index]!,
-      z: targetZ,
-      pcb_port_id: undefined,
-    })
+    appendDistinctRoutePoint(
+      movedRoute,
+      {
+        ...originalPoints[index]!,
+        z: targetZ,
+        pcb_port_id: undefined,
+      },
+      true,
+    )
   }
 
   if (movesEndTerminal) {
-    appendDistinctRoutePoint(movedRoute, {
-      ...last,
-      ...endEscape!,
-      z: targetZ,
-      pcb_port_id: undefined,
-    })
-    appendDistinctRoutePoint(movedRoute, {
-      ...last,
-      ...endEscape!,
-      pcb_port_id: undefined,
-    })
+    appendDistinctRoutePoint(
+      movedRoute,
+      {
+        ...last,
+        ...endEscape!,
+        z: targetZ,
+        pcb_port_id: undefined,
+      },
+      true,
+    )
+    appendDistinctRoutePoint(
+      movedRoute,
+      {
+        ...last,
+        ...endEscape!,
+        pcb_port_id: undefined,
+      },
+      true,
+    )
     appendDistinctRoutePoint(movedRoute, last)
   } else if (!endsAtExistingTransition) {
     appendDistinctRoutePoint(movedRoute, {
@@ -3852,6 +3931,9 @@ export const applyViaInPadLayerMoveForError = (
   const last = route.route.at(-1)
   if (!first || !last || first.z !== last.z || targetZ === first.z) return false
   if (route.route.some((point) => point.z !== first.z)) return false
+  if (route.route.slice(1, -1).some((point) => point.isFixedToCopperBoundary)) {
+    return false
+  }
   if (!first.pcb_port_id || !last.pcb_port_id) return false
 
   if (
@@ -3876,12 +3958,20 @@ export const applyViaInPadLayerMoveForError = (
   const originalPoints = route.route.map((point) => ({ ...point }))
   route.route = [
     originalPoints[0]!,
-    { ...originalPoints[0]!, z: targetZ, pcb_port_id: undefined },
+    releaseDerivedCopperBoundary({
+      ...originalPoints[0]!,
+      z: targetZ,
+      pcb_port_id: undefined,
+    }),
     ...originalPoints.slice(1, -1).map((point) => ({
       ...point,
       z: targetZ,
     })),
-    { ...originalPoints.at(-1)!, z: targetZ, pcb_port_id: undefined },
+    releaseDerivedCopperBoundary({
+      ...originalPoints.at(-1)!,
+      z: targetZ,
+      pcb_port_id: undefined,
+    }),
     originalPoints.at(-1)!,
   ]
   return true
@@ -3952,11 +4042,13 @@ export const applyTerminalViaRelocationForError = (
 
     route.route = [
       endpoint,
-      ...layerStack.slice(1).map((z) => ({
-        ...endpoint,
-        z,
-        pcb_port_id: undefined,
-      })),
+      ...layerStack.slice(1).map((z) =>
+        releaseDerivedCopperBoundary({
+          ...endpoint,
+          z,
+          pcb_port_id: undefined,
+        }),
+      ),
       ...originalPoints.slice(1, transitionStart + 1).map((point) => ({
         ...point,
         z: targetZ,
@@ -4020,12 +4112,18 @@ export const applyTerminalViaRelocationForError = (
     ...originalPoints
       .slice(transitionEnd + 1, -1)
       .map((point) => ({ ...point, z: targetZ })),
-    { ...endpoint, z: targetZ, pcb_port_id: undefined },
-    ...layerStack.slice(1, -1).map((z) => ({
+    releaseDerivedCopperBoundary({
       ...endpoint,
-      z,
+      z: targetZ,
       pcb_port_id: undefined,
-    })),
+    }),
+    ...layerStack.slice(1, -1).map((z) =>
+      releaseDerivedCopperBoundary({
+        ...endpoint,
+        z,
+        pcb_port_id: undefined,
+      }),
+    ),
     endpoint,
   ]
   return true
@@ -4459,6 +4557,7 @@ const getSameLayerTraceSpanForError = (
     !start ||
     !end ||
     spanPoints.some((point) => point.z !== start.z) ||
+    spanPoints.slice(1, -1).some((point) => point.isFixedToCopperBoundary) ||
     start.z !== end.z
   ) {
     return undefined
@@ -4497,6 +4596,13 @@ export const applyTracePairLayerMoveForError = (
     if (followingPoint?.z === segment.z) spanEndIndex += 1
   }
   if (
+    route.route
+      .slice(spanStartIndex + 1, spanEndIndex)
+      .some((point) => point.isFixedToCopperBoundary)
+  ) {
+    return false
+  }
+  if (
     (spanStartIndex === 0 &&
       route.route[0]?.pcb_port_id &&
       !isRouteEndpointEligibleForViaInPad(
@@ -4524,7 +4630,13 @@ export const applyTracePairLayerMoveForError = (
   if (!start || !end || start.z !== end.z) return false
   const movedSpan = route.route
     .slice(spanStartIndex, spanEndIndex + 1)
-    .map((point) => ({ ...point, z: targetZ, pcb_port_id: undefined }))
+    .map((point) =>
+      releaseDerivedCopperBoundary({
+        ...point,
+        z: targetZ,
+        pcb_port_id: undefined,
+      }),
+    )
   route.route.splice(
     spanStartIndex,
     spanEndIndex - spanStartIndex + 1,
@@ -4622,8 +4734,12 @@ export const applyTraceLayerCorridorForError = (
     start.z === targetZ ||
     route.jumpers?.length ||
     route.route.some(
-      (point) =>
-        point.z !== start.z || point.toNextSegmentType === "through_obstacle",
+      (point, pointIndex) =>
+        point.z !== start.z ||
+        point.toNextSegmentType === "through_obstacle" ||
+        (pointIndex > 0 &&
+          pointIndex < route.route.length - 1 &&
+          point.isFixedToCopperBoundary),
     )
   ) {
     return false
@@ -4748,18 +4864,18 @@ export const applyTraceSpanDetourForError = (
   if (spanLength <= POSITION_EPSILON) return false
   const normalX = (-spanY / spanLength) * directionSign * offset
   const normalY = (spanX / spanLength) * directionSign * offset
-  const shiftedStart = {
+  const shiftedStart = releaseDerivedCopperBoundary({
     ...start,
     x: start.x + normalX,
     y: start.y + normalY,
     pcb_port_id: undefined,
-  }
-  const shiftedEnd = {
+  })
+  const shiftedEnd = releaseDerivedCopperBoundary({
     ...end,
     x: end.x + normalX,
     y: end.y + normalY,
     pcb_port_id: undefined,
-  }
+  })
   if (
     !pointIsInsideBounds(shiftedStart, srj.bounds) ||
     !pointIsInsideBounds(shiftedEnd, srj.bounds)
@@ -4843,6 +4959,7 @@ export const isBetterDrcSnapshot = (
   bestViaIssueCount: number,
   bestSnapshot?: DrcSnapshot,
 ) => {
+  if (candidateSnapshot.candidateAdmissible === false) return false
   if (bestSnapshot) {
     const candidateLegacyCount = getNonViaPadDrcIssueCount(candidateSnapshot)
     const bestLegacyCount = getNonViaPadDrcIssueCount(bestSnapshot)

@@ -33,6 +33,7 @@ import {
   cloneRoutes,
   cloneRoutesForIndexes,
   getCenteredErrors,
+  getCandidateAdmissible,
   getDrcSnapshot,
   getTopologyRepairDrcSnapshot,
   getLegacyFirstRepairErrors,
@@ -222,6 +223,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   private referenceInputSnapshot?: {
     errors: Array<Record<string, unknown>>
     count: number
+    candidateAdmissible?: boolean
   }
   private inputSnapshot?: DrcSnapshot
 
@@ -334,6 +336,20 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   private finishAtLegacyCleanCheckpoint() {
     const checkpoint = this.legacyCleanCheckpoint
     if (!checkpoint) return false
+    if (checkpoint.snapshot.candidateAdmissible === false) {
+      throw new Error(
+        "Cannot publish a physically inadmissible repair checkpoint",
+      )
+    }
+    if (
+      this.referenceDrcEvaluator &&
+      this.getReferenceDrcSnapshot(checkpoint.routes).candidateAdmissible ===
+        false
+    ) {
+      throw new Error(
+        "Cannot publish a physically inadmissible reference checkpoint",
+      )
+    }
     this.outputHdRoutes = checkpoint.routes
     this.outputSnapshot = checkpoint.snapshot
     this.viaPadRepairRolledBack = true
@@ -381,7 +397,12 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       const errors = Array.isArray(cachedResult)
         ? cachedResult
         : cachedResult.errors
-      return { errors, count: errors.length }
+      const candidateAdmissible = getCandidateAdmissible(cachedResult)
+      return {
+        errors,
+        count: errors.length,
+        ...(candidateAdmissible !== undefined ? { candidateAdmissible } : {}),
+      }
     }
     return getDrcSnapshot(
       this.srj,
@@ -408,6 +429,11 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     routes: HighDensityRoute[],
     snapshot: DrcSnapshot,
   ) {
+    if (snapshot.candidateAdmissible === false) {
+      throw new Error(
+        "Cannot publish a physically inadmissible repair candidate",
+      )
+    }
     const traceRelaxedRoutes = this.enablePostSolveClearanceRelaxation
       ? applyTraceToPadClearanceRelaxation(this.srj, routes, this.connMap)
       : routes
@@ -422,9 +448,10 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       relaxedRoutes === routes ? snapshot : this.getSnapshot(relaxedRoutes)
 
     const relaxedSnapshotIsNoWorse =
-      relaxedSnapshot.count < snapshot.count ||
-      (relaxedSnapshot.count === snapshot.count &&
-        relaxedSnapshot.issueScore <= snapshot.issueScore)
+      relaxedSnapshot.candidateAdmissible !== false &&
+      (relaxedSnapshot.count < snapshot.count ||
+        (relaxedSnapshot.count === snapshot.count &&
+          relaxedSnapshot.issueScore <= snapshot.issueScore))
     let acceptedRoutes = relaxedSnapshotIsNoWorse ? relaxedRoutes : routes
     let acceptedSnapshot = relaxedSnapshotIsNoWorse ? relaxedSnapshot : snapshot
     const inputSnapshot =
@@ -435,11 +462,29 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         this.getReferenceDrcSnapshot(acceptedRoutes)
       this.referenceInputDrcIssueCount = referenceInputSnapshot.count
       this.referenceCandidateDrcIssueCount = referenceCandidateSnapshot.count
-      if (referenceCandidateSnapshot.count > referenceInputSnapshot.count) {
+      if (
+        referenceCandidateSnapshot.candidateAdmissible === false ||
+        referenceCandidateSnapshot.count > referenceInputSnapshot.count
+      ) {
         acceptedRoutes = this.guardedInputHdRoutes
         acceptedSnapshot = inputSnapshot
         this.referenceCandidateRolledBack = true
       }
+      if (
+        (this.referenceCandidateRolledBack
+          ? referenceInputSnapshot
+          : referenceCandidateSnapshot
+        ).candidateAdmissible === false
+      ) {
+        throw new Error(
+          "Cannot publish a physically inadmissible reference candidate",
+        )
+      }
+    }
+    if (acceptedSnapshot.candidateAdmissible === false) {
+      throw new Error(
+        "Cannot publish a physically inadmissible repair candidate",
+      )
     }
     this.outputHdRoutes = acceptedRoutes
     this.outputSnapshot = acceptedSnapshot
@@ -802,6 +847,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
               bestTopologyCandidate?.viaIssueCount ?? bestViaIssueCount
 
             if (
+              candidateSnapshot.candidateAdmissible !== false &&
               candidateViaIssueCount <= comparisonViaIssueCount &&
               (isDrcSnapshotCountBetter(
                 candidateSnapshot,

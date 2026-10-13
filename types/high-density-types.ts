@@ -40,6 +40,8 @@ export type HighDensityIntraNodeRoute = {
     y: number
     z: number
     pcb_port_id?: string
+    /** An exact splice into retained copper; its XY and layer stay fixed. */
+    isFixedToCopperBoundary?: boolean
     insideJumperPad?: boolean
     toNextSegmentType?: "through_obstacle"
   }>

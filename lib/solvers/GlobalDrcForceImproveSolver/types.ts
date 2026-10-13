@@ -13,7 +13,12 @@ export type DrcEvaluatorInput = {
 }
 
 export type DrcEvaluatorResult =
-  | { errors: DrcError[]; errorsWithCenters?: DrcError[] }
+  | {
+      errors: DrcError[]
+      errorsWithCenters?: DrcError[]
+      /** A physical constraint checked before this candidate can be selected. */
+      candidateAdmissible?: boolean
+    }
   | DrcError[]
 
 export type DrcEvaluatorFunction = ((
@@ -37,6 +42,7 @@ export type DrcEvaluator = DrcEvaluatorFunction & {
 
 export type DrcSnapshot = {
   errors: DrcError[]
+  candidateAdmissible?: boolean
   count: number
   issueScore: number
   legacyIssueScore?: number

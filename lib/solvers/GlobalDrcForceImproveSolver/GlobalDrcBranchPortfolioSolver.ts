@@ -8,6 +8,7 @@ import { getDrcSnapshot } from "./drc-snapshot"
 import {
   applyBroadRepulsionForces,
   cloneRoutes,
+  getCandidateAdmissible,
   getNonViaPadDrcIssueCount,
   hasNewDrcErrorIdentities,
   getViaDrcIssueCount,
@@ -77,6 +78,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
   private referenceInputSnapshot?: {
     errors: Array<Record<string, unknown>>
     count: number
+    candidateAdmissible?: boolean
   }
 
   constructor(params: GlobalDrcBranchPortfolioSolverParams) {
@@ -136,6 +138,11 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         errorsWithCenters: errorsWithCenters.filter(
           (error) => !isViaPadDrcError(error),
         ),
+        ...(!Array.isArray(result) &&
+        "candidateAdmissible" in result &&
+        result.candidateAdmissible !== undefined
+          ? { candidateAdmissible: result.candidateAdmissible }
+          : {}),
       }
     }
     Object.defineProperty(this.legacyDrcEvaluator, "inputMode", {
@@ -188,7 +195,12 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       const errors = Array.isArray(cachedResult)
         ? cachedResult
         : cachedResult.errors
-      return { errors, count: errors.length }
+      const candidateAdmissible = getCandidateAdmissible(cachedResult)
+      return {
+        errors,
+        count: errors.length,
+        ...(candidateAdmissible !== undefined ? { candidateAdmissible } : {}),
+      }
     }
     return getDrcSnapshot(
       this.params.srj,
@@ -204,6 +216,9 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
     snapshot: DrcSnapshot,
     selectedSolver?: GlobalDrcForceImproveSolver,
   ) {
+    if (snapshot.candidateAdmissible === false) {
+      throw new Error("Cannot select a physically inadmissible repair branch")
+    }
     let acceptedRoutes = routes
     let acceptedSnapshot = snapshot
     if (this.params.referenceDrcEvaluator) {
@@ -213,6 +228,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       this.referenceInputDrcIssueCount = referenceInputSnapshot.count
       this.referenceCandidateDrcIssueCount = referenceCandidateSnapshot.count
       if (
+        referenceCandidateSnapshot.candidateAdmissible === false ||
         referenceCandidateSnapshot.count > referenceInputSnapshot.count ||
         (referenceCandidateSnapshot.count === referenceInputSnapshot.count &&
           hasNewDrcErrorIdentities(
@@ -224,6 +240,19 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         acceptedSnapshot = this.inputSnapshot!
         this.referenceCandidateRolledBack = true
       }
+      if (
+        (this.referenceCandidateRolledBack
+          ? referenceInputSnapshot
+          : referenceCandidateSnapshot
+        ).candidateAdmissible === false
+      ) {
+        throw new Error(
+          "Cannot select a physically inadmissible reference branch",
+        )
+      }
+    }
+    if (acceptedSnapshot.candidateAdmissible === false) {
+      throw new Error("Cannot publish a physically inadmissible repair branch")
     }
     this.outputHdRoutes = acceptedRoutes
     this.selectedSolver = selectedSolver
@@ -585,8 +614,9 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         this.autoroutingDrcEngine,
       )
       const doesNotRegressLegacyDrc =
+        mixedSnapshot.candidateAdmissible !== false &&
         getNonViaPadDrcIssueCount(mixedSnapshot) <=
-        getNonViaPadDrcIssueCount(this.legacySafeTraceLayerSnapshot!)
+          getNonViaPadDrcIssueCount(this.legacySafeTraceLayerSnapshot!)
       let improvesReferenceDrc = true
       if (this.params.referenceDrcEvaluator) {
         const referenceInputSnapshot = this.getReferenceDrcSnapshot(
@@ -598,6 +628,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         this.mixedReferenceCandidateDrcIssueCount =
           referenceCandidateSnapshot.count
         improvesReferenceDrc =
+          referenceCandidateSnapshot.candidateAdmissible !== false &&
           referenceCandidateSnapshot.count <= referenceInputSnapshot.count
       }
       this.mixedSafeTraceLayerPhaseAccepted =

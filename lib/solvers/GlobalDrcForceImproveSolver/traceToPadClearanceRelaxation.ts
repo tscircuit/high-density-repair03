@@ -23,7 +23,11 @@ const CANDIDATE_SCALES = [1, 0.5, 0.25, 0.1, 0.05, 0.025] as const
 const DEFAULT_TRACE_CLEARANCE = 0.1
 
 type Point2D = { x: number; y: number }
-type Point3D = Point2D & { z: number; pcb_port_id?: string }
+type Point3D = Point2D & {
+  z: number
+  pcb_port_id?: string
+  isFixedToCopperBoundary?: boolean
+}
 
 type ClearanceBlocker =
   | {
@@ -148,6 +152,7 @@ const endpointCanSlideWithinSameNetCopper = (
   connMap?: ConnectivityMap,
 ) =>
   !point.pcb_port_id &&
+  !point.isFixedToCopperBoundary &&
   srj.obstacles.some(
     (obstacle) =>
       isSameNetObstacle(route, obstacle, connMap) &&
@@ -271,7 +276,9 @@ const isFixedRoutePoint = (
   }
 
   const point = route.route[pointIndex]
-  if (!point || point.insideJumperPad) return true
+  if (!point || point.insideJumperPad || point.isFixedToCopperBoundary) {
+    return true
+  }
 
   const previous = route.route[pointIndex - 1]
   const next = route.route[pointIndex + 1]
