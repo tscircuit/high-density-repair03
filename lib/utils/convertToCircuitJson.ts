@@ -3,7 +3,7 @@ import type { AnyCircuitElement, PcbTrace, PcbVia } from "circuit-json"
 import type { Obstacle, SimpleRouteJson, SimplifiedPcbTrace } from "../types"
 import type { HighDensityRoute } from "../types/high-density-types"
 import { getConnectionPointLayers } from "../types/srj-types"
-import { getViaLayers } from "./getViaLayers"
+import { getViaDrillLayers } from "./getViaLayers"
 import { mapZToLayerName } from "./mapZToLayerName"
 import type { LayerName } from "./mapZToLayerName"
 import { pointToBoxDistance } from "@tscircuit/math-utils"
@@ -384,6 +384,10 @@ function createPcbPadElements(srj: SimpleRouteJson): AnyCircuitElement[] {
     const height = obstacle.height
     const x = obstacle.center.x
     const y = obstacle.center.y
+    const ccwRotationDegrees = obstacle.ccwRotationDegrees
+    const hasRotation =
+      typeof ccwRotationDegrees === "number" &&
+      Number.isFinite(ccwRotationDegrees)
 
     const isMultiLayerObstacle = layers.length > 1
 
@@ -392,6 +396,30 @@ function createPcbPadElements(srj: SimpleRouteJson): AnyCircuitElement[] {
         platedHoleId ?? `pcb_plated_hole_${x.toFixed(3)}_${y.toFixed(3)}`
       if (addedPlatedHoleIds.has(id)) continue
       addedPlatedHoleIds.add(id)
+
+      if (hasRotation) {
+        const holeDiameter = Math.max(Math.min(width, height) * 0.5, 0.1)
+        pads.push({
+          type: "pcb_plated_hole",
+          pcb_plated_hole_id: id,
+          shape: "rotated_pill_hole_with_rect_pad",
+          hole_shape: "rotated_pill",
+          pad_shape: "rect",
+          hole_width: holeDiameter,
+          hole_height: holeDiameter,
+          hole_ccw_rotation: ccwRotationDegrees,
+          rect_pad_width: width,
+          rect_pad_height: height,
+          rect_ccw_rotation: ccwRotationDegrees,
+          hole_offset_x: 0,
+          hole_offset_y: 0,
+          x,
+          y,
+          layers,
+          ...(pcbPortId ? { pcb_port_id: pcbPortId } : {}),
+        })
+        continue
+      }
 
       const isCircularLike = Math.abs(width - height) < 0.001
 
@@ -432,6 +460,22 @@ function createPcbPadElements(srj: SimpleRouteJson): AnyCircuitElement[] {
     if (addedSmtPadIds.has(id)) continue
     addedSmtPadIds.add(id)
 
+    if (hasRotation) {
+      pads.push({
+        type: "pcb_smtpad",
+        pcb_smtpad_id: id,
+        layer: layers[0],
+        shape: "rotated_rect",
+        x,
+        y,
+        width,
+        height,
+        ccw_rotation: ccwRotationDegrees,
+        ...(pcbPortId ? { pcb_port_id: pcbPortId } : {}),
+      })
+      continue
+    }
+
     pads.push({
       type: "pcb_smtpad",
       pcb_smtpad_id: id,
@@ -450,15 +494,19 @@ function createPcbPadElements(srj: SimpleRouteJson): AnyCircuitElement[] {
 
 /**
  * Extract vias from routes and convert them to pcb_via objects
- * @param routes The routes to extract vias from
- * @param minViaDiameter Default diameter for vias
  * @returns An array of PcbVia elements
  */
-function extractViasFromRoutes(
-  routes: SimplifiedPcbTrace[] | HighDensityRoute[],
-  layerCount: number,
+function extractViasFromRoutes({
+  routes,
+  layerCount,
   minViaDiameter = 0.3,
-): PcbVia[] {
+  allowBlindAndBuriedVias = false,
+}: {
+  routes: SimplifiedPcbTrace[] | HighDensityRoute[]
+  layerCount: number
+  minViaDiameter?: number
+  allowBlindAndBuriedVias?: boolean
+}): PcbVia[] {
   const vias: PcbVia[] = []
   const viaLocations = new Set<string>() // Track unique via locations
 
@@ -479,7 +527,11 @@ function extractViasFromRoutes(
                 y: segment.y,
                 outer_diameter: viaDiameter,
                 hole_diameter: viaDiameter * 0.5,
-                layers: getViaLayers(segment, layerCount) as LayerName[],
+                layers: getViaDrillLayers({
+                  via: segment,
+                  layerCount,
+                  allowBlindAndBuriedVias,
+                }) as LayerName[],
               })
               viaLocations.add(locationKey)
             }
@@ -514,10 +566,11 @@ function extractViasFromRoutes(
                 y: currPoint.y,
                 outer_diameter: viaDiameter,
                 hole_diameter: viaDiameter * 0.5,
-                layers: getViaLayers(
-                  { from_layer: fromLayer, to_layer: toLayer },
+                layers: getViaDrillLayers({
+                  via: { from_layer: fromLayer, to_layer: toLayer },
                   layerCount,
-                ) as LayerName[],
+                  allowBlindAndBuriedVias,
+                }) as LayerName[],
               })
               viaLocations.add(locationKey)
             }
@@ -557,11 +610,12 @@ export function convertToCircuitJson(
 
   // Extract and add vias as independent pcb_via elements
   circuitJson.push(
-    ...extractViasFromRoutes(
+    ...extractViasFromRoutes({
       routes,
-      srjWithPointPairs.layerCount,
+      layerCount: srjWithPointPairs.layerCount,
       minViaDiameter,
-    ),
+      allowBlindAndBuriedVias: srjWithPointPairs.allowBlindAndBuriedVias,
+    }),
   )
 
   // Build a map of connection names to simplify lookups

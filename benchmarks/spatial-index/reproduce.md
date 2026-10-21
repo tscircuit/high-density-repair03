@@ -17,7 +17,6 @@ the printed reduction compares query plus identical exact filtering.
 Flatbush 4.5.0 and RBush 4.0.1 are exactly pinned development dependencies.
 
 The production-compatible `cell-candidates` mode compares:
-
 - The original Map-of-cells grid, unioned with a Set and sorted by numeric ID.
 - The production optimized grid, unioned with generation-stamped bitsets.
 - Flatbush, bulk-built with integer cell-range rectangles.
@@ -91,12 +90,12 @@ passed the full ordered oracle comparisons in both modes.
 `observed-result.json.gz` records every sample and the environment. Times below
 are median milliseconds per complete query window in `cell-candidates` mode:
 
-| Actual captured window | Original grid | Bitset grid | Flatbush | RBush |
-| --- | ---: | ---: | ---: | ---: |
-| Via build 0: 136 items, 374 queries | 0.2905 | 0.2090 | 0.1175 | 0.2365 |
-| Segment build 1: 2,167 items, 2,541 queries | 11.9808 | 4.3284 | 9.3027 | 13.5282 |
-| Via build 2: 136 items, 374 queries | 0.2758 | 0.2105 | 0.1184 | 0.2194 |
-| Segment build 3: 2,166 items, 2,540 queries | 11.7309 | 4.4356 | 9.4289 | 13.0368 |
+| Actual captured window                      | Original grid | Bitset grid | Flatbush |   RBush |
+| ------------------------------------------- | ------------: | ----------: | -------: | ------: |
+| Via build 0: 136 items, 374 queries         |        0.2905 |      0.2090 |   0.1175 |  0.2365 |
+| Segment build 1: 2,167 items, 2,541 queries |       11.9808 |      4.3284 |   9.3027 | 13.5282 |
+| Via build 2: 136 items, 374 queries         |        0.2758 |      0.2105 |   0.1184 |  0.2194 |
+| Segment build 3: 2,166 items, 2,540 queries |       11.7309 |      4.4356 |   9.4289 | 13.0368 |
 
 For the segment windows, bitset query medians fell 63.9% and 62.2%; their
 estimated build+query costs fell 61.6% and 59.6%. Bitset construction medians
