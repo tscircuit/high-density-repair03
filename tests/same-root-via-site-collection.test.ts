@@ -8,12 +8,18 @@ import type {
   MutableRoute,
   ViaNode,
 } from "../lib/solvers/GlobalDrcForceImproveSolver/internalTypes"
+import type { SimpleRouteJson } from "../lib/types"
 
-const getOriginalSameRootViaSite = (
-  routes: MutableRoute[],
-  via: ViaNode,
-): ViaNode[] => {
-  const currentVias = collectViaNodes(routes)
+const getOriginalSameRootViaSite = ({
+  routes,
+  via,
+  srj,
+}: {
+  routes: MutableRoute[]
+  via: ViaNode
+  srj: SimpleRouteJson
+}): ViaNode[] => {
+  const currentVias = collectViaNodes(routes, srj)
   const currentVia = currentVias.find(
     (candidate) =>
       candidate.routeIndex === via.routeIndex &&
@@ -53,7 +59,14 @@ const createRoute = (
 
 test("root-scoped via collection retains ordered live groups and shared-site boundaries", () => {
   const epsilon = COORDINATE_EPSILON
-  const layerCount = 4
+  const srj: SimpleRouteJson = {
+    bounds: { minX: -10, maxX: 10, minY: -10, maxY: 10 },
+    layerCount: 4,
+    minTraceWidth: 0.15,
+    minViaDiameter: 0.3,
+    connections: [],
+    obstacles: [],
+  }
   const target = createRoute(
     "target",
     "root",
@@ -97,14 +110,21 @@ test("root-scoped via collection retains ordered live groups and shared-site bou
   }
   const check = (inputRoutes: MutableRoute[], via: ViaNode): void => {
     const before = structuredClone(inputRoutes)
-    expect(getSameRootViaSite(inputRoutes, via)).toEqual(
-      getOriginalSameRootViaSite(inputRoutes, via),
-    )
+    for (const allowBlindAndBuriedVias of [false, true]) {
+      const settings = { ...srj, allowBlindAndBuriedVias }
+      expect(
+        getSameRootViaSite({ routes: inputRoutes, via, srj: settings }),
+      ).toEqual(
+        getOriginalSameRootViaSite({ routes: inputRoutes, via, srj: settings }),
+      )
+    }
     expect(inputRoutes).toEqual(before)
   }
   check(routes, staleVia)
   expect(
-    getSameRootViaSite(routes, staleVia).map((via) => via.routeIndex),
+    getSameRootViaSite({ routes, via: staleVia, srj }).map(
+      (via) => via.routeIndex,
+    ),
   ).toEqual([1, 2, 5, 6])
   check(routes, { ...staleVia, routeIndex: 5 })
   check(routes, { ...staleVia, pointIndexes: [4] })
@@ -149,7 +169,7 @@ test("root-scoped via collection retains ordered live groups and shared-site bou
         }
         xs.push(x)
         ys.push(y)
-        layers.push(Math.floor(random() * layerCount))
+        layers.push(Math.floor(random() * srj.layerCount))
       }
       generated.push(
         createRoute(
@@ -161,7 +181,7 @@ test("root-scoped via collection retains ordered live groups and shared-site bou
         ),
       )
     }
-    const candidates = collectViaNodes(generated)
+    const candidates = collectViaNodes(generated, srj)
     for (const via of candidates) check(generated, via)
     if (candidates[0]) {
       const original = candidates[0]
