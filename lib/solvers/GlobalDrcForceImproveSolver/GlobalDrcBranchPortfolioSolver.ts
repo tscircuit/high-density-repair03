@@ -41,6 +41,12 @@ type PortfolioCandidate = {
 
 const LOW_COUNT_SAFE_TRACE_LAYER_MAX_DRC_ISSUES = 3
 
+// Intermediate branches may introduce contacts that a later topology phase
+// removes. Only the owning portfolio may publish their combined output.
+class PortfolioBranchSolver extends GlobalDrcForceImproveSolver {
+  protected override deferTraceObstacleOverlapGuard = true
+}
+
 export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
   readonly params: GlobalDrcBranchPortfolioSolverParams
   readonly inputHdRoutes: HighDensityRoute[]
@@ -70,6 +76,8 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
   private viaInPadSolver?: GlobalDrcForceImproveSolver
   private portfolioSelectedSolver?: GlobalDrcForceImproveSolver
   private selectedSolver?: GlobalDrcForceImproveSolver
+  private overlapSafeCheckpoint?: PortfolioCandidate
+  private traceObstacleRepairRolledBack = false
   private referenceInputDrcIssueCount?: number
   private referenceCandidateDrcIssueCount?: number
   private referenceCandidateRolledBack = false
@@ -200,6 +208,27 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
     )
   }
 
+  private rememberOverlapSafeCandidate(
+    routes: HighDensityRoute[],
+    snapshot: DrcSnapshot,
+    solver?: GlobalDrcForceImproveSolver,
+    safeTraceLayerPhaseAccepted = false,
+  ): void {
+    if (hasNewTraceObstacleOverlaps(snapshot, this.inputSnapshot!)) return
+    if (
+      this.overlapSafeCheckpoint &&
+      !isDrcSnapshotCountBetter(snapshot, this.overlapSafeCheckpoint.snapshot)
+    ) {
+      return
+    }
+    this.overlapSafeCheckpoint = {
+      routes: materializeRoutes(cloneRoutes(routes)),
+      snapshot,
+      solver,
+      safeTraceLayerPhaseAccepted,
+    }
+  }
+
   private finishWithOutput(
     routes: HighDensityRoute[],
     snapshot: DrcSnapshot,
@@ -207,6 +236,24 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
   ) {
     let acceptedRoutes = routes
     let acceptedSnapshot = snapshot
+    this.rememberOverlapSafeCandidate(
+      routes,
+      snapshot,
+      selectedSolver,
+      this.safeTraceLayerPhaseAccepted,
+    )
+    if (hasNewTraceObstacleOverlaps(snapshot, this.inputSnapshot!)) {
+      const checkpoint = this.overlapSafeCheckpoint!
+      acceptedRoutes = checkpoint.routes
+      acceptedSnapshot = checkpoint.snapshot
+      selectedSolver = checkpoint.solver
+      this.portfolioSelectedSolver = checkpoint.solver
+      this.safeTraceLayerPhaseAccepted = checkpoint.safeTraceLayerPhaseAccepted
+      this.mixedSafeTraceLayerPhaseAccepted =
+        checkpoint.solver !== undefined &&
+        checkpoint.solver === this.mixedSafeTraceLayerSolver
+      this.traceObstacleRepairRolledBack = true
+    }
     if (this.params.referenceDrcEvaluator) {
       const referenceInputSnapshot = this.referenceInputSnapshot!
       const referenceCandidateSnapshot =
@@ -268,6 +315,8 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         this.referenceCandidateDrcIssueCount,
       drcBranchPortfolioReferenceCandidateRolledBack:
         this.referenceCandidateRolledBack,
+      drcBranchPortfolioTraceObstacleRepairRolledBack:
+        this.traceObstacleRepairRolledBack,
       drcBranchPortfolioMixedReferenceInputDrcIssueCount:
         this.mixedReferenceInputDrcIssueCount,
       drcBranchPortfolioMixedReferenceCandidateDrcIssueCount:
@@ -277,7 +326,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
   }
 
   private startBaselineBranch() {
-    this.baselineSolver = new GlobalDrcForceImproveSolver({
+    this.baselineSolver = new PortfolioBranchSolver({
       ...this.params,
       hdRoutes: this.inputHdRoutes,
       drcEvaluator: this.legacyDrcEvaluator,
@@ -295,13 +344,14 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
     portfolioSelectedSolver?: GlobalDrcForceImproveSolver,
   ) {
     this.portfolioSelectedSolver = portfolioSelectedSolver
+    this.rememberOverlapSafeCandidate(routes, snapshot, portfolioSelectedSolver)
     if (!this.params.enableSafeTraceLayerMoves) {
       this.startViaInPadPhase(routes, snapshot, portfolioSelectedSolver)
       return
     }
     this.safeTraceLayerInputRoutes = routes
     this.safeTraceLayerInputSnapshot = snapshot
-    this.safeTraceLayerSolver = new GlobalDrcForceImproveSolver({
+    this.safeTraceLayerSolver = new PortfolioBranchSolver({
       ...this.params,
       hdRoutes: routes,
       drcEvaluator: this.legacyDrcEvaluator,
@@ -324,6 +374,12 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
     portfolioSelectedSolver?: GlobalDrcForceImproveSolver,
   ) {
     this.portfolioSelectedSolver = portfolioSelectedSolver
+    this.rememberOverlapSafeCandidate(
+      routes,
+      snapshot,
+      portfolioSelectedSolver,
+      this.safeTraceLayerPhaseAccepted,
+    )
     const shouldRunViaInPadTopologyRepair =
       this.params.enableViaInPadLayerMoves &&
       this.params.viaInPadDrcEvaluator !== undefined
@@ -334,7 +390,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       this.finishWithOutput(routes, snapshot, portfolioSelectedSolver)
       return
     }
-    this.viaInPadSolver = new GlobalDrcForceImproveSolver({
+    this.viaInPadSolver = new PortfolioBranchSolver({
       ...this.params,
       hdRoutes: routes,
       drcEvaluator:
@@ -359,7 +415,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
     this.legacySafeTraceLayerRoutes = legacyRoutes
     this.legacySafeTraceLayerSnapshot = legacySnapshot
     this.legacySafeTraceLayerSelectedSolver = legacySelectedSolver
-    this.mixedSafeTraceLayerSolver = new GlobalDrcForceImproveSolver({
+    this.mixedSafeTraceLayerSolver = new PortfolioBranchSolver({
       ...this.params,
       hdRoutes: this.safeTraceLayerInputRoutes!,
       drcEvaluator: this.params.drcEvaluator,
@@ -401,7 +457,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       )
       return
     }
-    this.broadSolver = new GlobalDrcForceImproveSolver({
+    this.broadSolver = new PortfolioBranchSolver({
       ...this.params,
       hdRoutes: broadInputRoutes,
       drcEvaluator: this.legacyDrcEvaluator,
@@ -423,6 +479,11 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         this.params.connMap,
         this.autoroutingDrcEngine,
       )
+      this.overlapSafeCheckpoint = {
+        routes: this.guardedInputHdRoutes,
+        snapshot: this.inputSnapshot,
+        safeTraceLayerPhaseAccepted: false,
+      }
       if (getNonViaPadDrcIssueCount(this.inputSnapshot) === 0) {
         this.startViaInPadPhase(this.inputHdRoutes, this.inputSnapshot)
         return
@@ -441,6 +502,11 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         this.params.drcEvaluator,
         this.params.connMap,
         this.autoroutingDrcEngine,
+      )
+      this.rememberOverlapSafeCandidate(
+        baselineRoutes,
+        this.baselineSnapshot,
+        this.baselineSolver,
       )
       if (getNonViaPadDrcIssueCount(this.baselineSnapshot) === 0) {
         this.startViaInPadPhase(
@@ -477,11 +543,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         this.autoroutingDrcEngine,
       )
       if (
-        isDrcSnapshotCountBetter(this.broadSnapshot, this.baselineSnapshot!) &&
-        // Broad preprocessing can introduce contacts before its child solver
-        // starts. Let that branch repair them, but compare the result against
-        // the portfolio's original input before selecting it.
-        !hasNewTraceObstacleOverlaps(this.broadSnapshot, this.inputSnapshot!)
+        isDrcSnapshotCountBetter(this.broadSnapshot, this.baselineSnapshot!)
       ) {
         this.startSafeTraceLayerPhase(
           broadRoutes,
@@ -533,6 +595,12 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       let acceptedSolver = this.safeTraceLayerPhaseAccepted
         ? this.safeTraceLayerSolver
         : this.portfolioSelectedSolver
+      this.rememberOverlapSafeCandidate(
+        acceptedRoutes,
+        acceptedSnapshot,
+        acceptedSolver,
+        this.safeTraceLayerPhaseAccepted,
+      )
       if (
         this.preBroadCandidate &&
         !isDrcSnapshotCountBetter(

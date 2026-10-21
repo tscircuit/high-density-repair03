@@ -191,6 +191,8 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   readonly enableViaInPadLayerMoves: boolean
   readonly enableTraceViaOwnerTargeting: boolean
   outputHdRoutes: HighDensityRoute[]
+  /** Portfolio children defer this invariant until the final portfolio output. */
+  protected deferTraceObstacleOverlapGuard = false
   private initialDrcIssueCount: number | undefined
   private initialRepairDrcIssueCount: number | undefined
   private initialLowCountErrorsHaveMovableTraces = false
@@ -413,6 +415,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     routes: HighDensityRoute[],
     snapshot: DrcSnapshot,
   ): void {
+    if (this.deferTraceObstacleOverlapGuard) return
     if (
       this.inputSnapshot &&
       hasNewTraceObstacleOverlaps(snapshot, this.inputSnapshot)
@@ -465,7 +468,10 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     let acceptedSnapshot = relaxedSnapshotIsNoWorse ? relaxedSnapshot : snapshot
     const inputSnapshot =
       this.inputSnapshot ?? this.getSnapshot(this.guardedInputHdRoutes)
-    if (hasNewTraceObstacleOverlaps(acceptedSnapshot, inputSnapshot)) {
+    if (
+      !this.deferTraceObstacleOverlapGuard &&
+      hasNewTraceObstacleOverlaps(acceptedSnapshot, inputSnapshot)
+    ) {
       acceptedRoutes =
         this.overlapSafeCheckpoint?.routes ?? this.guardedInputHdRoutes
       acceptedSnapshot = this.overlapSafeCheckpoint?.snapshot ?? inputSnapshot

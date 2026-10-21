@@ -24,7 +24,18 @@ test("broad repulsion keeps the established contact choice for equal distances",
       false,
       false,
     )
-    expect(output).toEqual(fixture.expected)
+    // Math.hypot differs by a few ULPs between macOS and Linux. Preserve the
+    // contact choice and all route metadata while allowing sub-picometer drift.
+    expect(output).toEqual(
+      fixture.expected.map((route) => ({
+        ...route,
+        route: route.route.map((point) => ({
+          ...point,
+          x: expect.closeTo(point.x, 14),
+          y: expect.closeTo(point.y, 14),
+        })),
+      })),
+    )
     expect(fixture.routes).toEqual(originalRoutes)
   }
 })
