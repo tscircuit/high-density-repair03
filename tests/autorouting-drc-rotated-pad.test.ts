@@ -39,7 +39,13 @@ test("checks and exports the physical geometry of rotated pads", (): void => {
     const engine = new AutoroutingDrcEngine(srj)
     expect(engine.evaluate(traces).errors).toHaveLength(1)
     traces[0]!.route = [
-      { route_type: "via", x: 0, y: 0.4, from_layer: "top", to_layer: "bottom" },
+      {
+        route_type: "via",
+        x: 0,
+        y: 0.4,
+        from_layer: "top",
+        to_layer: "bottom",
+      },
     ]
     expect(engine.evaluate(traces).errors).toHaveLength(1)
     const pad = convertToCircuitJson(srj, traces).find(
