@@ -10,11 +10,15 @@ import type {
 } from "../lib/solvers/GlobalDrcForceImproveSolver/internalTypes"
 import type { SimpleRouteJson } from "../lib/types"
 
-const getOriginalSameRootViaSite = (
-  routes: MutableRoute[],
-  via: ViaNode,
-  srj: SimpleRouteJson,
-): ViaNode[] => {
+const getOriginalSameRootViaSite = ({
+  routes,
+  via,
+  srj,
+}: {
+  routes: MutableRoute[]
+  via: ViaNode
+  srj: SimpleRouteJson
+}): ViaNode[] => {
   const currentVias = collectViaNodes(routes, srj)
   const currentVia = currentVias.find(
     (candidate) =>
@@ -108,15 +112,19 @@ test("root-scoped via collection retains ordered live groups and shared-site bou
     const before = structuredClone(inputRoutes)
     for (const allowBlindAndBuriedVias of [false, true]) {
       const settings = { ...srj, allowBlindAndBuriedVias }
-      expect(getSameRootViaSite(inputRoutes, via, settings)).toEqual(
-        getOriginalSameRootViaSite(inputRoutes, via, settings),
+      expect(
+        getSameRootViaSite({ routes: inputRoutes, via, srj: settings }),
+      ).toEqual(
+        getOriginalSameRootViaSite({ routes: inputRoutes, via, srj: settings }),
       )
     }
     expect(inputRoutes).toEqual(before)
   }
   check(routes, staleVia)
   expect(
-    getSameRootViaSite(routes, staleVia, srj).map((via) => via.routeIndex),
+    getSameRootViaSite({ routes, via: staleVia, srj }).map(
+      (via) => via.routeIndex,
+    ),
   ).toEqual([1, 2, 5, 6])
   check(routes, { ...staleVia, routeIndex: 5 })
   check(routes, { ...staleVia, pointIndexes: [4] })

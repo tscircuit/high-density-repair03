@@ -1995,11 +1995,15 @@ const translateVia = (
   return true
 }
 
-export const getSameRootViaSite = (
-  routes: MutableRoute[],
-  via: ViaNode,
-  srj: SimpleRouteJson,
-): ViaNode[] => {
+export const getSameRootViaSite = ({
+  routes,
+  via,
+  srj,
+}: {
+  routes: MutableRoute[]
+  via: ViaNode
+  srj: SimpleRouteJson
+}): ViaNode[] => {
   if (!Number.isInteger(via.routeIndex)) return []
   const currentRoute = routes[via.routeIndex]
   if (!currentRoute || via.routeIndex < 0 || via.routeIndex >= routes.length)
@@ -2049,7 +2053,7 @@ const translateSameRootViaSite = (
   dy: number,
   srj: SimpleRouteJson,
 ) => {
-  const siteVias = getSameRootViaSite(routes, via, srj)
+  const siteVias = getSameRootViaSite({ routes, via, srj })
   if (
     siteVias.length === 0 ||
     siteVias.some(
@@ -2087,7 +2091,7 @@ const moveVia = (
   srj: SimpleRouteJson,
 ) =>
   via.movable &&
-  getSameRootViaSite(routes, via, srj).length <= 1 &&
+  getSameRootViaSite({ routes, via, srj }).length <= 1 &&
   translateVia(routes, via, dx, dy, srj)
 
 const moveSegmentAwayFromPoint = (

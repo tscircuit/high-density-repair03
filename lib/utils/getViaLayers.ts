@@ -26,11 +26,15 @@ export const getViaLayers = (via: ViaLayers, layerCount: number): string[] => {
 }
 
 /** Layers crossed by the via drill for DRC; route endpoints describe travel. */
-export const getViaDrillLayers = (
-  via: ViaLayers,
-  layerCount: number,
+export const getViaDrillLayers = ({
+  via,
+  layerCount,
   allowBlindAndBuriedVias = false,
-): string[] => {
+}: {
+  via: ViaLayers
+  layerCount: number
+  allowBlindAndBuriedVias?: boolean
+}): string[] => {
   const drillSpan = allowBlindAndBuriedVias
     ? via
     : {

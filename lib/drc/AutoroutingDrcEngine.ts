@@ -753,11 +753,11 @@ export class AutoroutingDrcEngine {
         const viaId = `via_${vias.length}`
         const diameter =
           routePoint.via_diameter ?? this.srj.minViaDiameter ?? 0.3
-        const layers = getViaDrillLayers(
-          routePoint,
-          this.srj.layerCount,
-          this.srj.allowBlindAndBuriedVias,
-        )
+        const layers = getViaDrillLayers({
+          via: routePoint,
+          layerCount: this.srj.layerCount,
+          allowBlindAndBuriedVias: this.srj.allowBlindAndBuriedVias,
+        })
         vias.push({
           kind: "via",
           order: vias.length,
