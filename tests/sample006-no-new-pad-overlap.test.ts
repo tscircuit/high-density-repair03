@@ -37,6 +37,6 @@ beforeAll(() => {
   outputPadOverlaps = getPadOverlaps(solver.getOutput())
 })
 
-test.failing("sample006 repair does not introduce a different-net SMT pad overlap", () => {
+test("sample006 repair does not introduce a different-net SMT pad overlap", () => {
   expect(outputPadOverlaps).toEqual([])
 })

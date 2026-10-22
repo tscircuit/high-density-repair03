@@ -1,0 +1,13 @@
+{
+  "repository": "tscircuit/tscircuit-autorouter",
+  "commit": "4147ad2ced10784ab07c0f8a69e1931cad5281ca",
+  "repair03Commit": "c6024fbe727db74c94cb6c9b194bdbb30f3b35e9",
+  "fixture": "fixtures/bug-reports/bugreport68-solar-battery-charger/bugreport68-solar-battery-charger.srj.json",
+  "pipeline": "AutoroutingPipelineSolver7_MultiGraph",
+  "stage": "globalDrcForceImproveSolver",
+  "description": "Captured srj, locked inputHdRoutes, and connMap.netMap before force repair. Rejected candidate introduces source_net_25 to pcb_smtpad_53 overlap; restoring only that connection retains independent repairs.",
+  "effort": 1,
+  "maxIterations": 16,
+  "enableLargeBoardBroadFallback": false,
+  "enablePostSolveClearanceRelaxation": false
+}

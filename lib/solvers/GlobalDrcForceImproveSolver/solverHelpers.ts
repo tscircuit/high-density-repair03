@@ -34,7 +34,7 @@ import {
   expandBounds2d,
   getSpatialCandidateIndexes,
 } from "./spatialIndex"
-import type { DrcEvaluator, DrcSnapshot } from "./types"
+import type { DrcEvaluator, DrcSnapshot, PcbTraceId } from "./types"
 import type {
   Bounds2D,
   MutableRoute,
@@ -106,9 +106,11 @@ const createSimplifiedTraces = (
 ): {
   traces: SimplifiedPcbTraces
   traceRouteIndexById: Map<string, number>
+  traceConnectionNameById: Map<PcbTraceId, string>
 } => {
   const traces: SimplifiedPcbTraces = []
   const traceRouteIndexById = new Map<string, number>()
+  const traceConnectionNameById = new Map<PcbTraceId, string>()
   const routesByConnectionName = new Map<
     string,
     Array<{ route: HighDensityRoute; routeIndex: number }>
@@ -155,10 +157,11 @@ const createSimplifiedTraces = (
           ),
         })
       traceRouteIndexById.set(traceId, hdRoute.routeIndex)
+      traceConnectionNameById.set(traceId, connection.name)
     }
   }
 
-  return { traces, traceRouteIndexById }
+  return { traces, traceRouteIndexById, traceConnectionNameById }
 }
 
 const getDrcErrorSeverity = (error: Record<string, unknown>) => {
@@ -247,11 +250,8 @@ const createDrcSnapshot = (
     (autoroutingDrcEngine && !drcEvaluator) || routesOnlyEvaluator
       ? srj
       : getConnMapAwareSrj(srj, connMap)
-  let { traces, traceRouteIndexById } = createSimplifiedTraces(
-    drcSrj,
-    routes,
-    !routesOnlyEvaluator,
-  )
+  let { traces, traceRouteIndexById, traceConnectionNameById } =
+    createSimplifiedTraces(drcSrj, routes, !routesOnlyEvaluator)
   const drcResult = drcEvaluator?.({
     srj: drcSrj,
     routes,
@@ -269,6 +269,7 @@ const createDrcSnapshot = (
     >
 
     return {
+      rawErrors: errors,
       errors: errorsWithCenters,
       count: errors.length,
       issueScore: getDrcIssueScore(errorsWithCenters, policy.getErrorSeverity),
@@ -277,6 +278,7 @@ const createDrcSnapshot = (
         policy.getErrorSeverity,
       ),
       traceRouteIndexById,
+      traceConnectionNameById,
     }
   }
 
@@ -287,6 +289,7 @@ const createDrcSnapshot = (
     const fallbackInput = createSimplifiedTraces(drcSrj, routes)
     traces = fallbackInput.traces
     traceRouteIndexById = fallbackInput.traceRouteIndexById
+    traceConnectionNameById = fallbackInput.traceConnectionNameById
   }
 
   const drc =
@@ -315,6 +318,7 @@ const createDrcSnapshot = (
     policy.projectEngineError(error as unknown as Record<string, unknown>),
   )
   return {
+    rawErrors,
     errors: rawErrorsWithCenters,
     count: rawErrors.length,
     issueScore: getDrcIssueScore(rawErrorsWithCenters, policy.getErrorSeverity),
@@ -323,6 +327,7 @@ const createDrcSnapshot = (
       policy.getErrorSeverity,
     ),
     traceRouteIndexById,
+    traceConnectionNameById,
   }
 }
 
@@ -3354,6 +3359,118 @@ export const getRepairDrcIssueScore = (snapshot: DrcSnapshot) => {
     return getDrcIssueScore(legacyErrors)
   }
   return snapshot.legacyIssueScore ?? getDrcIssueScore(legacyErrors)
+}
+
+const getTraceObstaclePairIdentity = (
+  error: Record<string, unknown>,
+  snapshot: DrcSnapshot,
+): string | undefined => {
+  const traceId = error.pcb_trace_id
+  if (typeof traceId !== "string" || traceId.length === 0) return undefined
+  const explicitObstacleId = [
+    error.pcb_pad_id,
+    error.pcb_smtpad_id,
+    error.pcb_plated_hole_id,
+    error.pcb_hole_id,
+    error.pcb_keepout_id,
+    error.pcb_obstacle_id,
+  ].find((id): id is string => typeof id === "string" && id.length > 0)
+  const message = error.worst_contact_message ?? error.message
+  const quotedObstacle =
+    typeof message === "string"
+      ? message.match(
+          /\b(?:pcb_smtpad|pcb_plated_hole|pcb_hole|pcb_keepout)\s+"([^"]+)"/,
+        )?.[1]
+      : undefined
+  // Reference DRC may render IDs as readable names, e.g. pcb_smtpad[#pad_1].
+  const obstacleId =
+    explicitObstacleId ??
+    quotedObstacle?.match(/\[#([^\]]+)\]/)?.[1] ??
+    quotedObstacle
+  if (!obstacleId) return undefined
+  // Compare logical connections, not positional fragment IDs or net aliases.
+  // Splitting/reordering one connection preserves its electrical short to a
+  // pad; another connection on the same net still has a distinct identity.
+  const connectionName = snapshot.traceConnectionNameById?.get(traceId)
+  return JSON.stringify([
+    connectionName === undefined ? "trace" : "connection",
+    connectionName ?? traceId,
+    obstacleId,
+  ])
+}
+
+const getTraceObstacleOverlapErrors = (
+  snapshot: DrcSnapshot,
+): Array<Record<string, unknown>> => {
+  const overlaps: Array<Record<string, unknown>> = []
+  // Custom evaluators may omit contacts from the force-targeting list or
+  // enrich only that list. Check both without changing repair targeting.
+  const errors = snapshot.rawErrors
+    ? snapshot.rawErrors.concat(snapshot.errors)
+    : snapshot.errors
+  for (const error of errors) {
+    // Structured trace/obstacle IDs identify contacts even when an external
+    // evaluator's message contains no trace or obstacle words.
+    const pairIdentity = getTraceObstaclePairIdentity(error, snapshot)
+    if (!pairIdentity && !isTraceObstacleDrcError(error)) continue
+    // A pair can have a safe first contact and an overlapping later segment.
+    // Standard snapshots restore the first contact for force targeting, so
+    // acceptance must explicitly inspect the worst contact instead.
+    const clearance = error.worst_actual_clearance ?? error.actual_clearance
+    const message = error.worst_contact_message ?? error.message
+    const overlapsCopper =
+      typeof clearance === "number" && Number.isFinite(clearance)
+        ? clearance < -COORDINATE_EPSILON
+        : typeof message === "string" &&
+          message.includes("(accidental contact)")
+    if (!overlapsCopper) continue
+    overlaps.push(error)
+  }
+  return overlaps
+}
+
+const getTraceObstacleOverlapIds = (
+  snapshot: DrcSnapshot,
+): Set<string | symbol> =>
+  new Set(
+    getTraceObstacleOverlapErrors(snapshot).map(
+      (error) =>
+        getTraceObstaclePairIdentity(error, snapshot) ??
+        Symbol("unidentified trace-obstacle contact"),
+    ),
+  )
+
+export const getNewTraceObstacleOverlapConnectionNames = (
+  candidateSnapshot: DrcSnapshot,
+  inputSnapshot: DrcSnapshot,
+): Set<HighDensityRoute["connectionName"]> | undefined => {
+  const inputOverlaps = getTraceObstacleOverlapIds(inputSnapshot)
+  const connectionNames = new Set<HighDensityRoute["connectionName"]>()
+  for (const error of getTraceObstacleOverlapErrors(candidateSnapshot)) {
+    const pairIdentity = getTraceObstaclePairIdentity(error, candidateSnapshot)
+    // Unknown contacts still require the complete checkpoint. Do not guess
+    // a route from an opaque error ID or a positional trace-name suffix.
+    if (!pairIdentity) return undefined
+    if (inputOverlaps.has(pairIdentity)) continue
+    const traceId = error.pcb_trace_id
+    const connectionName =
+      typeof traceId === "string"
+        ? candidateSnapshot.traceConnectionNameById?.get(traceId)
+        : undefined
+    if (connectionName === undefined) return undefined
+    connectionNames.add(connectionName)
+  }
+  return connectionNames
+}
+
+export const hasNewTraceObstacleOverlaps = (
+  candidateSnapshot: DrcSnapshot,
+  bestSnapshot: DrcSnapshot,
+): boolean => {
+  const candidateOverlaps = getTraceObstacleOverlapIds(candidateSnapshot)
+  if (candidateOverlaps.size === 0) return false
+  const bestOverlaps = getTraceObstacleOverlapIds(bestSnapshot)
+  return [...candidateOverlaps].some((id) => !bestOverlaps.has(id))
 }
 
 export const isDrcSnapshotCountBetter = (
