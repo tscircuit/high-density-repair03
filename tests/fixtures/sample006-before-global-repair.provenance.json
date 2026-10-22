@@ -1,0 +1,26 @@
+{
+  "source": "https://github.com/tscircuit/dataset-srj33-drc-failures/blob/main/samples/sample006.json",
+  "sourceInputSha256": "a955e3bb37ea13f4c8f1bb04d6b148d89da818d9ade306ef4ee2ad859afbd882",
+  "capturePackage": "@tscircuit/capacity-autorouter@0.0.990",
+  "captureSourceCommit": "f0d84e20b6fb0c21e78d35651c75d67a72f39507",
+  "runtime": "Bun 1.3.14 (macOS arm64)",
+  "captureOptions": {
+    "effort": 1,
+    "cacheProvider": null
+  },
+  "captureBoundary": "Pipeline9 globalDrcForceImproveSolver constructor parameters, immediately after traceWidthSolver; includes canonicalized vias and locked terminals",
+  "captureMethod": "Step AutoroutingPipelineSolver9_PreloadedTraceGraph until getCurrentPhase() is globalDrcForceImproveSolver; call pipelineDef[currentPipelineStepIndex].getConstructorParams(solver)[0]; serialize connMap.netMap as netMap.",
+  "fixtureSha256": "06e8657d59e0d187a47e1bd7429cbf560a56e5f0c086e7339248fb0acf133417",
+  "reproducedOn": "high-density-repair03@4a1600e6f2c12f3c197a6991bea998c7bacd605f",
+  "expected": "No new different-net SMT pad overlaps",
+  "observed": {
+    "inputPadOverlaps": 0,
+    "outputPadOverlaps": 2,
+    "overlapDepthMm": 0.0450793,
+    "tracePadPairs": [
+      ["source_trace_22_0", "pcb_smtpad_6"],
+      ["source_trace_19__source_net_5_0", "pcb_smtpad_11"]
+    ]
+  },
+  "scope": "This isolates the intermediate repair03 stage; downstream Pipeline9 joint repair resolves these overlaps in the complete 0.0.990 pipeline."
+}
