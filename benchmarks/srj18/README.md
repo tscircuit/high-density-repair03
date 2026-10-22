@@ -10,6 +10,7 @@ after the `globalDrcForceImproveSolver` is constructed and before that solver
 takes its first step.
 
 Each gzip-compressed JSON file contains:
+
 - the transformed `srjWithPointPairs` scene used by repair03;
 - terminal-locked, width-adjusted `hdRoutes`;
 - the serializable repair options; and

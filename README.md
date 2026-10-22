@@ -54,6 +54,7 @@ You can also use the shell wrapper, which is the entrypoint used by CI:
 The benchmark runs either the pinned `dataset-drc14` repair samples or checked-in SRJ18 repair inputs through `GlobalDrcForceImproveSolver`. The SRJ18 fixtures were captured from the exact Pipeline7 boundary immediately before repair03 runs, so the benchmark does not run the full autorouter or depend on `dataset-srj18`. It prints each sample's initial-to-final DRC count, then prints a summary table. By default it writes `benchmark-result.json`; this is generated output and is ignored by git.
 
 Useful options:
+
 - `--dataset drc14|srj18`: choose the dataset (default: `srj18`)
 - `--limit` / `--scenario-limit`: run the first N samples, or `all`
 - `--concurrency N|auto`: number of Bun workers
@@ -160,6 +161,7 @@ console.log(output.hdRoutes)
 ## Algorithm
 
 The solver follows the same high-level approach as the `GlobalDrcForceImproveSolver` in `tscircuit-autorouter`:
+
 1. Score the current routed solution with relaxed DRC.
 2. Try one broad repulsion pass across vias, traces, and obstacles.
 3. If that helps, keep it.
@@ -172,6 +174,7 @@ That means this repo is intended to mirror the same repair concept and selection
 ## Input shape
 
 `srj` expects:
+
 - `bounds`: routing area `{ minX, minY, maxX, maxY }`
 - `connections`: logical connection list, each with at least `name`
 - `obstacles`: rectangular keepouts or copper obstacles
@@ -199,6 +202,7 @@ That means this repo is intended to mirror the same repair concept and selection
 ## DRC Evaluator
 
 The repair solver creates and reuses an `AutoroutingDrcEngine` by default. The engine compiles static SRJ obstacles and connectivity once, then evaluates route-dependent trace segments and vias with a spatial broad phase. It covers the relaxed collision objective used by autorouting:
+
 - trace-to-trace clearance
 - trace-to-via clearance
 - trace-to-pad/plated-hole clearance
@@ -223,15 +227,18 @@ console.log(engine.lastRunStats)
 ```
 
 For specialized or reference evaluation, provide `drcEvaluator` to override the optimized engine. It receives:
+
 - `srj`
 - `routes`
 - `traces`
 
 The evaluator should return either:
+
 - an array of error objects, or
 - an object with `errors` and optional `errorsWithCenters`
 
 For best results, each error should include:
+
 - `message`: used to estimate severity
 - `center` or `pcb_center`: the location of the violation
 - `pcb_trace_id` for trace-related violations
@@ -290,6 +297,7 @@ const outputRoutes = solver.getOutput()
 ```
 
 One API difference to keep in mind:
+
 - In `tscircuit-autorouter`, `getOutput()` returns `HighDensityRoute[]`.
 - In this standalone repo, `getOutput()` returns `{ hdRoutes, drc }` so you can inspect the resulting DRC snapshot directly.
 

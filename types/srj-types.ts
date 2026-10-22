@@ -43,8 +43,6 @@ export type JumperType = "1206x4" | "0603"
 
 export interface SimpleRouteJson {
   layerCount: number
-  /** Enables partial via spans; autorouted vias span the board by default. */
-  allowBlindAndBuriedVias?: boolean
   minTraceWidth: number
   nominalTraceWidth?: number
   minViaDiameter?: number
