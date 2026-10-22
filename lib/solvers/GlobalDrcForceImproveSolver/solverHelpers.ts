@@ -34,7 +34,7 @@ import {
   expandBounds2d,
   getSpatialCandidateIndexes,
 } from "./spatialIndex"
-import type { DrcEvaluator, DrcSnapshot } from "./types"
+import type { DrcEvaluator, DrcSnapshot, PcbTraceId } from "./types"
 import type {
   Bounds2D,
   MutableRoute,
@@ -106,11 +106,11 @@ const createSimplifiedTraces = (
 ): {
   traces: SimplifiedPcbTraces
   traceRouteIndexById: Map<string, number>
-  traceConnectionNameById: Map<string, string>
+  traceConnectionNameById: Map<PcbTraceId, string>
 } => {
   const traces: SimplifiedPcbTraces = []
   const traceRouteIndexById = new Map<string, number>()
-  const traceConnectionNameById = new Map<string, string>()
+  const traceConnectionNameById = new Map<PcbTraceId, string>()
   const routesByConnectionName = new Map<
     string,
     Array<{ route: HighDensityRoute; routeIndex: number }>
@@ -3409,7 +3409,10 @@ const getTraceObstacleOverlapIds = (
     ? snapshot.rawErrors.concat(snapshot.errors)
     : snapshot.errors
   for (const error of errors) {
-    if (!isTraceObstacleDrcError(error)) continue
+    // Structured trace/obstacle IDs identify contacts even when an external
+    // evaluator's message contains no trace or obstacle words.
+    const pairIdentity = getTraceObstaclePairIdentity(error, snapshot)
+    if (!pairIdentity && !isTraceObstacleDrcError(error)) continue
     // A pair can have a safe first contact and an overlapping later segment.
     // Standard snapshots restore the first contact for force targeting, so
     // acceptance must explicitly inspect the worst contact instead.
@@ -3421,10 +3424,7 @@ const getTraceObstacleOverlapIds = (
         : typeof message === "string" &&
           message.includes("(accidental contact)")
     if (!overlapsCopper) continue
-    overlaps.add(
-      getTraceObstaclePairIdentity(error, snapshot) ??
-        Symbol("unidentified trace-obstacle contact"),
-    )
+    overlaps.add(pairIdentity ?? Symbol("unidentified trace-obstacle contact"))
   }
   return overlaps
 }

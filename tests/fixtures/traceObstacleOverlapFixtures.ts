@@ -1,10 +1,13 @@
 import type { DrcSnapshot } from "../../lib/solvers/GlobalDrcForceImproveSolver/types"
 
-export const padError = (
-  pad: string,
-  clearance: number,
-  extra: Record<string, unknown> = {},
-) => ({
+export const padError = ({
+  pad,
+  clearance,
+  ...extra
+}: { pad: string; clearance: number } & Record<string, unknown>): Record<
+  string,
+  unknown
+> => ({
   type: "pcb_trace_error",
   pcb_trace_error_id: `overlap_trace_0_${pad}`,
   pcb_trace_id: "trace_0",

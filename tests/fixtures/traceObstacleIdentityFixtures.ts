@@ -25,12 +25,17 @@ export const identitySrj: SimpleRouteJson = {
   minViaDiameter: 0.3,
 }
 
-export const identityRoute = (
+export const identityRoute = ({
   connectionName = "net_a",
   startX = -1,
   endX = 1,
   y = 0.52,
-): HighDensityRoute => ({
+}: {
+  connectionName?: string
+  startX?: number
+  endX?: number
+  y?: number
+} = {}): HighDensityRoute => ({
   connectionName,
   route: [
     { x: startX, y, z: 0 },

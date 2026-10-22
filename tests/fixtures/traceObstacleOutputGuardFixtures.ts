@@ -32,10 +32,15 @@ const createSrj = (routes: HighDensityRoute[]): SimpleRouteJson => ({
   minViaDiameter: 0.3,
 })
 
-export const createBroadOverlapCase = (
-  rawOnly: boolean,
-  existingOverlap: boolean,
-) => {
+export const createBroadOverlapCase = ({
+  rawOnly,
+  existingOverlap,
+  overlapError = overlap,
+}: {
+  rawOnly: boolean
+  existingOverlap: boolean
+  overlapError?: Record<string, unknown>
+}) => {
   const hdRoutes: HighDensityRoute[] = ["net_a", "net_b"].map(
     (connectionName, index) => ({
       connectionName,
@@ -62,8 +67,8 @@ export const createBroadOverlapCase = (
     // contact after broad repulsion moves the internal route points.
     if (!original) overlapCandidates++
     const errors = original
-      ? [...persistentErrors, ...(existingOverlap ? [overlap] : [])]
-      : [overlap]
+      ? [...persistentErrors, ...(existingOverlap ? [overlapError] : [])]
+      : [overlapError]
     return {
       errors,
       errorsWithCenters: rawOnly ? [] : errors,

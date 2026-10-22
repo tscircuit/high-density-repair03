@@ -8,8 +8,14 @@ import {
 test("logical overlap identities distinguish new pads and connections sharing a net", () => {
   const before = identitySnapshot([identityRoute()])
   for (const candidate of [
-    identityRoute("net_a", 2, 4),
-    identityRoute("net_b"),
+    identityRoute({
+      connectionName: "net_a",
+      startX: 2,
+      endX: 4,
+    }),
+    identityRoute({
+      connectionName: "net_b",
+    }),
   ]) {
     const after = identitySnapshot([candidate])
     expect(after.count).toBe(1)

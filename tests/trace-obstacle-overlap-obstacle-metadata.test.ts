@@ -3,7 +3,12 @@ import { hasNewTraceObstacleOverlaps } from "../lib/solvers/GlobalDrcForceImprov
 import { padError, snapshot } from "./fixtures/traceObstacleOverlapFixtures"
 
 test("stable obstacle metadata identifies contacts while opaque IDs alone do not", () => {
-  const before = snapshot([padError("pad_a", -0.04)])
+  const before = snapshot([
+    padError({
+      pad: "pad_a",
+      clearance: -0.04,
+    }),
+  ])
   const structured = snapshot([
     {
       type: "pcb_pad_trace_clearance_error",
@@ -14,7 +19,9 @@ test("stable obstacle metadata identifies contacts while opaque IDs alone do not
     },
   ])
   const readable = snapshot([
-    padError("pad_a", -0.03, {
+    padError({
+      pad: "pad_a",
+      clearance: -0.03,
       message: 'PCB trace trace_0 overlaps with pcb_smtpad "J1.pin1[#pad_a]"',
     }),
   ])
@@ -22,7 +29,9 @@ test("stable obstacle metadata identifies contacts while opaque IDs alone do not
   expect(hasNewTraceObstacleOverlaps(readable, before)).toBe(false)
 
   const unidentified = snapshot([
-    padError("pad_a", -0.03, {
+    padError({
+      pad: "pad_a",
+      clearance: -0.03,
       pcb_trace_error_id: "opaque_id",
       message: "PCB trace overlaps with pcb_smtpad (accidental contact)",
     }),

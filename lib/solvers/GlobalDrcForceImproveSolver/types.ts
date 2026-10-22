@@ -4,6 +4,7 @@ import type { SimpleRouteJson, SimplifiedPcbTraces } from "../../types"
 import type { HighDensityRoute } from "../../types/high-density-types"
 
 export type DrcError = Record<string, unknown>
+export type PcbTraceId = SimplifiedPcbTraces[number]["pcb_trace_id"]
 
 export type DrcEvaluatorInput = {
   traces: SimplifiedPcbTraces
@@ -51,7 +52,7 @@ export type DrcSnapshot = {
   legacyIssueScore?: number
   traceRouteIndexById: Map<string, number>
   /** Logical source connections stay stable when their route fragments change. */
-  traceConnectionNameById?: Map<string, string>
+  traceConnectionNameById?: Map<PcbTraceId, string>
 }
 
 export type GlobalDrcForceImproveSolverParams = {

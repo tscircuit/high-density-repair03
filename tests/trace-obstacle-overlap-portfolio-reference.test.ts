@@ -7,7 +7,10 @@ test("portfolio checks reference DRC and reports statistics after overlap rollba
     solver: fixture,
     originalRoutes,
     getOverlapCandidates,
-  } = createBroadOverlapCase(true, false)
+  } = createBroadOverlapCase({
+    rawOnly: true,
+    existingOverlap: false,
+  })
   const referenceInputs: HighDensityRoute[][] = []
   const solver = new GlobalDrcBranchPortfolioSolver({
     ...fixture.params,

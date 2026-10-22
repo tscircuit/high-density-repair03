@@ -3,7 +3,10 @@ import { createBroadOverlapCase } from "./fixtures/traceObstacleOutputGuardFixtu
 
 test("portfolio rejects new broad overlaps against original input", () => {
   const { solver, hdRoutes, originalRoutes, getOverlapCandidates } =
-    createBroadOverlapCase(false, false)
+    createBroadOverlapCase({
+      rawOnly: false,
+      existingOverlap: false,
+    })
   solver.solve()
   expect(solver.solved).toBe(true)
   expect(solver.failed).toBe(false)

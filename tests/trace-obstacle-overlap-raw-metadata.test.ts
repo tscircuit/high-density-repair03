@@ -7,11 +7,27 @@ test("inspects both complete evaluator errors and enriched force-targeting metad
   const rawOnly = {
     ...snapshot([]),
     count: 1,
-    rawErrors: [padError("pad_a", -0.04)],
+    rawErrors: [
+      padError({
+        pad: "pad_a",
+        clearance: -0.04,
+      }),
+    ],
   }
   const enrichedOnly = {
-    ...snapshot([padError("pad_a", 0.07, { worst_actual_clearance: -0.04 })]),
-    rawErrors: [padError("pad_a", 0.07)],
+    ...snapshot([
+      padError({
+        pad: "pad_a",
+        clearance: 0.07,
+        worst_actual_clearance: -0.04,
+      }),
+    ]),
+    rawErrors: [
+      padError({
+        pad: "pad_a",
+        clearance: 0.07,
+      }),
+    ],
   }
 
   expect(hasNewTraceObstacleOverlaps(rawOnly, before)).toBe(true)

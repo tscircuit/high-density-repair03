@@ -208,12 +208,12 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
     )
   }
 
-  private rememberOverlapSafeCandidate(
-    routes: HighDensityRoute[],
-    snapshot: DrcSnapshot,
-    solver?: GlobalDrcForceImproveSolver,
-    safeTraceLayerPhaseAccepted = false,
-  ): void {
+  private rememberOverlapSafeCandidate({
+    routes,
+    snapshot,
+    solver,
+    safeTraceLayerPhaseAccepted,
+  }: PortfolioCandidate): void {
     if (hasNewTraceObstacleOverlaps(snapshot, this.inputSnapshot!)) return
     if (
       this.overlapSafeCheckpoint &&
@@ -236,12 +236,12 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
   ) {
     let acceptedRoutes = routes
     let acceptedSnapshot = snapshot
-    this.rememberOverlapSafeCandidate(
+    this.rememberOverlapSafeCandidate({
       routes,
       snapshot,
-      selectedSolver,
-      this.safeTraceLayerPhaseAccepted,
-    )
+      solver: selectedSolver,
+      safeTraceLayerPhaseAccepted: this.safeTraceLayerPhaseAccepted,
+    })
     if (hasNewTraceObstacleOverlaps(snapshot, this.inputSnapshot!)) {
       const checkpoint = this.overlapSafeCheckpoint!
       acceptedRoutes = checkpoint.routes
@@ -344,7 +344,12 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
     portfolioSelectedSolver?: GlobalDrcForceImproveSolver,
   ) {
     this.portfolioSelectedSolver = portfolioSelectedSolver
-    this.rememberOverlapSafeCandidate(routes, snapshot, portfolioSelectedSolver)
+    this.rememberOverlapSafeCandidate({
+      routes,
+      snapshot,
+      solver: portfolioSelectedSolver,
+      safeTraceLayerPhaseAccepted: false,
+    })
     if (!this.params.enableSafeTraceLayerMoves) {
       this.startViaInPadPhase(routes, snapshot, portfolioSelectedSolver)
       return
@@ -374,12 +379,12 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
     portfolioSelectedSolver?: GlobalDrcForceImproveSolver,
   ) {
     this.portfolioSelectedSolver = portfolioSelectedSolver
-    this.rememberOverlapSafeCandidate(
+    this.rememberOverlapSafeCandidate({
       routes,
       snapshot,
-      portfolioSelectedSolver,
-      this.safeTraceLayerPhaseAccepted,
-    )
+      solver: portfolioSelectedSolver,
+      safeTraceLayerPhaseAccepted: this.safeTraceLayerPhaseAccepted,
+    })
     const shouldRunViaInPadTopologyRepair =
       this.params.enableViaInPadLayerMoves &&
       this.params.viaInPadDrcEvaluator !== undefined
@@ -503,11 +508,12 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         this.params.connMap,
         this.autoroutingDrcEngine,
       )
-      this.rememberOverlapSafeCandidate(
-        baselineRoutes,
-        this.baselineSnapshot,
-        this.baselineSolver,
-      )
+      this.rememberOverlapSafeCandidate({
+        routes: baselineRoutes,
+        snapshot: this.baselineSnapshot,
+        solver: this.baselineSolver,
+        safeTraceLayerPhaseAccepted: false,
+      })
       if (getNonViaPadDrcIssueCount(this.baselineSnapshot) === 0) {
         this.startViaInPadPhase(
           baselineRoutes,
@@ -595,12 +601,12 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       let acceptedSolver = this.safeTraceLayerPhaseAccepted
         ? this.safeTraceLayerSolver
         : this.portfolioSelectedSolver
-      this.rememberOverlapSafeCandidate(
-        acceptedRoutes,
-        acceptedSnapshot,
-        acceptedSolver,
-        this.safeTraceLayerPhaseAccepted,
-      )
+      this.rememberOverlapSafeCandidate({
+        routes: acceptedRoutes,
+        snapshot: acceptedSnapshot,
+        solver: acceptedSolver,
+        safeTraceLayerPhaseAccepted: this.safeTraceLayerPhaseAccepted,
+      })
       if (
         this.preBroadCandidate &&
         !isDrcSnapshotCountBetter(

@@ -9,10 +9,24 @@ import { padError, snapshot } from "./fixtures/traceObstacleOverlapFixtures"
 test("still accepts progress on pre-existing overlaps and positive clearances", () => {
   for (const clearance of [-0.04, 0.04]) {
     const before = snapshot([
-      padError("pad_a", clearance),
-      padError("pad_b", 0.07),
+      padError({
+        pad: "pad_a",
+        clearance,
+      }),
+      padError({
+        pad: "pad_b",
+        clearance: 0.07,
+      }),
     ])
-    const after = snapshot([padError("pad_a", clearance + 0.01)], 0.01)
+    const after = snapshot(
+      [
+        padError({
+          pad: "pad_a",
+          clearance: clearance + 0.01,
+        }),
+      ],
+      0.01,
+    )
 
     expect(hasNewTraceObstacleOverlaps(after, before)).toBe(false)
     expect(isDrcSnapshotCountBetter(after, before)).toBe(true)

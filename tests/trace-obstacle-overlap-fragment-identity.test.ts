@@ -6,11 +6,31 @@ import {
 } from "./fixtures/traceObstacleIdentityFixtures"
 
 test("regenerated overlaps retain logical trace identity across fragment reorder, split and merge", () => {
-  const original = [identityRoute(), identityRoute("net_a", -1, 1, 1.5)]
+  const original = [
+    identityRoute(),
+    identityRoute({
+      connectionName: "net_a",
+      startX: -1,
+      endX: 1,
+      y: 1.5,
+    }),
+  ]
   const before = identitySnapshot(original)
   const variants = [
     [...original].reverse(),
-    [identityRoute("net_a", -1, 0), identityRoute("net_a", 0, 1), original[1]!],
+    [
+      identityRoute({
+        connectionName: "net_a",
+        startX: -1,
+        endX: 0,
+      }),
+      identityRoute({
+        connectionName: "net_a",
+        startX: 0,
+        endX: 1,
+      }),
+      original[1]!,
+    ],
     [
       {
         ...original[0]!,
