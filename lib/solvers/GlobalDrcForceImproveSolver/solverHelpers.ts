@@ -4990,7 +4990,8 @@ export const applyDrcErrorForces = (
               nearestSegment,
               srj.layerCount,
             )))
-      const pointCountBeforeMove = routes[nearestSegment.routeIndex]!.route.length
+      const pointCountBeforeMove =
+        routes[nearestSegment.routeIndex]!.route.length
       const movedSegment = shouldUseObstacleMove
         ? moveSegmentAwayFromObstacle(
             routes,
@@ -5009,7 +5010,9 @@ export const applyDrcErrorForces = (
           )
       // Detours insert vertices, shifting cached via and segment point indices.
       // Refresh before this error's remaining via force or the next error.
-      if (routes[nearestSegment.routeIndex]!.route.length !== pointCountBeforeMove) {
+      if (
+        routes[nearestSegment.routeIndex]!.route.length !== pointCountBeforeMove
+      ) {
         vias = collectViaNodes(routes, srj)
         segments = collectSegments(routes)
       }

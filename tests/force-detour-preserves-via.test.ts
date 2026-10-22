@@ -13,25 +13,37 @@ test("a segment detour refreshes via indices before the same error moves its via
     connections: [],
     obstacles: [],
   }
-  const routes: HighDensityRoute[] = [{
-    connectionName: "route0",
-    traceThickness: 0.1,
-    viaDiameter: 0.3,
-    vias: [{ x: 0.1, y: 0.2 }],
-    route: [
-      { x: 0, y: 0, z: 0 },
-      { x: 1, y: 0, z: 0 },
-      { x: 0.1, y: 0.2, z: 0 },
-      { x: 0.1, y: 0.2, z: 1 },
-      { x: 2, y: 2, z: 1 },
-    ],
-  }]
+  const routes: HighDensityRoute[] = [
+    {
+      connectionName: "route0",
+      traceThickness: 0.1,
+      viaDiameter: 0.3,
+      vias: [{ x: 0.1, y: 0.2 }],
+      route: [
+        { x: 0, y: 0, z: 0 },
+        { x: 1, y: 0, z: 0 },
+        { x: 0.1, y: 0.2, z: 0 },
+        { x: 0.1, y: 0.2, z: 1 },
+        { x: 2, y: 2, z: 1 },
+      ],
+    },
+  ]
   const originalLength = routes[0]!.route.length
-  expect(applyDrcErrorForces(srj, routes, [{
-    type: "pcb_trace_error",
-    pcb_trace_id: "trace0",
-    center: { x: -0.1, y: 0.1 },
-  }], new Map([["trace0", 0]]), 1)).toBeTrue()
+  expect(
+    applyDrcErrorForces(
+      srj,
+      routes,
+      [
+        {
+          type: "pcb_trace_error",
+          pcb_trace_id: "trace0",
+          center: { x: -0.1, y: 0.1 },
+        },
+      ],
+      new Map([["trace0", 0]]),
+      1,
+    ),
+  ).toBeTrue()
   expect(routes[0]!.route.length).toBe(originalLength + 1)
   const beforeVia = routes[0]!.route[3]!
   const afterVia = routes[0]!.route[4]!
