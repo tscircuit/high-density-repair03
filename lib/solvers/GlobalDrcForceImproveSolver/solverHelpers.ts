@@ -3399,10 +3399,10 @@ const getTraceObstaclePairIdentity = (
   ])
 }
 
-const getTraceObstacleOverlapIds = (
+const getTraceObstacleOverlapErrors = (
   snapshot: DrcSnapshot,
-): Set<string | symbol> => {
-  const overlaps = new Set<string | symbol>()
+): Array<Record<string, unknown>> => {
+  const overlaps: Array<Record<string, unknown>> = []
   // Custom evaluators may omit contacts from the force-targeting list or
   // enrich only that list. Check both without changing repair targeting.
   const errors = snapshot.rawErrors
@@ -3424,9 +3424,43 @@ const getTraceObstacleOverlapIds = (
         : typeof message === "string" &&
           message.includes("(accidental contact)")
     if (!overlapsCopper) continue
-    overlaps.add(pairIdentity ?? Symbol("unidentified trace-obstacle contact"))
+    overlaps.push(error)
   }
   return overlaps
+}
+
+const getTraceObstacleOverlapIds = (
+  snapshot: DrcSnapshot,
+): Set<string | symbol> =>
+  new Set(
+    getTraceObstacleOverlapErrors(snapshot).map(
+      (error) =>
+        getTraceObstaclePairIdentity(error, snapshot) ??
+        Symbol("unidentified trace-obstacle contact"),
+    ),
+  )
+
+export const getNewTraceObstacleOverlapConnectionNames = (
+  candidateSnapshot: DrcSnapshot,
+  inputSnapshot: DrcSnapshot,
+): Set<HighDensityRoute["connectionName"]> | undefined => {
+  const inputOverlaps = getTraceObstacleOverlapIds(inputSnapshot)
+  const connectionNames = new Set<HighDensityRoute["connectionName"]>()
+  for (const error of getTraceObstacleOverlapErrors(candidateSnapshot)) {
+    const pairIdentity = getTraceObstaclePairIdentity(error, candidateSnapshot)
+    // Unknown contacts still require the complete checkpoint. Do not guess
+    // a route from an opaque error ID or a positional trace-name suffix.
+    if (!pairIdentity) return undefined
+    if (inputOverlaps.has(pairIdentity)) continue
+    const traceId = error.pcb_trace_id
+    const connectionName =
+      typeof traceId === "string"
+        ? candidateSnapshot.traceConnectionNameById?.get(traceId)
+        : undefined
+    if (connectionName === undefined) return undefined
+    connectionNames.add(connectionName)
+  }
+  return connectionNames
 }
 
 export const hasNewTraceObstacleOverlaps = (

@@ -5,6 +5,7 @@ import type { HighDensityRoute } from "../../types/high-density-types"
 import { GlobalDrcForceImproveSolver } from "./GlobalDrcForceImproveSolver"
 import { RELAXED_DRC_OPTIONS } from "./drcPresets"
 import { getDrcSnapshot } from "./drc-snapshot"
+import { restoreOverlappingConnections } from "./restoreOverlappingConnections"
 import {
   applyBroadRepulsionForces,
   cloneRoutes,
@@ -78,6 +79,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
   private selectedSolver?: GlobalDrcForceImproveSolver
   private overlapSafeCheckpoint?: PortfolioCandidate
   private traceObstacleRepairRolledBack = false
+  private traceObstacleConnectionsRestored = 0
   private referenceInputDrcIssueCount?: number
   private referenceCandidateDrcIssueCount?: number
   private referenceCandidateRolledBack = false
@@ -243,6 +245,33 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       safeTraceLayerPhaseAccepted: this.safeTraceLayerPhaseAccepted,
     })
     if (hasNewTraceObstacleOverlaps(snapshot, this.inputSnapshot!)) {
+      const restored = restoreOverlappingConnections({
+        routes,
+        snapshot,
+        inputSnapshot: this.inputSnapshot!,
+        checkpointRoutes: this.overlapSafeCheckpoint!.routes,
+      })
+      if (restored) {
+        const restoredSnapshot = getDrcSnapshot(
+          this.params.srj,
+          restored.routes,
+          this.phase === "viaInPad"
+            ? (this.params.viaInPadDrcEvaluator ?? this.params.drcEvaluator)
+            : this.params.drcEvaluator,
+          this.params.connMap,
+          this.autoroutingDrcEngine,
+        )
+        this.rememberOverlapSafeCandidate({
+          routes: restored.routes,
+          snapshot: restoredSnapshot,
+          solver: selectedSolver,
+          safeTraceLayerPhaseAccepted: this.safeTraceLayerPhaseAccepted,
+        })
+        if (this.overlapSafeCheckpoint!.snapshot === restoredSnapshot) {
+          this.traceObstacleConnectionsRestored =
+            restored.restoredConnectionCount
+        }
+      }
       const checkpoint = this.overlapSafeCheckpoint!
       acceptedRoutes = checkpoint.routes
       acceptedSnapshot = checkpoint.snapshot
@@ -271,6 +300,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         acceptedRoutes = this.guardedInputHdRoutes
         acceptedSnapshot = this.inputSnapshot!
         this.referenceCandidateRolledBack = true
+        this.traceObstacleConnectionsRestored = 0
       }
     }
     this.outputHdRoutes = acceptedRoutes
@@ -317,6 +347,8 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         this.referenceCandidateRolledBack,
       drcBranchPortfolioTraceObstacleRepairRolledBack:
         this.traceObstacleRepairRolledBack,
+      drcBranchPortfolioTraceObstacleConnectionsRestored:
+        this.traceObstacleConnectionsRestored,
       drcBranchPortfolioMixedReferenceInputDrcIssueCount:
         this.mixedReferenceInputDrcIssueCount,
       drcBranchPortfolioMixedReferenceCandidateDrcIssueCount:
