@@ -43,6 +43,7 @@ import {
   getTraceRouteIndexForError,
   getTraceRoutePairForError,
   getViaDrcIssueCount,
+  hasNewTraceObstacleOverlaps,
   isBetterDrcSnapshot,
   isDrcSnapshotCountBetter,
   isTraceObstacleDrcError,
@@ -54,6 +55,7 @@ import {
 import { applyTraceToPadClearanceRelaxation } from "./traceToPadClearanceRelaxation"
 import { applyViaToPadClearanceRelaxation } from "./viaToPadClearanceRelaxation"
 import { RELAXED_DRC_OPTIONS } from "./drcPresets"
+import { restoreOverlappingConnections } from "./restoreOverlappingConnections"
 import type {
   DrcEvaluator,
   DrcSnapshot,
@@ -190,6 +192,8 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   readonly enableViaInPadLayerMoves: boolean
   readonly enableTraceViaOwnerTargeting: boolean
   outputHdRoutes: HighDensityRoute[]
+  /** Portfolio children defer this invariant until the final portfolio output. */
+  protected deferTraceObstacleOverlapGuard = false
   private initialDrcIssueCount: number | undefined
   private initialRepairDrcIssueCount: number | undefined
   private initialLowCountErrorsHaveMovableTraces = false
@@ -210,6 +214,11 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   private drcCountPlateauChecks = 0
   private largeBoardBroadFallbackMisses = 0
   private outputSnapshot: DrcSnapshot | undefined
+  private overlapSafeCheckpoint:
+    | { routes: HighDensityRoute[]; snapshot: DrcSnapshot }
+    | undefined
+  private traceObstacleRepairRolledBack = false
+  private traceObstacleConnectionsRestored = 0
   private legacyCleanCheckpoint:
     | { routes: HighDensityRoute[]; snapshot: DrcSnapshot }
     | undefined
@@ -320,6 +329,10 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       globalDrcForceImproveLargeBoardBroadFallbackMisses:
         this.largeBoardBroadFallbackMisses,
       globalDrcForceImproveViaPadRepairRolledBack: this.viaPadRepairRolledBack,
+      globalDrcForceImproveTraceObstacleRepairRolledBack:
+        this.traceObstacleRepairRolledBack,
+      globalDrcForceImproveTraceObstacleConnectionsRestored:
+        this.traceObstacleConnectionsRestored,
       globalDrcForceImproveReferenceInputDrcIssueCount:
         this.referenceInputDrcIssueCount,
       globalDrcForceImproveReferenceCandidateDrcIssueCount:
@@ -402,10 +415,42 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     return getRepairDrcIssueScore(snapshot)
   }
 
+  private rememberOverlapSafeRoutes(
+    routes: HighDensityRoute[],
+    snapshot: DrcSnapshot,
+  ): void {
+    if (this.deferTraceObstacleOverlapGuard) return
+    if (
+      this.inputSnapshot &&
+      hasNewTraceObstacleOverlaps(snapshot, this.inputSnapshot)
+    ) {
+      return
+    }
+    const checkpoint = this.overlapSafeCheckpoint
+    if (
+      checkpoint &&
+      !isBetterDrcSnapshot(
+        snapshot,
+        this.getViaIssueCount(snapshot),
+        this.getRepairIssueCount(checkpoint.snapshot),
+        this.getRepairIssueScore(checkpoint.snapshot),
+        this.getViaIssueCount(checkpoint.snapshot),
+        checkpoint.snapshot,
+      )
+    ) {
+      return
+    }
+    this.overlapSafeCheckpoint = {
+      routes: materializeRoutes(cloneRoutes(routes)),
+      snapshot,
+    }
+  }
+
   private acceptSolvedRoutes(
     routes: HighDensityRoute[],
     snapshot: DrcSnapshot,
   ) {
+    this.rememberOverlapSafeRoutes(routes, snapshot)
     const traceRelaxedRoutes = this.enablePostSolveClearanceRelaxation
       ? applyTraceToPadClearanceRelaxation(this.srj, routes, this.connMap)
       : routes
@@ -427,6 +472,30 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     let acceptedSnapshot = relaxedSnapshotIsNoWorse ? relaxedSnapshot : snapshot
     const inputSnapshot =
       this.inputSnapshot ?? this.getSnapshot(this.guardedInputHdRoutes)
+    if (
+      !this.deferTraceObstacleOverlapGuard &&
+      hasNewTraceObstacleOverlaps(acceptedSnapshot, inputSnapshot)
+    ) {
+      const restored = restoreOverlappingConnections({
+        routes: acceptedRoutes,
+        snapshot: acceptedSnapshot,
+        inputSnapshot,
+        checkpointRoutes:
+          this.overlapSafeCheckpoint?.routes ?? this.guardedInputHdRoutes,
+      })
+      if (restored) {
+        const restoredSnapshot = this.getSnapshot(restored.routes)
+        this.rememberOverlapSafeRoutes(restored.routes, restoredSnapshot)
+        if (this.overlapSafeCheckpoint?.snapshot === restoredSnapshot) {
+          this.traceObstacleConnectionsRestored =
+            restored.restoredConnectionCount
+        }
+      }
+      acceptedRoutes =
+        this.overlapSafeCheckpoint?.routes ?? this.guardedInputHdRoutes
+      acceptedSnapshot = this.overlapSafeCheckpoint?.snapshot ?? inputSnapshot
+      this.traceObstacleRepairRolledBack = true
+    }
     if (this.referenceDrcEvaluator) {
       const referenceInputSnapshot = this.referenceInputSnapshot!
       const referenceCandidateSnapshot =
@@ -437,6 +506,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         acceptedRoutes = this.guardedInputHdRoutes
         acceptedSnapshot = inputSnapshot
         this.referenceCandidateRolledBack = true
+        this.traceObstacleConnectionsRestored = 0
       }
     }
     this.outputHdRoutes = acceptedRoutes
@@ -553,6 +623,9 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         this.getRepairIssueCount(bestSnapshot),
       )
     }
+    // Exploration may temporarily introduce contacts that a later step clears.
+    // Preserve the best publishable result without restricting that search.
+    this.rememberOverlapSafeRoutes(bestRoutes, bestSnapshot)
 
     if (bestSnapshot.count === 0) {
       this.acceptSolvedRoutes(bestRoutes, bestSnapshot)
