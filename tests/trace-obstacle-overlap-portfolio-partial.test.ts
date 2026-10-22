@@ -1,5 +1,9 @@
-import { expect, test } from "bun:test"
-import { GlobalDrcBranchPortfolioSolver, type HighDensityRoute } from "../lib"
+import { expect, spyOn, test } from "bun:test"
+import {
+  GlobalDrcBranchPortfolioSolver,
+  GlobalDrcForceImproveSolver,
+  type HighDensityRoute,
+} from "../lib"
 import { createBroadOverlapCase } from "./fixtures/traceObstacleOutputGuardFixtures"
 
 test("portfolio keeps independent repairs and reference-checks the mixed candidate", () => {
@@ -40,4 +44,22 @@ test("portfolio keeps independent repairs and reference-checks the mixed candida
   expect(solver.stats.drcBranchPortfolioTraceObstacleConnectionsRestored).toBe(
     1,
   )
+  const referenceEvaluationCount = referenceRoutes.length
+  const visualize = spyOn(
+    GlobalDrcForceImproveSolver.prototype,
+    "visualize",
+  ).mockImplementation(function (this: GlobalDrcForceImproveSolver) {
+    expect(this.getOutput()).toEqual(solver.getOutput())
+    expect(this.inputHdRoutes).toEqual(originalRoutes)
+    expect(this.stats.finalDrcIssueCount).toBe(0)
+    return {}
+  })
+  try {
+    solver.visualize()
+    solver.preview()
+    expect(visualize).toHaveBeenCalledTimes(2)
+    expect(referenceRoutes).toHaveLength(referenceEvaluationCount)
+  } finally {
+    visualize.mockRestore()
+  }
 })

@@ -76,7 +76,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
   private legacySafeTraceLayerSelectedSolver?: GlobalDrcForceImproveSolver
   private viaInPadSolver?: GlobalDrcForceImproveSolver
   private portfolioSelectedSolver?: GlobalDrcForceImproveSolver
-  private selectedSolver?: GlobalDrcForceImproveSolver
+  private outputVisualizationSolver?: GlobalDrcForceImproveSolver
   private overlapSafeCheckpoint?: PortfolioCandidate
   private traceObstacleRepairRolledBack = false
   private traceObstacleConnectionsRestored = 0
@@ -304,7 +304,6 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       }
     }
     this.outputHdRoutes = acceptedRoutes
-    this.selectedSolver = selectedSolver
     this.activeSubSolver = null
     this.phase = "done"
     this.progress = 1
@@ -746,12 +745,25 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
   }
 
   override visualize(): GraphicsObject {
-    const visualizer = this.activeSubSolver ?? this.selectedSolver
-    return visualizer?.visualize() ?? super.visualize()
+    if (this.activeSubSolver) return this.activeSubSolver.visualize()
+    if (!this.solved) return super.visualize()
+    if (!this.outputVisualizationSolver) {
+      // A restored output can combine routes from several branches. Visualize
+      // the published routes without changing any branch's recorded result.
+      this.outputVisualizationSolver = new GlobalDrcForceImproveSolver({
+        ...this.params,
+        hdRoutes: this.inputHdRoutes,
+        referenceDrcEvaluator: undefined,
+      })
+      this.outputVisualizationSolver.outputHdRoutes = this.outputHdRoutes
+      this.outputVisualizationSolver.stats = this.stats
+      this.outputVisualizationSolver.solved = true
+      this.outputVisualizationSolver.progress = 1
+    }
+    return this.outputVisualizationSolver.visualize()
   }
 
   override preview(): GraphicsObject {
-    const visualizer = this.activeSubSolver ?? this.selectedSolver
-    return visualizer?.preview() ?? this.visualize()
+    return this.activeSubSolver?.preview() ?? this.visualize()
   }
 }
