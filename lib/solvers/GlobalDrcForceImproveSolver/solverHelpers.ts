@@ -4794,8 +4794,8 @@ export const applyDrcErrorForces = (
   enableTraceViaOwnerTargeting = false,
 ) => {
   let changed = false
-  const vias = collectViaNodes(routes, srj)
-  const segments = collectSegments(routes)
+  let vias = collectViaNodes(routes, srj)
+  let segments = collectSegments(routes)
 
   for (const error of errors) {
     const center = getErrorCenter(error)
@@ -4990,6 +4990,7 @@ export const applyDrcErrorForces = (
               nearestSegment,
               srj.layerCount,
             )))
+      const pointCountBeforeMove = routes[nearestSegment.routeIndex]!.route.length
       const movedSegment = shouldUseObstacleMove
         ? moveSegmentAwayFromObstacle(
             routes,
@@ -5006,6 +5007,12 @@ export const applyDrcErrorForces = (
             srj,
             scale,
           )
+      // Detours insert vertices, shifting cached via and segment point indices.
+      // Refresh before this error's remaining via force or the next error.
+      if (routes[nearestSegment.routeIndex]!.route.length !== pointCountBeforeMove) {
+        vias = collectViaNodes(routes, srj)
+        segments = collectSegments(routes)
+      }
       changed = movedSegment || changed
     }
 
