@@ -201,12 +201,6 @@ test("DRC query result cache preserves ordered results and logical stats across 
         via.to_layer = "inner1"
       },
       () => {
-        srj.allowBlindAndBuriedVias = true
-      },
-      () => {
-        srj.allowBlindAndBuriedVias = false
-      },
-      () => {
         traces.reverse()
       },
       () => {

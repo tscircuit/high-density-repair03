@@ -1,7 +1,6 @@
 import { expect, test } from "bun:test"
 import { collectViaNodes } from "../lib/solvers/GlobalDrcForceImproveSolver/solverHelpers"
 import { COORDINATE_EPSILON } from "../lib/solvers/GlobalDrcForceImproveSolver/solverConfig"
-import type { SimpleRouteJson } from "../lib/types"
 import type { HighDensityRoute } from "../lib/types/high-density-types"
 
 test("collects terminal and repeated via groups without changing route inputs", () => {
@@ -75,22 +74,13 @@ test("collects terminal and repeated via groups without changing route inputs", 
       ],
     },
   ]
-  const srj: SimpleRouteJson = {
-    layerCount: 4,
-    minTraceWidth: 0.15,
-    minViaDiameter: 0.45,
-    bounds: { minX: -5, maxX: 5, minY: -5, maxY: 5 },
-    connections: [],
-    obstacles: [],
-  }
   const originalRoutes = structuredClone(routes)
-  const originalSrj = structuredClone(srj)
   const expected = [
     {
       routeIndex: 0,
       rootConnectionName: "root-terminal",
       pointIndexes: [0, 1, 2],
-      zLayers: [0, 1, 2, 3],
+      zLayers: [1, 2],
       x: 0,
       y: 0,
       radius: 0.3,
@@ -101,7 +91,7 @@ test("collects terminal and repeated via groups without changing route inputs", 
       routeIndex: 0,
       rootConnectionName: "root-terminal",
       pointIndexes: [4, 5, 6],
-      zLayers: [0, 1, 2, 3],
+      zLayers: [1, 2, 3],
       x: 2,
       y: 0,
       radius: 0.3,
@@ -112,7 +102,7 @@ test("collects terminal and repeated via groups without changing route inputs", 
       routeIndex: 1,
       rootConnectionName: "untagged-terminal",
       pointIndexes: [0, 1],
-      zLayers: [0, 1, 2, 3],
+      zLayers: [2, 3],
       x: -4,
       y: 2,
       radius: 0.2,
@@ -123,7 +113,7 @@ test("collects terminal and repeated via groups without changing route inputs", 
       routeIndex: 2,
       rootConnectionName: "root-epsilon",
       pointIndexes: [0, 1],
-      zLayers: [0, 1, 2, 3],
+      zLayers: [0, 1],
       x: 0,
       y: 4,
       radius: 0.25,
@@ -134,7 +124,7 @@ test("collects terminal and repeated via groups without changing route inputs", 
       routeIndex: 4,
       rootConnectionName: "reversed-skip-stack",
       pointIndexes: [0, 1, 2],
-      zLayers: [0, 1, 2, 3],
+      zLayers: [3, 1, 2],
       x: -2,
       y: -2,
       radius: 0.4,
@@ -143,17 +133,8 @@ test("collects terminal and repeated via groups without changing route inputs", 
     },
   ]
 
-  expect(collectViaNodes(routes, srj)).toEqual(expected)
-  expect(
-    collectViaNodes(routes, { ...srj, allowBlindAndBuriedVias: true }),
-  ).toEqual([
-    { ...expected[0]!, zLayers: [1, 2] },
-    { ...expected[1]!, zLayers: [1, 2, 3] },
-    { ...expected[2]!, zLayers: [2, 3] },
-    { ...expected[3]!, zLayers: [0, 1] },
-    { ...expected[4]!, zLayers: [1, 2, 3] },
-  ])
-  expect(collectViaNodes([], srj)).toEqual([])
+  expect(collectViaNodes(routes)).toEqual(expected)
+  expect(collectViaNodes(routes, 0.9)).toEqual(expected)
+  expect(collectViaNodes([])).toEqual([])
   expect(routes).toEqual(originalRoutes)
-  expect(srj).toEqual(originalSrj)
 })

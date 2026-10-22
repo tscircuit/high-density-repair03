@@ -113,7 +113,7 @@ const getRouteViaClearancePenalty = (
   routeIndex: number,
   connMap?: ConnectivityMap,
 ) =>
-  collectViaNodes(routes, srj)
+  collectViaNodes(routes, srj.minViaDiameter)
     .filter((via) => via.routeIndex === routeIndex)
     .reduce(
       (penalty, via) =>
@@ -130,7 +130,7 @@ const computeViaNudgeForces = (
   const route = routes[routeIndex]
   if (!route) return []
   const forces = route.route.map(() => ({ x: 0, y: 0 }))
-  const vias = collectViaNodes(routes, srj).filter(
+  const vias = collectViaNodes(routes, srj.minViaDiameter).filter(
     (via) => via.routeIndex === routeIndex,
   )
 
@@ -166,7 +166,7 @@ const applyNudgeForces = (
   scale: number,
 ): HighDensityRoute => {
   const viaPointIndexes = new Set(
-    collectViaNodes([route], srj).flatMap((via) =>
+    collectViaNodes([route], srj.minViaDiameter).flatMap((via) =>
       via.movable ? via.pointIndexes : [],
     ),
   )

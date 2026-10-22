@@ -75,8 +75,8 @@ variation, so these numbers should not be treated as an exact effect on other
 inputs or machines. `native-ccad-aee-result.json.gz` contains the recorded report
 with environment and shared dependency information.
 
-| Variant           |   Median |  Minimum |  Maximum |
-| ----------------- | -------: | -------: | -------: |
+| Variant | Median | Minimum | Maximum |
+| --- | ---: | ---: | ---: |
 | Baseline ccad3906 | 26.325 s | 24.905 s | 26.985 s |
 | Optimized aee0ef2 | 18.998 s | 18.380 s | 22.671 s |
 
@@ -128,9 +128,9 @@ A limited full-stage comparison used two alternating timed runs per variant
 after one warmup each. It confirmed that the Flatbush backend was **22.41%
 slower** on this captured input:
 
-| Backend                        |   Median |  Minimum |  Maximum |
-| ------------------------------ | -------: | -------: | -------: |
-| Native optimized grid-bitset   | 17.519 s | 17.469 s | 17.570 s |
+| Backend | Median | Minimum | Maximum |
+| --- | ---: | ---: | ---: |
+| Native optimized grid-bitset | 17.519 s | 17.469 s | 17.570 s |
 | Flatbush, same cell candidates | 21.446 s | 20.717 s | 22.175 s |
 
 All six runs had the same full output hash, iterations, statistics and

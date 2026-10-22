@@ -1,5 +1,4 @@
 import {
-  getBoundsFromPoints,
   getSegmentIntersection,
   pointToSegmentClosestPoint,
   segmentToBoundsMinDistance,
@@ -7,21 +6,12 @@ import {
   segmentToSegmentMinDistance,
 } from "@tscircuit/math-utils"
 import type { ConnectivityMap } from "circuit-json-to-connectivity-map"
-import {
-  applyToPoint,
-  applyToPoints,
-  compose,
-  inverse,
-  type Matrix,
-  rotateDEG,
-  translate,
-} from "transformation-matrix"
 import type {
   SimpleRouteJson,
   SimplifiedPcbTrace,
   SimplifiedPcbTraces,
 } from "../types"
-import { getViaDrillLayers } from "../utils/getViaLayers"
+import { getViaLayers } from "../utils/getViaLayers"
 
 type Point = { x: number; y: number }
 
@@ -73,8 +63,6 @@ type StaticObstacle = {
   width: number
   height: number
   radius?: number
-  localToWorld: Matrix
-  worldToLocal: Matrix
   layers: string[]
   pcbPortId?: string
 }
@@ -183,21 +171,11 @@ const getViaBounds = (via: Via): Bounds => {
   }
 }
 
-const getObstacleBounds = (obstacle: StaticObstacle): Bounds =>
-  getBoundsFromPoints(
-    applyToPoints(obstacle.localToWorld, [
-      { x: -obstacle.width / 2, y: -obstacle.height / 2 },
-      { x: obstacle.width / 2, y: -obstacle.height / 2 },
-      { x: obstacle.width / 2, y: obstacle.height / 2 },
-      { x: -obstacle.width / 2, y: obstacle.height / 2 },
-    ]),
-  )!
-
-const getObstacleLocalBounds = (obstacle: StaticObstacle): Bounds => ({
-  minX: -obstacle.width / 2,
-  minY: -obstacle.height / 2,
-  maxX: obstacle.width / 2,
-  maxY: obstacle.height / 2,
+const getObstacleBounds = (obstacle: StaticObstacle): Bounds => ({
+  minX: obstacle.x - obstacle.width / 2,
+  minY: obstacle.y - obstacle.height / 2,
+  maxX: obstacle.x + obstacle.width / 2,
+  maxY: obstacle.y + obstacle.height / 2,
 })
 
 class SpatialHash<T> {
@@ -637,19 +615,8 @@ export class AutoroutingDrcEngine {
       if (addedIds.has(obstacleId)) continue
       addedIds.add(obstacleId)
 
-      const hasRotation =
-        typeof obstacle.ccwRotationDegrees === "number" &&
-        Number.isFinite(obstacle.ccwRotationDegrees)
-      const localToWorld = compose(
-        translate(obstacle.center.x, obstacle.center.y),
-        rotateDEG(hasRotation ? obstacle.ccwRotationDegrees! : 0),
-      )
-      // Explicit rotation describes a rectangular pad, including square pads.
-      // Only legacy, unrotated multilayer obstacles use the circular inference.
       const isCircular =
-        !hasRotation &&
-        isMultiLayer &&
-        Math.abs(obstacle.width - obstacle.height) < 0.001
+        isMultiLayer && Math.abs(obstacle.width - obstacle.height) < 0.001
       obstacles.push({
         kind: "obstacle",
         obstacleType,
@@ -659,8 +626,6 @@ export class AutoroutingDrcEngine {
         y: obstacle.center.y,
         width: obstacle.width,
         height: obstacle.height,
-        localToWorld,
-        worldToLocal: inverse(localToWorld),
         ...(isCircular
           ? { radius: Math.max(obstacle.width, obstacle.height) / 2 }
           : {}),
@@ -753,11 +718,7 @@ export class AutoroutingDrcEngine {
         const viaId = `via_${vias.length}`
         const diameter =
           routePoint.via_diameter ?? this.srj.minViaDiameter ?? 0.3
-        const layers = getViaDrillLayers({
-          via: routePoint,
-          layerCount: this.srj.layerCount,
-          allowBlindAndBuriedVias: this.srj.allowBlindAndBuriedVias,
-        })
+        const layers = getViaLayers(routePoint, this.srj.layerCount)
         vias.push({
           kind: "via",
           order: vias.length,
@@ -1042,19 +1003,10 @@ export class AutoroutingDrcEngine {
     if (this.obstacleSharesNet(segment.netId, obstacle)) return undefined
     this.lastRunStats.exactCheckCount += 1
 
-    const obstacleBounds = getObstacleLocalBounds(obstacle)
-    const localSegment = {
-      ...segment,
-      start: applyToPoint(obstacle.worldToLocal, segment.start),
-      end: applyToPoint(obstacle.worldToLocal, segment.end),
-    }
+    const obstacleBounds = getObstacleBounds(obstacle)
     const shapeDistance =
       obstacle.radius === undefined
-        ? segmentToBoundsMinDistance(
-            localSegment.start,
-            localSegment.end,
-            obstacleBounds,
-          )
+        ? segmentToBoundsMinDistance(segment.start, segment.end, obstacleBounds)
         : segmentToCircleMinDistance(segment.start, segment.end, {
             x: obstacle.x,
             y: obstacle.y,
@@ -1087,13 +1039,7 @@ export class AutoroutingDrcEngine {
       ],
       center:
         obstacle.radius === undefined
-          ? applyToPoint(
-              obstacle.localToWorld,
-              getClosestPointBetweenSegmentAndBounds(
-                localSegment,
-                obstacleBounds,
-              ),
-            )
+          ? getClosestPointBetweenSegmentAndBounds(segment, obstacleBounds)
           : getClosestPointBetweenSegmentAndPoint(segment, obstacle),
     }
   }
@@ -1105,20 +1051,19 @@ export class AutoroutingDrcEngine {
     if (this.obstacleSharesNet(via.netId, obstacle)) return undefined
     this.lastRunStats.exactCheckCount += 1
 
-    const obstacleBounds = getObstacleLocalBounds(obstacle)
-    const localVia = applyToPoint(obstacle.worldToLocal, via)
+    const obstacleBounds = getObstacleBounds(obstacle)
     const pointToObstacleDistance =
       obstacle.radius === undefined
         ? Math.hypot(
             Math.max(
-              obstacleBounds.minX - localVia.x,
+              obstacleBounds.minX - via.x,
               0,
-              localVia.x - obstacleBounds.maxX,
+              via.x - obstacleBounds.maxX,
             ),
             Math.max(
-              obstacleBounds.minY - localVia.y,
+              obstacleBounds.minY - via.y,
               0,
-              localVia.y - obstacleBounds.maxY,
+              via.y - obstacleBounds.maxY,
             ),
           )
         : Math.hypot(via.x - obstacle.x, via.y - obstacle.y) - obstacle.radius

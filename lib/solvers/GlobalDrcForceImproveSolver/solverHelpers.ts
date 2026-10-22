@@ -365,7 +365,7 @@ export const getTopologyRepairDrcSnapshot = (
 
 export const collectViaNodes = (
   routes: HighDensityRoute[],
-  srj: SimpleRouteJson,
+  defaultViaDiameter = 0.3,
 ): ViaNode[] => {
   const vias: ViaNode[] = []
 
@@ -414,21 +414,14 @@ export const collectViaNodes = (
         Boolean(route.route[pointIndex]?.pcb_port_id),
       )
 
-      let minZ = 0
-      let maxZ = srj.layerCount - 1
-      if (srj.allowBlindAndBuriedVias) {
-        const endpointZ = uniquePointIndexes.map((i) => route.route[i]!.z)
-        minZ = Math.min(...endpointZ)
-        maxZ = Math.max(...endpointZ)
-      }
       vias.push({
         routeIndex,
         rootConnectionName: getRootConnectionName(route),
         pointIndexes: uniquePointIndexes,
-        zLayers: Array.from({ length: maxZ - minZ + 1 }, (_, z) => minZ + z),
+        zLayers: [...new Set(uniquePointIndexes.map((i) => route.route[i]!.z))],
         x: current.x,
         y: current.y,
-        radius: (route.viaDiameter ?? srj.minViaDiameter ?? 0.3) / 2,
+        radius: (route.viaDiameter ?? defaultViaDiameter) / 2,
         movable: endpointPointIndexes.length === 0,
         canCanonicalize:
           endpointPointIndexes.length === 0 || !hasTaggedTerminal,
@@ -2000,21 +1993,16 @@ const translateVia = (
   return true
 }
 
-export const getSameRootViaSite = ({
-  routes,
-  via,
-  srj,
-}: {
-  routes: MutableRoute[]
-  via: ViaNode
-  srj: SimpleRouteJson
-}): ViaNode[] => {
+export const getSameRootViaSite = (
+  routes: MutableRoute[],
+  via: ViaNode,
+): ViaNode[] => {
   if (!Number.isInteger(via.routeIndex)) return []
   const currentRoute = routes[via.routeIndex]
   if (!currentRoute || via.routeIndex < 0 || via.routeIndex >= routes.length)
     return []
 
-  const currentRouteVias = collectViaNodes([currentRoute], srj)
+  const currentRouteVias = collectViaNodes([currentRoute])
   const currentVia = currentRouteVias.find((candidate) =>
     candidate.pointIndexes.some((pointIndex) =>
       via.pointIndexes.includes(pointIndex),
@@ -2036,7 +2024,7 @@ export const getSameRootViaSite = ({
     const routeVias =
       routeIndex === via.routeIndex
         ? currentRouteVias
-        : collectViaNodes([route], srj)
+        : collectViaNodes([route])
     for (const candidate of routeVias) {
       candidate.routeIndex = routeIndex
       if (
@@ -2058,7 +2046,7 @@ const translateSameRootViaSite = (
   dy: number,
   srj: SimpleRouteJson,
 ) => {
-  const siteVias = getSameRootViaSite({ routes, via, srj })
+  const siteVias = getSameRootViaSite(routes, via)
   if (
     siteVias.length === 0 ||
     siteVias.some(
@@ -2096,7 +2084,7 @@ const moveVia = (
   srj: SimpleRouteJson,
 ) =>
   via.movable &&
-  getSameRootViaSite({ routes, via, srj }).length <= 1 &&
+  getSameRootViaSite(routes, via).length <= 1 &&
   translateVia(routes, via, dx, dy, srj)
 
 const moveSegmentAwayFromPoint = (
@@ -2922,19 +2910,11 @@ const pushMovablesAwayFromObstacles = (
   netMatchers?: BroadNetMatchers,
 ) => {
   let changed = false
-  const traceObstacleClearance = getTraceToPadEdgeClearance(srj)
-  const maximumTraceRadius = segments.reduce(
-    (maximum, segment) => Math.max(maximum, segment.radius),
-    0,
-  )
-  // Preserve the existing addition order for minimum-width traces. Even tiny
-  // rounding differences can change subsequent repair candidate selection.
-  const traceObstacleSearchDistance =
-    maximumTraceRadius + traceObstacleClearance + CLEARANCE_SLACK
-  const viaObstacleClearance = getViaEdgeToPadEdgeClearance(srj)
+  const requiredTraceObstacleDistance =
+    srj.minTraceWidth / 2 + getTraceToPadEdgeClearance(srj) + CLEARANCE_SLACK
   const requiredViaObstacleDistance =
-    vias.reduce((maximum, via) => Math.max(maximum, via.radius), 0) +
-    viaObstacleClearance +
+    (srj.minViaDiameter ?? 0.3) / 2 +
+    getViaEdgeToPadEdgeClearance(srj)! +
     CLEARANCE_SLACK
 
   for (const obstacle of srj.obstacles) {
@@ -2959,7 +2939,7 @@ const pushMovablesAwayFromObstacles = (
       const repulsion = getRectRepulsion(
         via,
         obstacle,
-        via.radius + viaObstacleClearance + CLEARANCE_SLACK,
+        requiredViaObstacleDistance,
       )
       if (!repulsion) continue
       const move = Math.min(BROAD_MAX_MOVE, repulsion.penetration)
@@ -2975,7 +2955,7 @@ const pushMovablesAwayFromObstacles = (
 
     const nearbySegmentIndexes = getSpatialCandidateIndexes(
       segmentSpatialIndex,
-      expandBounds2d(obstacleBounds, traceObstacleSearchDistance),
+      expandBounds2d(obstacleBounds, requiredTraceObstacleDistance),
       spatialCellSize,
     )
     for (const segmentIndex of nearbySegmentIndexes) {
@@ -2992,7 +2972,7 @@ const pushMovablesAwayFromObstacles = (
       const repulsion = getSegmentRectRepulsion(
         segment,
         obstacle,
-        segment.radius + traceObstacleClearance + CLEARANCE_SLACK,
+        requiredTraceObstacleDistance,
       )
       if (!repulsion) continue
       const move = Math.min(BROAD_MAX_MOVE, repulsion.penetration)
@@ -3019,7 +2999,7 @@ const applyBroadRepulsionPass = (
   netMatchers?: BroadNetMatchers,
 ): boolean => {
   let changed = false
-  const vias = collectViaNodes(routes, srj)
+  const vias = collectViaNodes(routes)
   const segments = collectSegments(routes)
   const spatialInteractionDistance = getBroadSpatialInteractionDistance(
     srj,
@@ -3139,7 +3119,7 @@ const applyBroadViaSegmentCleanupPass = (
   netMatchers?: BroadNetMatchers,
 ): boolean => {
   let changed = false
-  const vias = collectViaNodes(routes, srj)
+  const vias = collectViaNodes(routes)
   const segments = collectSegments(routes)
   const spatialInteractionDistance = getBroadSpatialInteractionDistance(
     srj,
@@ -4397,7 +4377,7 @@ export const applyViaOnlyDisplacementForTraceError = (
     center,
     expectedTraceRouteIndex,
   )
-  const via = getNearestVia(collectViaNodes(routes, srj), center)
+  const via = getNearestVia(collectViaNodes(routes), center)
   if (
     !segment ||
     !via ||
@@ -4911,7 +4891,7 @@ export const applyDrcErrorForces = (
   enableTraceViaOwnerTargeting = false,
 ) => {
   let changed = false
-  const vias = collectViaNodes(routes, srj)
+  const vias = collectViaNodes(routes)
   const segments = collectSegments(routes)
 
   for (const error of errors) {
