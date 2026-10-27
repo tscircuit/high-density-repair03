@@ -9,6 +9,7 @@ import {
 } from "../lib"
 import {
   getDrcSnapshot,
+  hasNewTraceCopperOverlaps,
   hasNewTraceObstacleOverlaps,
 } from "../lib/solvers/GlobalDrcForceImproveSolver/solverHelpers"
 
@@ -55,6 +56,18 @@ test("solar repair retains independent improvements when rejecting a new pad sho
   expect(solver.solved).toBe(true)
   expect(solver.failed).toBe(false)
   expect(hasNewTraceObstacleOverlaps(after, before)).toBe(false)
+  expect(
+    hasNewTraceCopperOverlaps(
+      after,
+      before,
+      solver.getOutput(),
+      input.hdRoutes,
+      connMap,
+    ),
+  ).toBe(false)
+  expect(
+    solver.stats.globalDrcForceImproveOverlapRestorationValidationCount,
+  ).toBeLessThanOrEqual(2)
   // The rejected four-error candidate shorts a pad. Keeping the unaffected
   // repairs leaves five errors instead of restoring all 29 input errors.
   expect(after.count).toBeLessThanOrEqual(5)

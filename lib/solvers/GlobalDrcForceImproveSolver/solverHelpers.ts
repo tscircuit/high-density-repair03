@@ -51,6 +51,15 @@ import {
   type BroadNetMatchers,
 } from "./broadNetMatchers"
 
+type PeerTraceOverlapPair = readonly [string, string]
+
+// A snapshot identifies fixed evaluated geometry. Retain logical pair names,
+// rather than references to mutable route points or positional fragment IDs.
+const peerTraceOverlapsBySnapshot = new WeakMap<
+  DrcSnapshot,
+  Map<string, PeerTraceOverlapPair>
+>()
+
 const cloneRoute = (route: HighDensityRoute): MutableRoute => ({
   ...route,
   route: route.route.map((point) => ({ ...point })),
@@ -3471,6 +3480,123 @@ export const hasNewTraceObstacleOverlaps = (
   if (candidateOverlaps.size === 0) return false
   const bestOverlaps = getTraceObstacleOverlapIds(bestSnapshot)
   return [...candidateOverlaps].some((id) => !bestOverlaps.has(id))
+}
+
+const getPeerTraceOverlaps = (
+  snapshot: DrcSnapshot,
+  routes: HighDensityRoute[],
+  connMap?: ConnectivityMap,
+): Map<string, PeerTraceOverlapPair> => {
+  const cached = peerTraceOverlapsBySnapshot.get(snapshot)
+  if (cached) return cached
+  const segments = collectSegments(routes).filter(
+    (segment) =>
+      routes[segment.routeIndex]!.route[segment.startIndex]!
+        .toNextSegmentType !== "through_obstacle",
+  )
+  const cellSize = segments.reduce(
+    (size, segment) => Math.max(size, segment.radius * 2),
+    BROAD_SPATIAL_CELL_SIZE_MIN,
+  )
+  const index = createSpatialIndex(
+    segments,
+    (segment) => expandBounds2d(getSegmentBounds(segment), segment.radius),
+    cellSize,
+  )
+  const overlaps = new Map<string, PeerTraceOverlapPair>()
+  for (let leftIndex = 0; leftIndex < segments.length; leftIndex++) {
+    const left = segments[leftIndex]!
+    const leftName = routes[left.routeIndex]!.connectionName
+    const candidates = getSpatialCandidateIndexes(
+      index,
+      expandBounds2d(getSegmentBounds(left), left.radius),
+      cellSize,
+    )
+    for (const rightIndex of candidates) {
+      if (rightIndex <= leftIndex) continue
+      const right = segments[rightIndex]!
+      const rightName = routes[right.routeIndex]!.connectionName
+      if (
+        left.z !== right.z ||
+        leftName === rightName ||
+        sharesNet(left.rootConnectionName, right.rootConnectionName, connMap)
+      ) {
+        continue
+      }
+      const clearance =
+        segmentToSegmentMinDistance(
+          left.start,
+          left.end,
+          right.start,
+          right.end,
+        ) -
+        left.radius -
+        right.radius
+      if (clearance >= -COORDINATE_EPSILON) continue
+      const pair: PeerTraceOverlapPair =
+        leftName < rightName ? [leftName, rightName] : [rightName, leftName]
+      overlaps.set(JSON.stringify(pair), pair)
+    }
+  }
+  peerTraceOverlapsBySnapshot.set(snapshot, overlaps)
+  return overlaps
+}
+
+const getNewPeerTraceOverlaps = (
+  candidateSnapshot: DrcSnapshot,
+  inputSnapshot: DrcSnapshot,
+  candidateRoutes: HighDensityRoute[],
+  inputRoutes: HighDensityRoute[],
+  connMap?: ConnectivityMap,
+): Map<string, PeerTraceOverlapPair> => {
+  const candidate = getPeerTraceOverlaps(
+    candidateSnapshot,
+    candidateRoutes,
+    connMap,
+  )
+  const input = getPeerTraceOverlaps(inputSnapshot, inputRoutes, connMap)
+  return new Map([...candidate].filter(([identity]) => !input.has(identity)))
+}
+
+/** Publication may retain incoming shorts, but cannot add another net pair. */
+export const hasNewTraceCopperOverlaps = (
+  candidateSnapshot: DrcSnapshot,
+  inputSnapshot: DrcSnapshot,
+  candidateRoutes: HighDensityRoute[],
+  inputRoutes: HighDensityRoute[],
+  connMap?: ConnectivityMap,
+): boolean =>
+  hasNewTraceObstacleOverlaps(candidateSnapshot, inputSnapshot) ||
+  getNewPeerTraceOverlaps(
+    candidateSnapshot,
+    inputSnapshot,
+    candidateRoutes,
+    inputRoutes,
+    connMap,
+  ).size > 0
+
+export const getNewTraceCopperOverlapConnectionNames = (
+  candidateSnapshot: DrcSnapshot,
+  inputSnapshot: DrcSnapshot,
+  candidateRoutes: HighDensityRoute[],
+  inputRoutes: HighDensityRoute[],
+  connMap?: ConnectivityMap,
+): Set<HighDensityRoute["connectionName"]> | undefined => {
+  const names = getNewTraceObstacleOverlapConnectionNames(
+    candidateSnapshot,
+    inputSnapshot,
+  )
+  if (!names) return undefined
+  for (const pair of getNewPeerTraceOverlaps(
+    candidateSnapshot,
+    inputSnapshot,
+    candidateRoutes,
+    inputRoutes,
+    connMap,
+  ).values()) {
+    for (const name of pair) names.add(name)
+  }
+  return names
 }
 
 export const isDrcSnapshotCountBetter = (
