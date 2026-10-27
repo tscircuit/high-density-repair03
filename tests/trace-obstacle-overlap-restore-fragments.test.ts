@@ -25,6 +25,7 @@ test("connection restoration preserves every safe fragment and unrelated route",
     routes,
     snapshot: candidateSnapshot,
     inputSnapshot: snapshot([]),
+    inputRoutes: checkpointRoutes,
     checkpointRoutes,
   })
   expect(restored?.routes).toEqual([unrelated, ...checkpointRoutes])
@@ -35,6 +36,7 @@ test("connection restoration preserves every safe fragment and unrelated route",
       routes,
       snapshot: { ...candidateSnapshot, traceConnectionNameById: undefined },
       inputSnapshot: snapshot([]),
+      inputRoutes: checkpointRoutes,
       checkpointRoutes,
     }),
   ).toBeUndefined()
@@ -43,6 +45,7 @@ test("connection restoration preserves every safe fragment and unrelated route",
       routes,
       snapshot: candidateSnapshot,
       inputSnapshot: snapshot([]),
+      inputRoutes: checkpointRoutes,
       checkpointRoutes: [],
     }),
   ).toBeUndefined()

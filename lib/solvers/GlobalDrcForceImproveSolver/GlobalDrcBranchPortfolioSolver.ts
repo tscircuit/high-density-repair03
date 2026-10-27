@@ -5,13 +5,13 @@ import type { HighDensityRoute } from "../../types/high-density-types"
 import { GlobalDrcForceImproveSolver } from "./GlobalDrcForceImproveSolver"
 import { RELAXED_DRC_OPTIONS } from "./drcPresets"
 import { getDrcSnapshot } from "./drc-snapshot"
-import { restoreOverlappingConnections } from "./restoreOverlappingConnections"
+import { getOverlapRestorationCandidates } from "./restoreOverlappingConnections"
 import {
   applyBroadRepulsionForces,
   cloneRoutes,
   getNonViaPadDrcIssueCount,
   hasNewDrcErrorIdentities,
-  hasNewTraceObstacleOverlaps,
+  hasNewTraceCopperOverlaps,
   getViaDrcIssueCount,
   isBetterDrcSnapshot,
   isDrcSnapshotCountBetter,
@@ -80,6 +80,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
   private overlapSafeCheckpoint?: PortfolioCandidate
   private traceObstacleRepairRolledBack = false
   private traceObstacleConnectionsRestored = 0
+  private overlapRestorationValidationCount = 0
   private referenceInputDrcIssueCount?: number
   private referenceCandidateDrcIssueCount?: number
   private referenceCandidateRolledBack = false
@@ -216,7 +217,17 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
     solver,
     safeTraceLayerPhaseAccepted,
   }: PortfolioCandidate): void {
-    if (hasNewTraceObstacleOverlaps(snapshot, this.inputSnapshot!)) return
+    if (
+      hasNewTraceCopperOverlaps(
+        snapshot,
+        this.inputSnapshot!,
+        routes,
+        this.guardedInputHdRoutes,
+        this.params.connMap,
+      )
+    ) {
+      return
+    }
     if (
       this.overlapSafeCheckpoint &&
       !isDrcSnapshotCountBetter(snapshot, this.overlapSafeCheckpoint.snapshot)
@@ -244,14 +255,25 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       solver: selectedSolver,
       safeTraceLayerPhaseAccepted: this.safeTraceLayerPhaseAccepted,
     })
-    if (hasNewTraceObstacleOverlaps(snapshot, this.inputSnapshot!)) {
-      const restored = restoreOverlappingConnections({
+    if (
+      hasNewTraceCopperOverlaps(
+        snapshot,
+        this.inputSnapshot!,
+        routes,
+        this.guardedInputHdRoutes,
+        this.params.connMap,
+      )
+    ) {
+      const restorations = getOverlapRestorationCandidates({
         routes,
         snapshot,
         inputSnapshot: this.inputSnapshot!,
+        inputRoutes: this.guardedInputHdRoutes,
+        connMap: this.params.connMap,
         checkpointRoutes: this.overlapSafeCheckpoint!.routes,
       })
-      if (restored) {
+      for (const restored of restorations) {
+        this.overlapRestorationValidationCount++
         const restoredSnapshot = getDrcSnapshot(
           this.params.srj,
           restored.routes,
@@ -348,6 +370,8 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         this.traceObstacleRepairRolledBack,
       drcBranchPortfolioTraceObstacleConnectionsRestored:
         this.traceObstacleConnectionsRestored,
+      drcBranchPortfolioOverlapRestorationValidationCount:
+        this.overlapRestorationValidationCount,
       drcBranchPortfolioMixedReferenceInputDrcIssueCount:
         this.mixedReferenceInputDrcIssueCount,
       drcBranchPortfolioMixedReferenceCandidateDrcIssueCount:

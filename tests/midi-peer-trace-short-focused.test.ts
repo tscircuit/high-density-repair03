@@ -79,6 +79,6 @@ beforeAll(async (): Promise<void> => {
   ).toMatchSvgSnapshot(import.meta.path)
 })
 
-test.failing("focused: MIDI repair preserves the original physical peer-contact set", (): void => {
+test("focused: MIDI repair preserves the original physical peer-contact set", (): void => {
   expect(newPairs).toEqual([])
 })
