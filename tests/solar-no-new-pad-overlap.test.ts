@@ -11,6 +11,7 @@ import {
   getDrcSnapshot,
   hasNewTraceObstacleOverlaps,
 } from "../lib/solvers/GlobalDrcForceImproveSolver/solverHelpers"
+import { TraceContactGuard } from "../lib/solvers/GlobalDrcForceImproveSolver/TraceContactGuard"
 
 test("solar repair retains independent improvements when rejecting a new pad short", () => {
   const input: {
@@ -55,6 +56,15 @@ test("solar repair retains independent improvements when rejecting a new pad sho
   expect(solver.solved).toBe(true)
   expect(solver.failed).toBe(false)
   expect(hasNewTraceObstacleOverlaps(after, before)).toBe(false)
+  const guard = new TraceContactGuard({
+    srj: input.srj,
+    inputRoutes: input.hdRoutes,
+    connMap,
+  })
+  expect(guard.getNewContactConnectionNames(solver.getOutput()).size).toBe(0)
+  expect(
+    solver.stats.globalDrcForceImproveOverlapRestorationChecks,
+  ).toBeLessThanOrEqual(2)
   // The rejected four-error candidate shorts a pad. Keeping the unaffected
   // repairs leaves five errors instead of restoring all 29 input errors.
   expect(after.count).toBeLessThanOrEqual(5)

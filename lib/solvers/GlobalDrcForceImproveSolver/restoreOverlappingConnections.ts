@@ -10,18 +10,30 @@ export const restoreOverlappingConnections = ({
   snapshot,
   inputSnapshot,
   checkpointRoutes,
+  peerConnectionNames,
 }: {
   routes: HighDensityRoute[]
   snapshot: DrcSnapshot
   inputSnapshot: DrcSnapshot
   checkpointRoutes: HighDensityRoute[]
+  peerConnectionNames?: ReadonlySet<ConnectionName>
 }):
-  | { routes: HighDensityRoute[]; restoredConnectionCount: number }
+  | {
+      routes: HighDensityRoute[]
+      restoredConnectionCount: number
+      restoredConnectionNames: Set<ConnectionName>
+    }
   | undefined => {
   const connectionNames = getNewTraceObstacleOverlapConnectionNames(
     snapshot,
     inputSnapshot,
   )
+  if (!connectionNames) return undefined
+  // A required pad rollback may also clear a peer contact. Revalidate that
+  // smaller mix before restoring its otherwise independently improved peer.
+  if (connectionNames.size === 0) {
+    for (const name of peerConnectionNames ?? []) connectionNames.add(name)
+  }
   if (!connectionNames?.size) return undefined
   const checkpointByConnection = new Map<ConnectionName, HighDensityRoute[]>()
   for (const route of checkpointRoutes) {
@@ -47,5 +59,6 @@ export const restoreOverlappingConnections = ({
   return {
     routes: restoredRoutes,
     restoredConnectionCount: restoredConnections.size,
+    restoredConnectionNames: restoredConnections,
   }
 }

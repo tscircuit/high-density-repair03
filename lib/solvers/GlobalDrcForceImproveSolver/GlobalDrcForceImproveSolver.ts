@@ -56,6 +56,7 @@ import { applyTraceToPadClearanceRelaxation } from "./traceToPadClearanceRelaxat
 import { applyViaToPadClearanceRelaxation } from "./viaToPadClearanceRelaxation"
 import { RELAXED_DRC_OPTIONS } from "./drcPresets"
 import { restoreOverlappingConnections } from "./restoreOverlappingConnections"
+import { TraceContactGuard } from "./TraceContactGuard"
 import type {
   DrcEvaluator,
   DrcSnapshot,
@@ -219,6 +220,9 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     | undefined
   private traceObstacleRepairRolledBack = false
   private traceObstacleConnectionsRestored = 0
+  private traceContactGuard?: TraceContactGuard
+  private peerTraceRepairRolledBack = false
+  private overlapRestorationChecks = 0
   private legacyCleanCheckpoint:
     | { routes: HighDensityRoute[]; snapshot: DrcSnapshot }
     | undefined
@@ -333,6 +337,10 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         this.traceObstacleRepairRolledBack,
       globalDrcForceImproveTraceObstacleConnectionsRestored:
         this.traceObstacleConnectionsRestored,
+      globalDrcForceImprovePeerTraceRepairRolledBack:
+        this.peerTraceRepairRolledBack,
+      globalDrcForceImproveOverlapRestorationChecks:
+        this.overlapRestorationChecks,
       globalDrcForceImproveReferenceInputDrcIssueCount:
         this.referenceInputDrcIssueCount,
       globalDrcForceImproveReferenceCandidateDrcIssueCount:
@@ -415,17 +423,22 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     return getRepairDrcIssueScore(snapshot)
   }
 
+  private getNewPeerContactConnectionNames(
+    routes: HighDensityRoute[],
+  ): Set<HighDensityRoute["connectionName"]> {
+    this.traceContactGuard ??= new TraceContactGuard({
+      srj: this.srj,
+      inputRoutes: this.guardedInputHdRoutes,
+      connMap: this.connMap,
+    })
+    return this.traceContactGuard.getNewContactConnectionNames(routes)
+  }
+
   private rememberOverlapSafeRoutes(
     routes: HighDensityRoute[],
     snapshot: DrcSnapshot,
   ): void {
     if (this.deferTraceObstacleOverlapGuard) return
-    if (
-      this.inputSnapshot &&
-      hasNewTraceObstacleOverlaps(snapshot, this.inputSnapshot)
-    ) {
-      return
-    }
     const checkpoint = this.overlapSafeCheckpoint
     if (
       checkpoint &&
@@ -437,6 +450,13 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         this.getViaIssueCount(checkpoint.snapshot),
         checkpoint.snapshot,
       )
+    ) {
+      return
+    }
+    if (
+      (this.inputSnapshot &&
+        hasNewTraceObstacleOverlaps(snapshot, this.inputSnapshot)) ||
+      this.getNewPeerContactConnectionNames(routes).size > 0
     ) {
       return
     }
@@ -472,24 +492,46 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     let acceptedSnapshot = relaxedSnapshotIsNoWorse ? relaxedSnapshot : snapshot
     const inputSnapshot =
       this.inputSnapshot ?? this.getSnapshot(this.guardedInputHdRoutes)
+    let peerConnectionNames = this.deferTraceObstacleOverlapGuard
+      ? new Set<HighDensityRoute["connectionName"]>()
+      : this.getNewPeerContactConnectionNames(acceptedRoutes)
     if (
       !this.deferTraceObstacleOverlapGuard &&
-      hasNewTraceObstacleOverlaps(acceptedSnapshot, inputSnapshot)
+      (hasNewTraceObstacleOverlaps(acceptedSnapshot, inputSnapshot) ||
+        peerConnectionNames.size > 0)
     ) {
-      const restored = restoreOverlappingConnections({
-        routes: acceptedRoutes,
-        snapshot: acceptedSnapshot,
-        inputSnapshot,
-        checkpointRoutes:
-          this.overlapSafeCheckpoint?.routes ?? this.guardedInputHdRoutes,
-      })
-      if (restored) {
+      this.peerTraceRepairRolledBack = peerConnectionNames.size > 0
+      const restoredNames = new Set<HighDensityRoute["connectionName"]>()
+      // Restoring one connection can expose a contact with another repaired
+      // connection. Bound full-board revalidation, then retain the safe checkpoint.
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const restored = restoreOverlappingConnections({
+          routes: acceptedRoutes,
+          snapshot: acceptedSnapshot,
+          inputSnapshot,
+          checkpointRoutes:
+            this.overlapSafeCheckpoint?.routes ?? this.guardedInputHdRoutes,
+          peerConnectionNames,
+        })
+        if (!restored) break
+        for (const name of restored.restoredConnectionNames)
+          restoredNames.add(name)
         const restoredSnapshot = this.getSnapshot(restored.routes)
+        this.overlapRestorationChecks++
         this.rememberOverlapSafeRoutes(restored.routes, restoredSnapshot)
         if (this.overlapSafeCheckpoint?.snapshot === restoredSnapshot) {
-          this.traceObstacleConnectionsRestored =
-            restored.restoredConnectionCount
+          this.traceObstacleConnectionsRestored = restoredNames.size
+          break
         }
+        acceptedRoutes = restored.routes
+        acceptedSnapshot = restoredSnapshot
+        peerConnectionNames =
+          this.getNewPeerContactConnectionNames(acceptedRoutes)
+        if (
+          !hasNewTraceObstacleOverlaps(acceptedSnapshot, inputSnapshot) &&
+          peerConnectionNames.size === 0
+        )
+          break
       }
       acceptedRoutes =
         this.overlapSafeCheckpoint?.routes ?? this.guardedInputHdRoutes
@@ -590,7 +632,11 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     if (
       !this.legacyCleanCheckpoint &&
       nonViaPadIssueCount === 0 &&
-      bestSnapshot.errors.some(isViaPadDrcError)
+      bestSnapshot.errors.some(isViaPadDrcError) &&
+      (this.deferTraceObstacleOverlapGuard ||
+        (this.getNewPeerContactConnectionNames(bestRoutes).size === 0 &&
+          (!this.inputSnapshot ||
+            !hasNewTraceObstacleOverlaps(bestSnapshot, this.inputSnapshot))))
     ) {
       this.legacyCleanCheckpoint = {
         routes: materializeRoutes(cloneRoutes(bestRoutes)),
