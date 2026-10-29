@@ -61,6 +61,7 @@ export class TraceContactRepairSolver extends BaseSolver {
   }
 
   private startContactRound(): void {
+    this.guard.preserveClearedContacts(this.current!.routes)
     this.pairs = this.guard.getNewContactPairs(this.current!.routes)
     if (this.pairs.length === 0) {
       this.startRefinement()
@@ -111,6 +112,7 @@ export class TraceContactRepairSolver extends BaseSolver {
   }
 
   private startViaRound(): void {
+    this.guard.preserveClearedContacts(this.current!.routes)
     if (
       this.current!.snapshot.count <= this.targetDrcCount ||
       this.viaRounds++ >= 4 ||

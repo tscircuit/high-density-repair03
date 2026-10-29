@@ -81,6 +81,14 @@ export class TraceContactGuard {
       .map(([, pair]) => pair)
   }
 
+  /** Later repair must not recreate an input contact that was already cleared. */
+  preserveClearedContacts(routes: HighDensityRoute[]): void {
+    const remaining = this.collectContacts(routes)
+    for (const key of this.inputContacts.keys()) {
+      if (!remaining.has(key)) this.inputContacts.delete(key)
+    }
+  }
+
   private collectContacts(
     routes: HighDensityRoute[],
   ): Map<ContactKey, Contact> {

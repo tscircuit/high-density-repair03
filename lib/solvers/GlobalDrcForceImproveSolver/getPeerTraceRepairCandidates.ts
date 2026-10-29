@@ -221,44 +221,51 @@ export function* getPeerTraceRepairCandidates({
                 yield materializeRoutesForIndexes(candidate, [routeIndex])
               }
             }
-        // Extend the conflicting span along its original path so new vias
-        // can occupy free space away from crowded existing vertices.
-        const startPosition =
-          Math.min(...contacts.map((contact) => contact.indexes[side])) - 1
-        const endPosition = Math.max(
-          ...contacts.map((contact) => contact.indexes[side]),
-        )
-        const z = route.route[Math.floor(startPosition)]!.z
-        const distances = [0.15, 0.3, 0.6, 1, 2]
-        for (const before of distances)
-          for (const after of distances)
-            for (let targetZ = 0; targetZ < srj.layerCount; targetZ++) {
-              if (targetZ === z) continue
-              const start = locateAlongRoute(route, startPosition, -1, before)
-              const end = locateAlongRoute(route, endPosition, 1, after)
-              if (!start || !end || start.index > end.index) continue
-              const middle = route.route.slice(start.index + 1, end.index + 1)
-              if (
-                middle.some(
-                  (point) =>
-                    point.z !== z ||
-                    point.pcb_port_id ||
-                    point.toNextSegmentType === "through_obstacle",
+        // Bridge the actual contact before trying the wider vertex span.
+        // A short crossing can be bypassed without moving neighboring copper.
+        const spans = [
+          [
+            Math.min(...contacts.map((contact) => contact.positions[side])),
+            Math.max(...contacts.map((contact) => contact.positions[side])),
+          ],
+          [
+            Math.min(...contacts.map((contact) => contact.indexes[side])) - 1,
+            Math.max(...contacts.map((contact) => contact.indexes[side])),
+          ],
+        ] as const
+        for (const [startPosition, endPosition] of spans) {
+          const z = route.route[Math.floor(startPosition)]!.z
+          const distances = [0.15, 0.3, 0.6, 1, 2]
+          for (const before of distances)
+            for (const after of distances)
+              for (let targetZ = 0; targetZ < srj.layerCount; targetZ++) {
+                if (targetZ === z) continue
+                const start = locateAlongRoute(route, startPosition, -1, before)
+                const end = locateAlongRoute(route, endPosition, 1, after)
+                if (!start || !end || start.index > end.index) continue
+                const middle = route.route.slice(start.index + 1, end.index + 1)
+                if (
+                  middle.some(
+                    (point) =>
+                      point.z !== z ||
+                      point.pcb_port_id ||
+                      point.toNextSegmentType === "through_obstacle",
+                  )
                 )
-              )
-                continue
-              const candidate = cloneRoutesForIndexes(routes, [routeIndex])
-              candidate[routeIndex]!.route = [
-                ...route.route.slice(0, start.index + 1),
-                start.point,
-                { ...start.point, z: targetZ },
-                ...middle.map((point) => ({ ...point, z: targetZ })),
-                { ...end.point, z: targetZ },
-                end.point,
-                ...route.route.slice(end.index + 1),
-              ]
-              yield materializeRoutesForIndexes(candidate, [routeIndex])
-            }
+                  continue
+                const candidate = cloneRoutesForIndexes(routes, [routeIndex])
+                candidate[routeIndex]!.route = [
+                  ...route.route.slice(0, start.index + 1),
+                  start.point,
+                  { ...start.point, z: targetZ },
+                  ...middle.map((point) => ({ ...point, z: targetZ })),
+                  { ...end.point, z: targetZ },
+                  end.point,
+                  ...route.route.slice(end.index + 1),
+                ]
+                yield materializeRoutesForIndexes(candidate, [routeIndex])
+              }
+        }
       }
       const indexById = new Map([
         ["peer_left", leftIndex],
