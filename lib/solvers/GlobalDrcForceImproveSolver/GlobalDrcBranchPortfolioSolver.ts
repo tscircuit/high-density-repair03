@@ -84,6 +84,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
   private traceContactGuard?: TraceContactGuard
   private peerTraceRepairRolledBack = false
   private overlapRestorationChecks = 0
+  private stoppedForTraceContacts = false
   private referenceInputDrcIssueCount?: number
   private referenceCandidateDrcIssueCount?: number
   private referenceCandidateRolledBack = false
@@ -393,6 +394,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       drcBranchPortfolioPeerTraceRepairRolledBack:
         this.peerTraceRepairRolledBack,
       drcBranchPortfolioOverlapRestorationChecks: this.overlapRestorationChecks,
+      drcBranchPortfolioStoppedForTraceContacts: this.stoppedForTraceContacts,
       drcBranchPortfolioMixedReferenceInputDrcIssueCount:
         this.mixedReferenceInputDrcIssueCount,
       drcBranchPortfolioMixedReferenceCandidateDrcIssueCount:
@@ -503,6 +505,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         connMap: this.params.connMap,
       })
       if (this.traceContactGuard.getNewContactPairs(legacyRoutes).length > 1) {
+        this.stoppedForTraceContacts = true
         this.finishWithOutput(
           legacyRoutes,
           legacySnapshot,
