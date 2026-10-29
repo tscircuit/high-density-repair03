@@ -32,6 +32,9 @@ export class TraceContactRepairSolver extends BaseSolver {
   private current?: Candidate
   private best?: Candidate
   private proposals?: Generator<HighDensityRoute[]>
+  private candidateContactCheck?: ReturnType<
+    TraceContactGuard["prepareCandidateCheck"]
+  >
   private pairs: (readonly [string, string])[] = []
   private affectedConnections = new Set<string>()
   private refineSolver?: GlobalDrcBranchPortfolioSolver
@@ -80,6 +83,9 @@ export class TraceContactRepairSolver extends BaseSolver {
       return
     }
     this.best = undefined
+    this.candidateContactCheck = this.guard.prepareCandidateCheck(
+      this.current!.routes,
+    )
     this.proposals = getPeerTraceRepairCandidates({
       ...this.params,
       routes: this.current!.routes,
@@ -130,6 +136,9 @@ export class TraceContactRepairSolver extends BaseSolver {
       return
     }
     this.best = this.current
+    this.candidateContactCheck = this.guard.prepareCandidateCheck(
+      this.current!.routes,
+    )
     this.proposals = getPeerTraceViaCandidates({
       srj: this.params.srj,
       routes: this.current!.routes,
@@ -182,6 +191,9 @@ export class TraceContactRepairSolver extends BaseSolver {
       return
     }
     this.proposals = getTraceViaSimplificationCandidates(this.current!.routes)
+    this.candidateContactCheck = this.guard.prepareCandidateCheck(
+      this.current!.routes,
+    )
   }
 
   override _step(): void {
@@ -230,7 +242,7 @@ export class TraceContactRepairSolver extends BaseSolver {
       }
       const routes = proposal.value
       this.geometryChecks++
-      if (this.guard.getNewContactPairs(routes).length > 0) return
+      if (this.candidateContactCheck!(routes).length > 0) return
       this.candidateChecks++
       const snapshot = this.snapshot(routes)
       if (
@@ -270,7 +282,7 @@ export class TraceContactRepairSolver extends BaseSolver {
       this.guard.hasContactPair(routes, this.pairs[0]!)
     )
       return
-    const remainingPairs = this.guard.getNewContactPairs(routes)
+    const remainingPairs = this.candidateContactCheck!(routes)
     if (this.phase === "contacts") {
       if (
         remainingPairs.length >= this.pairs.length ||

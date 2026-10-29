@@ -26,6 +26,55 @@ type GuardParams = {
 // Numerical roundoff only; positive clearance tolerances do not excuse shorts.
 const CONTACT_EPSILON = 1e-9
 
+const hasSameCopper = (
+  left: HighDensityRoute,
+  right: HighDensityRoute,
+): boolean => {
+  if (
+    left.connectionName !== right.connectionName ||
+    left.rootConnectionName !== right.rootConnectionName ||
+    left.traceThickness !== right.traceThickness ||
+    left.route.length !== right.route.length
+  )
+    return false
+  return left.route.every((point, index) => {
+    const other = right.route[index]!
+    return (
+      point.x === other.x &&
+      point.y === other.y &&
+      point.z === other.z &&
+      point.toNextSegmentType === other.toNextSegmentType
+    )
+  })
+}
+
+const addContact = (
+  contacts: Map<ContactKey, Contact>,
+  left: CopperSegment,
+  right: CopperSegment,
+): void => {
+  if (
+    left.start.z !== right.start.z ||
+    left.net === right.net ||
+    left.bounds.maxX <= right.bounds.minX ||
+    right.bounds.maxX <= left.bounds.minX ||
+    left.bounds.maxY <= right.bounds.minY ||
+    right.bounds.maxY <= left.bounds.minY
+  )
+    return
+  const pair: Contact =
+    left.connectionName < right.connectionName
+      ? [left.connectionName, right.connectionName]
+      : [right.connectionName, left.connectionName]
+  const key = JSON.stringify(pair)
+  if (contacts.has(key)) return
+  const gap =
+    segmentToSegmentMinDistance(left.start, left.end, right.start, right.end) -
+    left.radius -
+    right.radius
+  if (gap < -CONTACT_EPSILON) contacts.set(key, pair)
+}
+
 /** Physical wire contacts, independent of a caller's DRC reporting policy. */
 export class TraceContactGuard {
   private readonly connectivity: ConnectivityMap
@@ -98,10 +147,69 @@ export class TraceContactGuard {
     }
   }
 
-  private collectContacts(
+  /** Reuse stationary copper for a batch of local proposals. The copied
+   * geometry also detects in-place mutations; route identity is not a cache key. */
+  prepareCandidateCheck(
+    referenceRoutes: HighDensityRoute[],
+  ): (routes: HighDensityRoute[]) => Contact[] {
+    const reference = structuredClone(referenceRoutes)
+    const referenceContacts = this.collectContacts(reference)
+    const copper = [...this.collectSegments(reference).values()].flat()
+    const index = createSpatialIndex(
+      copper,
+      (segment) => segment.bounds,
+      this.cellSize,
+    )
+    return (routes: HighDensityRoute[]): Contact[] => {
+      if (routes.length !== reference.length)
+        return this.getNewContactPairs(routes)
+      const changedNames = new Set<ConnectionName>()
+      for (let routeIndex = 0; routeIndex < routes.length; routeIndex++) {
+        const previous = reference[routeIndex]!,
+          candidate = routes[routeIndex]!
+        if (hasSameCopper(previous, candidate)) continue
+        changedNames.add(previous.connectionName)
+        changedNames.add(candidate.connectionName)
+      }
+      // A full scan is cheaper when the proposal changes much of the board.
+      if (changedNames.size > routes.length / 4)
+        return this.getNewContactPairs(routes)
+      const contacts = new Map(
+        [...referenceContacts].filter(
+          ([, pair]) =>
+            !changedNames.has(pair[0]) && !changedNames.has(pair[1]),
+        ),
+      )
+      // Include every fragment of a changed logical connection, even when
+      // only one fragment moved and another still touches its original peer.
+      const changedCopper = [
+        ...this.collectSegments(
+          routes.filter((route) => changedNames.has(route.connectionName)),
+        ).values(),
+      ].flat()
+      for (let i = 0; i < changedCopper.length; i++) {
+        const left = changedCopper[i]!
+        for (const candidateIndex of getSpatialCandidateIndexes(
+          index,
+          left.bounds,
+          this.cellSize,
+        )) {
+          const right = copper[candidateIndex]!
+          if (!changedNames.has(right.connectionName))
+            addContact(contacts, left, right)
+        }
+        for (let j = i + 1; j < changedCopper.length; j++)
+          addContact(contacts, left, changedCopper[j]!)
+      }
+      return [...contacts]
+        .filter(([key]) => !this.inputContacts.has(key))
+        .map(([, pair]) => pair)
+    }
+  }
+
+  private collectSegments(
     routes: HighDensityRoute[],
-  ): Map<ContactKey, Contact> {
-    const contacts = new Map<ContactKey, Contact>()
+  ): Map<number, CopperSegment[]> {
     const layers = new Map<number, CopperSegment[]>()
     for (const route of routes) {
       const net =
@@ -138,7 +246,14 @@ export class TraceContactGuard {
         })
       }
     }
-    for (const segments of layers.values()) {
+    return layers
+  }
+
+  private collectContacts(
+    routes: HighDensityRoute[],
+  ): Map<ContactKey, Contact> {
+    const contacts = new Map<ContactKey, Contact>()
+    for (const segments of this.collectSegments(routes).values()) {
       const index = createSpatialIndex(
         segments,
         (segment) => segment.bounds,
@@ -152,32 +267,7 @@ export class TraceContactGuard {
           this.cellSize,
         )) {
           if (j <= i) continue
-          const right = segments[j]!
-          if (
-            left.net === right.net ||
-            left.bounds.maxX <= right.bounds.minX ||
-            right.bounds.maxX <= left.bounds.minX ||
-            left.bounds.maxY <= right.bounds.minY ||
-            right.bounds.maxY <= left.bounds.minY
-          ) {
-            continue
-          }
-          const pair: Contact =
-            left.connectionName < right.connectionName
-              ? [left.connectionName, right.connectionName]
-              : [right.connectionName, left.connectionName]
-          const key = JSON.stringify(pair)
-          if (contacts.has(key)) continue
-          const gap =
-            segmentToSegmentMinDistance(
-              left.start,
-              left.end,
-              right.start,
-              right.end,
-            ) -
-            left.radius -
-            right.radius
-          if (gap < -CONTACT_EPSILON) contacts.set(key, pair)
+          addContact(contacts, left, segments[j]!)
         }
       }
     }
