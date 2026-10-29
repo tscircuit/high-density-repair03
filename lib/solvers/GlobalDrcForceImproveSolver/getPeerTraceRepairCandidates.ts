@@ -128,6 +128,8 @@ const locateAlongRoute = (
       return undefined
     const length = Math.hypot(next.x - point.x, next.y - point.y)
     if (length >= distance && length > 0) {
+      if (Math.abs(length - distance) <= 1e-9 && next.pcb_port_id)
+        return undefined
       return {
         index: direction < 0 ? index : index - 1,
         point: interpolate(point, next, distance / length),
