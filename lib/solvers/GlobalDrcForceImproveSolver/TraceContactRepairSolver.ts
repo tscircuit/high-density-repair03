@@ -3,12 +3,8 @@ import type { HighDensityRoute } from "../../types/high-density-types"
 import { GlobalDrcBranchPortfolioSolver } from "./GlobalDrcBranchPortfolioSolver"
 import { TraceContactGuard } from "./TraceContactGuard"
 import { getPeerTraceRepairCandidates } from "./getPeerTraceRepairCandidates"
-import {
-  cloneRoutesForIndexes,
-  getDrcSnapshot,
-  hasNewTraceObstacleOverlaps,
-  materializeRoutesForIndexes,
-} from "./solverHelpers"
+import { getPeerTraceViaCandidates } from "./getPeerTraceViaCandidates"
+import { getDrcSnapshot, hasNewTraceObstacleOverlaps } from "./solverHelpers"
 import type { DrcSnapshot, GlobalDrcBranchPortfolioSolverParams } from "./types"
 
 export type TraceContactRepairSolverParams =
@@ -112,62 +108,18 @@ export class TraceContactRepairSolver extends BaseSolver {
     this.phase = "refine"
   }
 
-  private *viaCandidates(): Generator<HighDensityRoute[]> {
-    const routes = this.current!.routes
-    const previousVias = new Set(
-      this.params.hdRoutes.flatMap((route) =>
-        route.vias.map((via) => `${route.connectionName}:${via.x},${via.y}`),
-      ),
-    )
-    let viaCount = 0
-    for (const [routeIndex, route] of routes.entries()) {
-      if (!this.affectedConnections.has(route.connectionName)) continue
-      for (let pointIndex = 1; pointIndex < route.route.length; pointIndex++) {
-        const a = route.route[pointIndex - 1]!,
-          b = route.route[pointIndex]!
-        if (
-          a.z === b.z ||
-          a.x !== b.x ||
-          a.y !== b.y ||
-          a.pcb_port_id ||
-          b.pcb_port_id ||
-          previousVias.has(`${route.connectionName}:${b.x},${b.y}`)
-        )
-          continue
-        if (++viaCount > 8) return
-        for (const distance of [0.05, 0.1, 0.4])
-          for (let direction = 0; direction < 8; direction++) {
-            const dx = Math.cos((direction * Math.PI) / 4) * distance
-            const dy = Math.sin((direction * Math.PI) / 4) * distance
-            const radius = route.viaDiameter / 2
-            const x = b.x + dx,
-              y = b.y + dy
-            const bounds = this.params.srj.bounds
-            if (
-              x - radius < bounds.minX ||
-              x + radius > bounds.maxX ||
-              y - radius < bounds.minY ||
-              y + radius > bounds.maxY
-            )
-              continue
-            const candidate = cloneRoutesForIndexes(routes, [routeIndex])
-            for (const index of [pointIndex - 1, pointIndex]) {
-              candidate[routeIndex]!.route[index]!.x = x
-              candidate[routeIndex]!.route[index]!.y = y
-            }
-            yield materializeRoutesForIndexes(candidate, [routeIndex])
-          }
-      }
-    }
-  }
-
   private startViaRound(): void {
     if (this.viaRounds++ >= 4 || this.candidateChecks >= 768) {
       this.finish()
       return
     }
     this.best = this.current
-    this.proposals = this.viaCandidates()
+    this.proposals = getPeerTraceViaCandidates({
+      srj: this.params.srj,
+      routes: this.current!.routes,
+      previousRoutes: this.params.hdRoutes,
+      affectedConnections: this.affectedConnections,
+    })
     this.phase = "vias"
   }
 
