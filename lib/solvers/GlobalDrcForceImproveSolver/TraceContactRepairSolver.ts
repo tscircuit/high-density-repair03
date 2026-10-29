@@ -25,6 +25,7 @@ export class TraceContactRepairSolver extends BaseSolver {
   readonly guard: TraceContactGuard
   private phase: Phase = "start"
   private inputSnapshot?: DrcSnapshot
+  private targetDrcCount = Infinity
   private current?: Candidate
   private best?: Candidate
   private proposals?: Generator<HighDensityRoute[]>
@@ -84,6 +85,7 @@ export class TraceContactRepairSolver extends BaseSolver {
 
   private startRefinement(): void {
     if (
+      this.current!.snapshot.count <= this.targetDrcCount ||
       hasNewTraceObstacleOverlaps(this.current!.snapshot, this.inputSnapshot!)
     ) {
       this.finish()
@@ -92,9 +94,9 @@ export class TraceContactRepairSolver extends BaseSolver {
     this.refineSolver = new GlobalDrcBranchPortfolioSolver({
       ...this.params,
       hdRoutes: this.current!.routes,
-      maxIterations: 8,
+      maxIterations: 4,
       viaInPadMaxIterations: Math.min(
-        32,
+        24,
         this.params.viaInPadMaxIterations ?? 8,
       ),
       broadMaxIterations: 4,
@@ -109,7 +111,11 @@ export class TraceContactRepairSolver extends BaseSolver {
   }
 
   private startViaRound(): void {
-    if (this.viaRounds++ >= 4 || this.candidateChecks >= 768) {
+    if (
+      this.current!.snapshot.count <= this.targetDrcCount ||
+      this.viaRounds++ >= 4 ||
+      this.candidateChecks >= 768
+    ) {
       this.finish()
       return
     }
@@ -154,6 +160,9 @@ export class TraceContactRepairSolver extends BaseSolver {
         routes: this.params.hdRoutes,
         snapshot: this.snapshot(this.params.hdRoutes),
       }
+      // Restore the candidate's DRC quality after removing its physical shorts.
+      // Further polishing only spends time once that objective is met.
+      this.targetDrcCount = this.current.snapshot.count
       this.affectedConnections = this.guard.getNewContactConnectionNames(
         this.current.routes,
       )
