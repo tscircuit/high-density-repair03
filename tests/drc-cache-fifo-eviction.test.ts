@@ -37,9 +37,7 @@ test("FIFO eviction preserves resident entries across churn, full eviction, and 
     // Variable entry sizes force both single and multiple evictions. Periodic
     // hits must not promote entries, and a nearly full-size entry drains FIFO.
     const key =
-      i % 17 === 0
-        ? "hit"
-        : `${i}:` + "x".repeat(i % 31 === 0 ? 900 : i % 70)
+      i % 17 === 0 ? "hit" : `${i}:` + "x".repeat(i % 31 === 0 ? 900 : i % 70)
     const serialized = JSON.stringify([key])
     const units = serialized.length + 64
     let entry = primitiveReference.get(serialized)
@@ -70,7 +68,9 @@ test("FIFO eviction preserves resident entries across churn, full eviction, and 
       queryUnits += querySize
     }
     expect(cache.runCachedQuery(queryKey, compute)).toEqual([])
-    expect([...cache.queryResultCache.keys()]).toEqual([...queryReference.keys()])
+    expect([...cache.queryResultCache.keys()]).toEqual([
+      ...queryReference.keys(),
+    ])
     expect(cache.queryResultUnits).toBe(queryUnits)
     expect(computations).toBe(expectedComputations)
     if (i === 999) {
