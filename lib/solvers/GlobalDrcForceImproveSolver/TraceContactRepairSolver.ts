@@ -4,6 +4,7 @@ import { GlobalDrcBranchPortfolioSolver } from "./GlobalDrcBranchPortfolioSolver
 import { TraceContactGuard } from "./TraceContactGuard"
 import { getPeerTraceRepairCandidates } from "./getPeerTraceRepairCandidates"
 import { getPeerTraceViaCandidates } from "./getPeerTraceViaCandidates"
+import { getTraceViaSimplificationCandidates } from "./getTraceViaSimplificationCandidates"
 import { getDrcSnapshot, hasNewTraceObstacleOverlaps } from "./solverHelpers"
 import type { DrcSnapshot, GlobalDrcBranchPortfolioSolverParams } from "./types"
 
@@ -13,7 +14,9 @@ export type TraceContactRepairSolverParams =
     inputHdRoutes: HighDensityRoute[]
   }
 type Candidate = { routes: HighDensityRoute[]; snapshot: DrcSnapshot }
-type Phase = "start" | "contacts" | "refine" | "vias" | "done"
+type Phase = "start" | "contacts" | "refine" | "vias" | "simplify" | "done"
+const countVias = (routes: HighDensityRoute[]): number =>
+  routes.reduce((count, route) => count + route.vias.length, 0)
 const isBetter = (candidate: Candidate, previous: Candidate): boolean =>
   candidate.snapshot.count < previous.snapshot.count ||
   (candidate.snapshot.count === previous.snapshot.count &&
@@ -36,6 +39,7 @@ export class TraceContactRepairSolver extends BaseSolver {
   private geometryChecks = 0
   private contactRounds = 0
   private viaRounds = 0
+  private simplificationRounds = 0
   private outputHdRoutes: HighDensityRoute[]
 
   constructor(params: TraceContactRepairSolverParams) {
@@ -95,12 +99,16 @@ export class TraceContactRepairSolver extends BaseSolver {
     this.refineSolver = new GlobalDrcBranchPortfolioSolver({
       ...this.params,
       hdRoutes: this.current!.routes,
-      maxIterations: 4,
+      maxIterations: 1,
       viaInPadMaxIterations: Math.min(
         24,
         this.params.viaInPadMaxIterations ?? 8,
       ),
       broadMaxIterations: 4,
+      // Refine the selected bridges without another topology search that can
+      // recreate a crossing.
+      enableSafeTraceLayerMoves: false,
+      prioritizeMultipleTraceContactRepair: false,
       enableBroadFallback: false,
       enableLargeBoardBroadFallback: false,
       enablePostSolveClearanceRelaxation: false,
@@ -139,6 +147,13 @@ export class TraceContactRepairSolver extends BaseSolver {
       this.guard.getNewContactPairs(candidate.routes).length === 0 &&
       !hasNewTraceObstacleOverlaps(candidate.snapshot, this.inputSnapshot!)
     ) {
+      if (
+        this.phase !== "simplify" &&
+        countVias(candidate.routes) > countVias(this.params.hdRoutes)
+      ) {
+        this.startSimplificationRound()
+        return
+      }
       this.outputHdRoutes = candidate.routes
     }
     this.stats = {
@@ -146,6 +161,7 @@ export class TraceContactRepairSolver extends BaseSolver {
       traceContactRepairGeometryChecks: this.geometryChecks,
       traceContactRepairContactRounds: this.contactRounds,
       traceContactRepairViaRounds: this.viaRounds,
+      traceContactRepairSimplificationRounds: this.simplificationRounds,
       traceContactRepairAccepted:
         this.outputHdRoutes !== this.params.inputHdRoutes,
     }
@@ -153,6 +169,19 @@ export class TraceContactRepairSolver extends BaseSolver {
     this.phase = "done"
     this.progress = 1
     this.solved = true
+  }
+
+  private startSimplificationRound(): void {
+    this.phase = "simplify"
+    this.guard.preserveClearedContacts(this.current!.routes)
+    if (
+      countVias(this.current!.routes) <= countVias(this.params.hdRoutes) ||
+      this.simplificationRounds++ >= 4
+    ) {
+      this.finish()
+      return
+    }
+    this.proposals = getTraceViaSimplificationCandidates(this.current!.routes)
   }
 
   override _step(): void {
@@ -189,6 +218,31 @@ export class TraceContactRepairSolver extends BaseSolver {
       this.startViaRound()
       return
     }
+    if (this.phase === "simplify") {
+      const proposal = this.proposals!.next()
+      if (
+        proposal.done ||
+        this.geometryChecks >= 4096 ||
+        this.candidateChecks >= 768
+      ) {
+        this.finish()
+        return
+      }
+      const routes = proposal.value
+      this.geometryChecks++
+      if (this.guard.getNewContactPairs(routes).length > 0) return
+      this.candidateChecks++
+      const snapshot = this.snapshot(routes)
+      if (
+        snapshot.count > this.current!.snapshot.count ||
+        hasNewTraceObstacleOverlaps(snapshot, this.inputSnapshot!) ||
+        countVias(routes) >= countVias(this.current!.routes)
+      )
+        return
+      this.current = { routes, snapshot }
+      this.startSimplificationRound()
+      return
+    }
     if (this.phase !== "contacts" && this.phase !== "vias") return
     const proposal = this.proposals!.next()
     if (
@@ -211,6 +265,11 @@ export class TraceContactRepairSolver extends BaseSolver {
     }
     const routes = proposal.value
     this.geometryChecks++
+    if (
+      this.phase === "contacts" &&
+      this.guard.hasContactPair(routes, this.pairs[0]!)
+    )
+      return
     const remainingPairs = this.guard.getNewContactPairs(routes)
     if (this.phase === "contacts") {
       if (
@@ -230,6 +289,14 @@ export class TraceContactRepairSolver extends BaseSolver {
     if (hasNewTraceObstacleOverlaps(candidate.snapshot, this.inputSnapshot!))
       return
     if (!this.best || isBetter(candidate, this.best)) this.best = candidate
+    if (
+      this.phase === "contacts" &&
+      this.best.snapshot.count <= this.current!.snapshot.count &&
+      countVias(this.best.routes) <= countVias(this.current!.routes)
+    ) {
+      this.current = this.best
+      this.startContactRound()
+    }
   }
 
   override getOutput(): HighDensityRoute[] {

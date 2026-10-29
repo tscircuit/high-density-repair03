@@ -493,6 +493,24 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
     legacySnapshot: DrcSnapshot,
     legacySelectedSolver?: GlobalDrcForceImproveSolver,
   ) {
+    if (
+      this.params.prioritizeMultipleTraceContactRepair &&
+      this.params.deferTraceContactGuard
+    ) {
+      this.traceContactGuard ??= new TraceContactGuard({
+        srj: this.params.srj,
+        inputRoutes: this.guardedInputHdRoutes,
+        connMap: this.params.connMap,
+      })
+      if (this.traceContactGuard.getNewContactPairs(legacyRoutes).length > 1) {
+        this.finishWithOutput(
+          legacyRoutes,
+          legacySnapshot,
+          legacySelectedSolver,
+        )
+        return
+      }
+    }
     this.legacySafeTraceLayerRoutes = legacyRoutes
     this.legacySafeTraceLayerSnapshot = legacySnapshot
     this.legacySafeTraceLayerSelectedSolver = legacySelectedSolver

@@ -81,6 +81,15 @@ export class TraceContactGuard {
       .map(([, pair]) => pair)
   }
 
+  /** Cheap rejection before checking a local proposal against the whole board. */
+  hasContactPair(routes: HighDensityRoute[], pair: Contact): boolean {
+    const pairRoutes = routes.filter(
+      (route) =>
+        route.connectionName === pair[0] || route.connectionName === pair[1],
+    )
+    return this.collectContacts(pairRoutes).has(JSON.stringify(pair))
+  }
+
   /** Later repair must not recreate an input contact that was already cleared. */
   preserveClearedContacts(routes: HighDensityRoute[]): void {
     const remaining = this.collectContacts(routes)

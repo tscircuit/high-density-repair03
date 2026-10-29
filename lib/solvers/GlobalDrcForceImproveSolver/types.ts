@@ -103,6 +103,8 @@ export type GlobalDrcBranchPortfolioSolverParams =
     broadPassMultiplier: number
     viaInPadDrcEvaluator?: DrcEvaluator
     viaInPadMaxIterations?: number
+    /** Send multiple new shorts to the owning contact repair before mixed topology search. */
+    prioritizeMultipleTraceContactRepair?: boolean
   }
 
 export type SolverDeps = Record<string, unknown>
