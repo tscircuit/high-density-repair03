@@ -27,4 +27,16 @@ test("via simplification preserves internal terminals and jumper boundaries", ()
   jumper.route[1]!.toNextSegmentType = "through_obstacle"
   expect([...getTraceViaSimplificationCandidates([jumper])]).toEqual([])
   expect([...getTraceViaSimplificationCandidates([route])]).toHaveLength(2)
+  const distantJumper = structuredClone(route)
+  distantJumper.route.unshift(
+    { x: -1, y: 0, z: 0 },
+    { x: -1, y: 0, z: 0, toNextSegmentType: "through_obstacle" },
+  )
+  for (const candidate of getTraceViaSimplificationCandidates([
+    distantJumper,
+  ])) {
+    expect(candidate[0]!.route.slice(0, 3)).toEqual(
+      distantJumper.route.slice(0, 3),
+    )
+  }
 })

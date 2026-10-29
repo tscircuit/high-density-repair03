@@ -39,6 +39,9 @@ export function* getTraceViaSimplificationCandidates(
           return (
             !previous ||
             point.pcb_port_id ||
+            point.toNextSegmentType ||
+            previous.toNextSegmentType ||
+            point.insideJumperPad !== previous.insideJumperPad ||
             point.x !== previous.x ||
             point.y !== previous.y ||
             point.z !== previous.z
