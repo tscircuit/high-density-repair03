@@ -450,6 +450,8 @@ export class AutoroutingDrcEngine {
     string,
     { id: number; units: number }
   >()
+  // Advance through FIFO entries instead of rescanning deleted Map slots.
+  private primitiveEvictionCursor = this.primitiveIdsByKey.entries()
   private primitiveKeyUnits = 0
   private nextPrimitiveId = 0
   private readonly staticObstacleIds = new WeakMap<StaticObstacle, number>()
@@ -462,6 +464,7 @@ export class AutoroutingDrcEngine {
       units: number
     }
   >()
+  private queryEvictionCursor = this.queryResultCache.entries()
   private queryResultUnits = 0
   private cachedConnectivityKey?: string
   private readonly obstacleIndexesByLayer = new Map<
@@ -844,8 +847,8 @@ export class AutoroutingDrcEngine {
     )
       return undefined
     while (this.primitiveKeyUnits + units > this.primitiveKeyBudget) {
-      const oldestKey = this.primitiveIdsByKey.keys().next().value!
-      this.primitiveKeyUnits -= this.primitiveIdsByKey.get(oldestKey)!.units
+      const [oldestKey, oldest] = this.primitiveEvictionCursor.next().value!
+      this.primitiveKeyUnits -= oldest.units
       this.primitiveIdsByKey.delete(oldestKey)
     }
     const id = this.nextPrimitiveId++
@@ -888,8 +891,8 @@ export class AutoroutingDrcEngine {
       64
     if (units > this.queryResultBudget) return errors
     while (this.queryResultUnits + units > this.queryResultBudget) {
-      const oldestKey = this.queryResultCache.keys().next().value!
-      this.queryResultUnits -= this.queryResultCache.get(oldestKey)!.units
+      const [oldestKey, oldest] = this.queryEvictionCursor.next().value!
+      this.queryResultUnits -= oldest.units
       this.queryResultCache.delete(oldestKey)
     }
     this.queryResultCache.set(key, {
@@ -1249,6 +1252,7 @@ export class AutoroutingDrcEngine {
       ])
       if (connectivityKey !== this.cachedConnectivityKey) {
         this.queryResultCache.clear()
+        this.queryEvictionCursor = this.queryResultCache.entries()
         this.queryResultUnits = 0
         this.cachedConnectivityKey = connectivityKey
       }
