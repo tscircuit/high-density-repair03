@@ -25,3 +25,6 @@ export type {
   SimpleRouteJson,
 } from "./solvers/GlobalDrcForceImproveSolver"
 export { getViaLayers } from "./utils/getViaLayers"
+export { TraceContactGuard } from "./solvers/GlobalDrcForceImproveSolver/TraceContactGuard"
+export { TraceContactRepairSolver } from "./solvers/GlobalDrcForceImproveSolver/TraceContactRepairSolver"
+export type { TraceContactRepairSolverParams } from "./solvers/GlobalDrcForceImproveSolver/TraceContactRepairSolver"

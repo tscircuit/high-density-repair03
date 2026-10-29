@@ -68,12 +68,17 @@ export class TraceContactGuard {
     routes: HighDensityRoute[],
   ): Set<ConnectionName> {
     const connections = new Set<ConnectionName>()
-    for (const [key, pair] of this.collectContacts(routes)) {
-      if (this.inputContacts.has(key)) continue
+    for (const pair of this.getNewContactPairs(routes)) {
       connections.add(pair[0])
       connections.add(pair[1])
     }
     return connections
+  }
+
+  getNewContactPairs(routes: HighDensityRoute[]): Contact[] {
+    return [...this.collectContacts(routes)]
+      .filter(([key]) => !this.inputContacts.has(key))
+      .map(([, pair]) => pair)
   }
 
   private collectContacts(

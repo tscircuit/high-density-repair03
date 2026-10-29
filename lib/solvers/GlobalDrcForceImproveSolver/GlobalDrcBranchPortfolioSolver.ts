@@ -217,6 +217,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
   private getNewPeerContactConnectionNames(
     routes: HighDensityRoute[],
   ): Set<HighDensityRoute["connectionName"]> {
+    if (this.params.deferTraceContactGuard) return new Set()
     this.traceContactGuard ??= new TraceContactGuard({
       srj: this.params.srj,
       inputRoutes: this.guardedInputHdRoutes,
@@ -271,7 +272,8 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
     ) {
       this.peerTraceRepairRolledBack = peerConnectionNames.size > 0
       const restoredNames = new Set<HighDensityRoute["connectionName"]>()
-      for (let attempt = 0; attempt < 2; attempt++) {
+      const restorationLimit = peerConnectionNames.size > 0 ? 2 : 1
+      for (let attempt = 0; attempt < restorationLimit; attempt++) {
         const restored = restoreOverlappingConnections({
           routes: acceptedRoutes,
           snapshot: acceptedSnapshot,

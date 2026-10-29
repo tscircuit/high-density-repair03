@@ -192,6 +192,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   readonly enableSafeTraceLayerMoves: boolean
   readonly enableViaInPadLayerMoves: boolean
   readonly enableTraceViaOwnerTargeting: boolean
+  readonly deferTraceContactGuard: boolean
   outputHdRoutes: HighDensityRoute[]
   /** Portfolio children defer this invariant until the final portfolio output. */
   protected deferTraceObstacleOverlapGuard = false
@@ -278,6 +279,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     this.enableViaInPadLayerMoves = params.enableViaInPadLayerMoves ?? false
     this.enableTraceViaOwnerTargeting =
       params.enableTraceViaOwnerTargeting ?? false
+    this.deferTraceContactGuard = params.deferTraceContactGuard ?? false
     this.outputHdRoutes = params.hdRoutes
     if (this.referenceDrcEvaluator) {
       this.referenceInputSnapshot = this.getReferenceDrcSnapshot(
@@ -308,6 +310,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         enableSafeTraceLayerMoves: this.enableSafeTraceLayerMoves,
         enableViaInPadLayerMoves: this.enableViaInPadLayerMoves,
         enableTraceViaOwnerTargeting: this.enableTraceViaOwnerTargeting,
+        deferTraceContactGuard: this.deferTraceContactGuard,
       },
     ] as const
   }
@@ -426,6 +429,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
   private getNewPeerContactConnectionNames(
     routes: HighDensityRoute[],
   ): Set<HighDensityRoute["connectionName"]> {
+    if (this.deferTraceContactGuard) return new Set()
     this.traceContactGuard ??= new TraceContactGuard({
       srj: this.srj,
       inputRoutes: this.guardedInputHdRoutes,
@@ -504,7 +508,8 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       const restoredNames = new Set<HighDensityRoute["connectionName"]>()
       // Restoring one connection can expose a contact with another repaired
       // connection. Bound full-board revalidation, then retain the safe checkpoint.
-      for (let attempt = 0; attempt < 2; attempt++) {
+      const restorationLimit = peerConnectionNames.size > 0 ? 2 : 1
+      for (let attempt = 0; attempt < restorationLimit; attempt++) {
         const restored = restoreOverlappingConnections({
           routes: acceptedRoutes,
           snapshot: acceptedSnapshot,
