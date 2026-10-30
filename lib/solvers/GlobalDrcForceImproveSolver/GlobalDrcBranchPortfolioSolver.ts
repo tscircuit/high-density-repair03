@@ -6,6 +6,7 @@ import { GlobalDrcForceImproveSolver } from "./GlobalDrcForceImproveSolver"
 import { RELAXED_DRC_OPTIONS } from "./drcPresets"
 import { getDrcSnapshot } from "./drc-snapshot"
 import { restoreOverlappingConnections } from "./restoreOverlappingConnections"
+import { TraceContactGuard } from "./TraceContactGuard"
 import {
   applyBroadRepulsionForces,
   cloneRoutes,
@@ -80,6 +81,10 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
   private overlapSafeCheckpoint?: PortfolioCandidate
   private traceObstacleRepairRolledBack = false
   private traceObstacleConnectionsRestored = 0
+  private traceContactGuard?: TraceContactGuard
+  private peerTraceRepairRolledBack = false
+  private overlapRestorationChecks = 0
+  private stoppedForTraceContacts = false
   private referenceInputDrcIssueCount?: number
   private referenceCandidateDrcIssueCount?: number
   private referenceCandidateRolledBack = false
@@ -210,16 +215,33 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
     )
   }
 
+  private getNewPeerContactConnectionNames(
+    routes: HighDensityRoute[],
+  ): Set<HighDensityRoute["connectionName"]> {
+    if (this.params.deferTraceContactGuard) return new Set()
+    this.traceContactGuard ??= new TraceContactGuard({
+      srj: this.params.srj,
+      inputRoutes: this.guardedInputHdRoutes,
+      connMap: this.params.connMap,
+    })
+    return this.traceContactGuard.getNewContactConnectionNames(routes)
+  }
+
   private rememberOverlapSafeCandidate({
     routes,
     snapshot,
     solver,
     safeTraceLayerPhaseAccepted,
   }: PortfolioCandidate): void {
-    if (hasNewTraceObstacleOverlaps(snapshot, this.inputSnapshot!)) return
     if (
       this.overlapSafeCheckpoint &&
       !isDrcSnapshotCountBetter(snapshot, this.overlapSafeCheckpoint.snapshot)
+    ) {
+      return
+    }
+    if (
+      hasNewTraceObstacleOverlaps(snapshot, this.inputSnapshot!) ||
+      this.getNewPeerContactConnectionNames(routes).size > 0
     ) {
       return
     }
@@ -244,14 +266,25 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       solver: selectedSolver,
       safeTraceLayerPhaseAccepted: this.safeTraceLayerPhaseAccepted,
     })
-    if (hasNewTraceObstacleOverlaps(snapshot, this.inputSnapshot!)) {
-      const restored = restoreOverlappingConnections({
-        routes,
-        snapshot,
-        inputSnapshot: this.inputSnapshot!,
-        checkpointRoutes: this.overlapSafeCheckpoint!.routes,
-      })
-      if (restored) {
+    let peerConnectionNames = this.getNewPeerContactConnectionNames(routes)
+    if (
+      hasNewTraceObstacleOverlaps(snapshot, this.inputSnapshot!) ||
+      peerConnectionNames.size > 0
+    ) {
+      this.peerTraceRepairRolledBack = peerConnectionNames.size > 0
+      const restoredNames = new Set<HighDensityRoute["connectionName"]>()
+      const restorationLimit = peerConnectionNames.size > 0 ? 2 : 1
+      for (let attempt = 0; attempt < restorationLimit; attempt++) {
+        const restored = restoreOverlappingConnections({
+          routes: acceptedRoutes,
+          snapshot: acceptedSnapshot,
+          inputSnapshot: this.inputSnapshot!,
+          checkpointRoutes: this.overlapSafeCheckpoint!.routes,
+          peerConnectionNames,
+        })
+        if (!restored) break
+        for (const name of restored.restoredConnectionNames)
+          restoredNames.add(name)
         const restoredSnapshot = getDrcSnapshot(
           this.params.srj,
           restored.routes,
@@ -261,6 +294,7 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
           this.params.connMap,
           this.autoroutingDrcEngine,
         )
+        this.overlapRestorationChecks++
         this.rememberOverlapSafeCandidate({
           routes: restored.routes,
           snapshot: restoredSnapshot,
@@ -268,9 +302,18 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
           safeTraceLayerPhaseAccepted: this.safeTraceLayerPhaseAccepted,
         })
         if (this.overlapSafeCheckpoint!.snapshot === restoredSnapshot) {
-          this.traceObstacleConnectionsRestored =
-            restored.restoredConnectionCount
+          this.traceObstacleConnectionsRestored = restoredNames.size
+          break
         }
+        acceptedRoutes = restored.routes
+        acceptedSnapshot = restoredSnapshot
+        peerConnectionNames =
+          this.getNewPeerContactConnectionNames(acceptedRoutes)
+        if (
+          !hasNewTraceObstacleOverlaps(acceptedSnapshot, this.inputSnapshot!) &&
+          peerConnectionNames.size === 0
+        )
+          break
       }
       const checkpoint = this.overlapSafeCheckpoint!
       acceptedRoutes = checkpoint.routes
@@ -348,6 +391,10 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         this.traceObstacleRepairRolledBack,
       drcBranchPortfolioTraceObstacleConnectionsRestored:
         this.traceObstacleConnectionsRestored,
+      drcBranchPortfolioPeerTraceRepairRolledBack:
+        this.peerTraceRepairRolledBack,
+      drcBranchPortfolioOverlapRestorationChecks: this.overlapRestorationChecks,
+      drcBranchPortfolioStoppedForTraceContacts: this.stoppedForTraceContacts,
       drcBranchPortfolioMixedReferenceInputDrcIssueCount:
         this.mixedReferenceInputDrcIssueCount,
       drcBranchPortfolioMixedReferenceCandidateDrcIssueCount:
@@ -448,6 +495,25 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
     legacySnapshot: DrcSnapshot,
     legacySelectedSolver?: GlobalDrcForceImproveSolver,
   ) {
+    if (
+      this.params.prioritizeMultipleTraceContactRepair &&
+      this.params.deferTraceContactGuard
+    ) {
+      this.traceContactGuard ??= new TraceContactGuard({
+        srj: this.params.srj,
+        inputRoutes: this.guardedInputHdRoutes,
+        connMap: this.params.connMap,
+      })
+      if (this.traceContactGuard.getNewContactPairs(legacyRoutes).length > 1) {
+        this.stoppedForTraceContacts = true
+        this.finishWithOutput(
+          legacyRoutes,
+          legacySnapshot,
+          legacySelectedSolver,
+        )
+        return
+      }
+    }
     this.legacySafeTraceLayerRoutes = legacyRoutes
     this.legacySafeTraceLayerSnapshot = legacySnapshot
     this.legacySafeTraceLayerSelectedSolver = legacySelectedSolver

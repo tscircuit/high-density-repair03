@@ -38,6 +38,6 @@ beforeAll(() => {
   )
 })
 
-test.failing("repair cannot trade fewer DRC errors for a new short between traces", () => {
+test("repair cannot trade fewer DRC errors for a new short between traces", () => {
   expect(newContacts).toEqual([])
 })

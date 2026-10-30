@@ -84,6 +84,12 @@ export type GlobalDrcForceImproveSolverParams = {
   enableSafeTraceLayerMoves?: boolean
   enableViaInPadLayerMoves?: boolean
   /**
+   * Intermediate stages only: the owning pipeline must check physical peer
+   * contacts against its original input before publishing its final output.
+   * Standalone solvers retain the physical publication guard by default.
+   */
+  deferTraceContactGuard?: boolean
+  /**
    * Use enriched trace/via ownership metadata to target only a movable via
    * owner when the opposing trace is fixed. Defaults to false so callers keep
    * the legacy paired trace/via force behavior unless they explicitly opt in.
@@ -97,6 +103,8 @@ export type GlobalDrcBranchPortfolioSolverParams =
     broadPassMultiplier: number
     viaInPadDrcEvaluator?: DrcEvaluator
     viaInPadMaxIterations?: number
+    /** Send multiple new shorts to the owning contact repair before mixed topology search. */
+    prioritizeMultipleTraceContactRepair?: boolean
   }
 
 export type SolverDeps = Record<string, unknown>
