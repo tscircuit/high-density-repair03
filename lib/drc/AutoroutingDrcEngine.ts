@@ -81,6 +81,8 @@ type StaticObstacle = {
 
 type DynamicCollidable = TraceSegment | Via
 
+export type DrcQueryGeometry = { segments: TraceSegment[]; vias: Via[] }
+
 export type AutoroutingDrcError = {
   type:
     | "pcb_trace_error"
@@ -1228,6 +1230,35 @@ export class AutoroutingDrcEngine {
     })
   }
 
+  protected collectTraceErrors(geometry: DrcQueryGeometry): AutoroutingDrcError[] {
+    return this.evaluateTraceQueries(geometry, 0, geometry.segments.length)
+  }
+
+  /** Ordered, independent segment queries against one immutable geometry. */
+  evaluateTraceQueries(
+    { segments, vias }: DrcQueryGeometry,
+    start: number,
+    end: number,
+  ): AutoroutingDrcError[] {
+    const dynamicIndexesByLayer = this.buildDynamicIndexes(segments, vias)
+    const detectedTraceErrors: AutoroutingDrcError[] = []
+    for (let index = start; index < end; index++) {
+      const segment = segments[index]!
+      const queryBounds = getSegmentBounds(segment)
+      const dynamicCandidates =
+        dynamicIndexesByLayer.get(segment.layer)?.query(queryBounds) ?? []
+      const obstacleCandidates =
+        this.obstacleIndexesByLayer.get(segment.layer)?.query(queryBounds) ?? []
+
+      detectedTraceErrors.push(
+        ...this.checkTraceQuery(segment, dynamicCandidates, obstacleCandidates),
+      )
+    }
+
+
+    return detectedTraceErrors
+  }
+
   evaluate(traces: SimplifiedPcbTraces): AutoroutingDrcResult {
     return this.evaluateInternal(traces, true)
   }
@@ -1258,8 +1289,6 @@ export class AutoroutingDrcEngine {
       }
     }
     const { segments, vias } = this.collectDynamicGeometry(traces)
-    const dynamicIndexesByLayer = this.buildDynamicIndexes(segments, vias)
-    const detectedTraceErrors: AutoroutingDrcError[] = []
     const detectedViaPadErrors: AutoroutingDrcError[] = []
 
     this.lastRunStats = {
@@ -1271,18 +1300,7 @@ export class AutoroutingDrcEngine {
       exactCheckCount: 0,
     }
 
-    for (const segment of segments) {
-      const queryBounds = getSegmentBounds(segment)
-      const dynamicCandidates =
-        dynamicIndexesByLayer.get(segment.layer)?.query(queryBounds) ?? []
-      const obstacleCandidates =
-        this.obstacleIndexesByLayer.get(segment.layer)?.query(queryBounds) ?? []
-
-      detectedTraceErrors.push(
-        ...this.checkTraceQuery(segment, dynamicCandidates, obstacleCandidates),
-      )
-    }
-
+    const detectedTraceErrors = this.collectTraceErrors({ segments, vias })
     const detectedViaErrors = this.checkViaPairs(vias)
 
     if (includeViaPadErrors) {
