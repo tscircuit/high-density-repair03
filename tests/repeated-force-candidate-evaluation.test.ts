@@ -70,7 +70,7 @@ beforeAll(() => {
   }
 })
 
-test.failing("equal force-scale candidates do not repeat native DRC work", () => {
+test("equal force-scale candidates do not repeat native DRC work", () => {
   // Two initial policies and one distinct rejected candidate per iteration.
   // Main evaluates that same rejected geometry three times per iteration.
   expect(nativeEvaluationCount).toBeLessThanOrEqual(4)
