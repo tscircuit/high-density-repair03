@@ -57,6 +57,7 @@ import { applyViaToPadClearanceRelaxation } from "./viaToPadClearanceRelaxation"
 import { RELAXED_DRC_OPTIONS } from "./drcPresets"
 import { restoreOverlappingConnections } from "./restoreOverlappingConnections"
 import { TraceContactGuard } from "./TraceContactGuard"
+import { haveSameForceCandidateGeometry } from "./haveSameForceCandidateGeometry"
 import type {
   DrcEvaluator,
   DrcSnapshot,
@@ -1448,6 +1449,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
 
       this.errorCursor = (errorIndex + 1) % prioritizedErrors.length
       const canMoveSharedViaSiteWithoutTradingDrcErrors = bestIssueCount === 1
+      let previousRejectedForceCandidate: HighDensityRoute[] | undefined
 
       for (const scale of getForceScalesForEffort(this.effort)) {
         if (candidateAttemptsThisStep >= maxCandidateAttemptsThisStep) break
@@ -1470,6 +1472,20 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         const materializedCandidateRoutes = materializeRoutes(candidateRoutes)
         candidateAttemptsThisStep += 1
         this.candidateAttempts += 1
+        // Clamped moves and fixed detours can produce identical geometry at
+        // successive scales. Retain the logical budget without repeating DRC.
+        // Scope this to native checks and this error's unchanged incumbent;
+        // custom evaluators can have their own state and caching contracts.
+        if (
+          !this.drcEvaluator &&
+          previousRejectedForceCandidate &&
+          haveSameForceCandidateGeometry(
+            previousRejectedForceCandidate,
+            materializedCandidateRoutes,
+          )
+        ) {
+          continue
+        }
         const candidateSnapshot = this.getSnapshot(materializedCandidateRoutes)
         const candidateViaIssueCount = this.getViaIssueCount(candidateSnapshot)
 
@@ -1495,6 +1511,9 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
             return
           }
           break
+        }
+        if (!this.drcEvaluator) {
+          previousRejectedForceCandidate = materializedCandidateRoutes
         }
       }
 
