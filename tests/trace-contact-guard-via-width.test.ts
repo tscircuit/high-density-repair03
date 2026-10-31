@@ -12,5 +12,6 @@ test("via contact uses its physical diameter without excusing small overlaps", (
     expect(guard.getNewContactPairs(candidate)).toEqual(
       gap < 0 ? [["via", "wire"]] : [],
     )
+    expect(guard.getNewWireContactPairs(candidate)).toEqual([])
   }
 })
