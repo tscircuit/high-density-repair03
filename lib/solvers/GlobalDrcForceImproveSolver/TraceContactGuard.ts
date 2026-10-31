@@ -10,6 +10,7 @@ type ConnectionName = HighDensityRoute["connectionName"]
 type ContactKey = string
 type RoutePoint = HighDensityRoute["route"][number]
 type CopperSegment = {
+  kind: "wire" | "via"
   connectionName: ConnectionName
   net: string
   start: RoutePoint
@@ -68,7 +69,9 @@ const addContact = (
     left.connectionName < right.connectionName
       ? [left.connectionName, right.connectionName]
       : [right.connectionName, left.connectionName]
-  const key = JSON.stringify(pair)
+  // An input annulus contact must not whitelist a new wire crossing, or vice versa.
+  const kind = left.kind === right.kind ? left.kind : "trace-via"
+  const key = JSON.stringify([...pair, kind])
   if (contacts.has(key)) return
   const gap =
     segmentToSegmentMinDistance(left.start, left.end, right.start, right.end) -
@@ -129,25 +132,29 @@ export class TraceContactGuard {
   }
 
   getNewContactPairs(routes: HighDensityRoute[]): Contact[] {
-    return [...this.collectContacts(routes)]
-      .filter(([key]) => !this.inputContacts.has(key))
-      .map(([, pair]) => pair)
+    return this.filterNewContactPairs(this.collectContacts(routes))
   }
 
   /** Wire-only prioritization; publication must still check all copper. */
   getNewWireContactPairs(routes: HighDensityRoute[]): Contact[] {
-    return [...this.collectContacts(routes, false)]
-      .filter(([key]) => !this.inputContacts.has(key))
-      .map(([, pair]) => pair)
+    return this.filterNewContactPairs(this.collectContacts(routes, false))
   }
 
-  /** Cheap rejection before checking a local proposal against the whole board. */
+  private filterNewContactPairs(contacts: Map<ContactKey, Contact>): Contact[] {
+    const pairs = new Map<ContactKey, Contact>()
+    for (const [key, pair] of contacts) {
+      if (!this.inputContacts.has(key)) pairs.set(JSON.stringify(pair), pair)
+    }
+    return [...pairs.values()]
+  }
+
+  /** Cheap rejection of a new contact before checking a proposal against the whole board. */
   hasContactPair(routes: HighDensityRoute[], pair: Contact): boolean {
     const pairRoutes = routes.filter(
       (route) =>
         route.connectionName === pair[0] || route.connectionName === pair[1],
     )
-    return this.collectContacts(pairRoutes).has(JSON.stringify(pair))
+    return this.getNewContactPairs(pairRoutes).length > 0
   }
 
   /** Later repair must not recreate an input contact that was already cleared. */
@@ -212,9 +219,7 @@ export class TraceContactGuard {
         for (let j = i + 1; j < changedCopper.length; j++)
           addContact(contacts, left, changedCopper[j]!)
       }
-      return [...contacts]
-        .filter(([key]) => !this.inputContacts.has(key))
-        .map(([, pair]) => pair)
+      return this.filterNewContactPairs(contacts)
     }
   }
 
@@ -244,6 +249,7 @@ export class TraceContactGuard {
           layers.set(start.z, segments)
         }
         segments.push({
+          kind: "wire",
           connectionName: route.connectionName,
           net,
           start,
@@ -275,6 +281,7 @@ export class TraceContactGuard {
         }
         const point = { x: via.x, y: via.y, z }
         segments.push({
+          kind: "via",
           connectionName: route.connectionName,
           net,
           start: point,

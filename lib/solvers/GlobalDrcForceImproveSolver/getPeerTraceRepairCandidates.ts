@@ -2,6 +2,8 @@ import { segmentToSegmentMinDistance } from "@tscircuit/math-utils"
 import type { ConnectivityMap } from "circuit-json-to-connectivity-map"
 import type { SimpleRouteJson } from "../../types"
 import type { HighDensityRoute } from "../../types/high-density-types"
+import { getTraceViaContactRepairCandidates } from "./getTraceViaContactRepairCandidates"
+import { getTraceViaWireRepairCandidates } from "./getTraceViaWireRepairCandidates"
 import {
   applyTracePairLayerMoveForError,
   cloneRoutesForIndexes,
@@ -306,4 +308,6 @@ export function* getPeerTraceRepairCandidates({
             }
       }
     }
+  yield* getTraceViaWireRepairCandidates({ srj, routes, pair })
+  yield* getTraceViaContactRepairCandidates({ srj, routes, pair })
 }
