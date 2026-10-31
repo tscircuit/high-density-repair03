@@ -6,6 +6,7 @@ import { getPeerTraceRepairCandidates } from "./getPeerTraceRepairCandidates"
 import { getPeerTraceViaCandidates } from "./getPeerTraceViaCandidates"
 import { getTraceViaSimplificationCandidates } from "./getTraceViaSimplificationCandidates"
 import { getDrcSnapshot, hasNewTraceObstacleOverlaps } from "./solverHelpers"
+import { restoreOverlappingConnections } from "./restoreOverlappingConnections"
 import type { DrcSnapshot, GlobalDrcBranchPortfolioSolverParams } from "./types"
 
 export type TraceContactRepairSolverParams =
@@ -149,7 +150,29 @@ export class TraceContactRepairSolver extends BaseSolver {
   }
 
   private finish(): void {
-    const candidate = this.current
+    let candidate = this.current
+    // A deferred via contact may have no legal local proposal. Restore its
+    // whole connections, then validate the mixed board before publishing it.
+    // Preserve independent repairs rather than reverting every connection.
+    for (let attempt = 0; candidate && attempt < 2; attempt++) {
+      const peerConnectionNames = this.guard.getNewContactConnectionNames(
+        candidate.routes,
+      )
+      if (peerConnectionNames.size === 0) break
+      const restored = restoreOverlappingConnections({
+        routes: candidate.routes,
+        snapshot: candidate.snapshot,
+        inputSnapshot: this.inputSnapshot!,
+        checkpointRoutes: this.params.inputHdRoutes,
+        peerConnectionNames,
+      })
+      if (!restored) break
+      this.candidateChecks++
+      candidate = {
+        routes: restored.routes,
+        snapshot: this.snapshot(restored.routes),
+      }
+    }
     if (
       candidate &&
       candidate.snapshot.count <= this.inputSnapshot!.count &&
@@ -160,6 +183,7 @@ export class TraceContactRepairSolver extends BaseSolver {
         this.phase !== "simplify" &&
         countVias(candidate.routes) > countVias(this.params.hdRoutes)
       ) {
+        this.current = candidate
         this.startSimplificationRound()
         return
       }
