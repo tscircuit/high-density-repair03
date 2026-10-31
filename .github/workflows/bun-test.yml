@@ -16,4 +16,5 @@ jobs:
           bun-version: 1.3.1
       - run: bun install --no-save
       - run: bun install --no-save --cwd tests/fixtures/usb-terminal-clearance
-      - run: bun test
+      # The real Game Boy repair replay takes about 12 seconds on CI.
+      - run: bun test --timeout 30000
