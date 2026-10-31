@@ -134,6 +134,13 @@ export class TraceContactGuard {
       .map(([, pair]) => pair)
   }
 
+  /** Wire-only prioritization; publication must still check all copper. */
+  getNewWireContactPairs(routes: HighDensityRoute[]): Contact[] {
+    return [...this.collectContacts(routes, false)]
+      .filter(([key]) => !this.inputContacts.has(key))
+      .map(([, pair]) => pair)
+  }
+
   /** Cheap rejection before checking a local proposal against the whole board. */
   hasContactPair(routes: HighDensityRoute[], pair: Contact): boolean {
     const pairRoutes = routes.filter(
@@ -213,6 +220,7 @@ export class TraceContactGuard {
 
   private collectSegments(
     routes: HighDensityRoute[],
+    includeVias = true,
   ): Map<number, CopperSegment[]> {
     const layers = new Map<number, CopperSegment[]>()
     for (const route of routes) {
@@ -250,6 +258,7 @@ export class TraceContactGuard {
         })
       }
     }
+    if (!includeVias) return layers
     // A via's copper is wider than its connected wires and occupies the full
     // physical drill span, including layers with no adjacent route segment.
     for (const via of collectViaNodes(routes, this.srj)) {
@@ -285,9 +294,10 @@ export class TraceContactGuard {
 
   private collectContacts(
     routes: HighDensityRoute[],
+    includeVias = true,
   ): Map<ContactKey, Contact> {
     const contacts = new Map<ContactKey, Contact>()
-    for (const segments of this.collectSegments(routes).values()) {
+    for (const segments of this.collectSegments(routes, includeVias).values()) {
       const index = createSpatialIndex(
         segments,
         (segment) => segment.bounds,
