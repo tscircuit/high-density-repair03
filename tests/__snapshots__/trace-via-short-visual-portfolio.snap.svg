@@ -1,0 +1,44 @@
+<svg width="1400" height="350" viewBox="0 0 1400 350" xmlns="http://www.w3.org/2000/svg"><rect width="100%" height="100%" fill="white"/><g><polyline data-points="0,0.65 2.57,0.55" data-type="line" data-label="n2 top trace" points="40,201.58358168518018 530.1869412083447,220.65700352208074" fill="none" stroke="#2563eb" stroke-width="19.07342183690057"/></g><g><polyline data-points="1.18,0.86 3,0.8" data-type="line" data-label="n3 top trace" points="265.0663776754267,161.529395827689 612.2026551070171,172.97344892982932" fill="none" stroke="#9333ea" stroke-width="19.07342183690057"/></g><g><polyline data-points="3.75,0.65 6.32,0.55" data-type="line" data-label="n2 top trace" points="755.2533188837714,201.58358168518018 1245.4402600921162,220.65700352208074" fill="none" stroke="#2563eb" stroke-width="19.07342183690057"/></g><g><polyline data-points="4.927342839169485,0.7390572818799227 6.75,0.8" data-type="line" data-label="n3 top trace" points="979.8128850651092,184.59731063574492 1327.4559739907886,172.97344892982932" fill="none" stroke="#9333ea" stroke-width="19.07342183690057"/></g><circle data-type="circle" data-label="" data-x="2.57" data-y="0.55" cx="530.1869412083447" cy="220.65700352208074" r="28.610132755350854" fill="#2563eb" stroke="black" stroke-width="0.005242897727272727"/><circle data-type="circle" data-label="" data-x="1.18" data-y="0.86" cx="265.0663776754267" cy="161.529395827689" r="28.610132755350854" fill="#9333ea" stroke="black" stroke-width="0.005242897727272727"/><circle data-type="circle" data-label="" data-x="6.32" data-y="0.55" cx="1245.4402600921162" cy="220.65700352208074" r="28.610132755350854" fill="#2563eb" stroke="black" stroke-width="0.005242897727272727"/><circle data-type="circle" data-label="" data-x="4.927342839169485" data-y="0.7390572818799227" cx="979.8128850651092" cy="184.59731063574492" r="28.610132755350854" fill="#9333ea" stroke="black" stroke-width="0.005242897727272727"/><text data-type="text" data-label="Input: gap 0.05572 mm" data-x="1.5" data-y="1.17875" x="326.10132755350855" y="100.73286372256842" fill="black" font-size="32.186399349769715" font-family="sans-serif" text-anchor="middle" dominant-baseline="text-after-edge">Input: gap 0.05572 mm</text><text data-type="text" data-label="portfolio output: gap -0.06523 mm" data-x="5.25" data-y="1.0578072818799227" x="1041.3546464372798" y="123.80077853062434" fill="black" font-size="32.186399349769715" font-family="sans-serif" text-anchor="middle" dominant-baseline="text-after-edge">portfolio output: gap -0.06523 mm</text><g id="crosshair" style="display: none"><line id="crosshair-h" y1="0" y2="350" stroke="#666" stroke-width="0.5"/><line id="crosshair-v" x1="0" x2="1400" stroke="#666" stroke-width="0.5"/><text id="coordinates" font-family="monospace" font-size="12" fill="#666"></text></g><script><![CDATA[
+              document.currentScript.parentElement.addEventListener('mousemove', (e) => {
+                const svg = e.currentTarget;
+                const rect = svg.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+                const crosshair = svg.getElementById('crosshair');
+                const h = svg.getElementById('crosshair-h');
+                const v = svg.getElementById('crosshair-v');
+                const coords = svg.getElementById('coordinates');
+                
+                crosshair.style.display = 'block';
+                h.setAttribute('x1', '0');
+                h.setAttribute('x2', '1400');
+                h.setAttribute('y1', y);
+                h.setAttribute('y2', y);
+                v.setAttribute('x1', x);
+                v.setAttribute('x2', x);
+                v.setAttribute('y1', '0');
+                v.setAttribute('y2', '350');
+
+                // Calculate real coordinates using inverse transformation
+                const matrix = {"a":190.7342183690057,"c":0,"e":40,"b":0,"d":-190.7342183690057,"f":325.5608236250339};
+                // Manually invert and apply the affine transform
+                // Since we only use translate and scale, we can directly compute:
+                // x' = (x - tx) / sx
+                // y' = (y - ty) / sy
+                const sx = matrix.a;
+                const sy = matrix.d;
+                const tx = matrix.e; 
+                const ty = matrix.f;
+                const realPoint = {
+                  x: (x - tx) / sx,
+                  y: (y - ty) / sy // Flip y back since we used negative scale
+                }
+                
+                coords.textContent = `(${realPoint.x.toFixed(2)}, ${realPoint.y.toFixed(2)})`;
+                coords.setAttribute('x', (x + 5).toString());
+                coords.setAttribute('y', (y - 5).toString());
+              });
+              document.currentScript.parentElement.addEventListener('mouseleave', () => {
+                document.currentScript.parentElement.getElementById('crosshair').style.display = 'none';
+              });
+            ]]></script></svg>
