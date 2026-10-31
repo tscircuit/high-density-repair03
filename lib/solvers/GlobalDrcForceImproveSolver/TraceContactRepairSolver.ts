@@ -6,6 +6,7 @@ import { getPeerTraceRepairCandidates } from "./getPeerTraceRepairCandidates"
 import { getPeerTraceViaCandidates } from "./getPeerTraceViaCandidates"
 import { getTraceViaSimplificationCandidates } from "./getTraceViaSimplificationCandidates"
 import { getDrcSnapshot, hasNewTraceObstacleOverlaps } from "./solverHelpers"
+import { restoreOverlappingConnections } from "./restoreOverlappingConnections"
 import type { DrcSnapshot, GlobalDrcBranchPortfolioSolverParams } from "./types"
 
 export type TraceContactRepairSolverParams =
@@ -70,13 +71,24 @@ export class TraceContactRepairSolver extends BaseSolver {
   private startContactRound(): void {
     this.guard.preserveClearedContacts(this.current!.routes)
     this.pairs = this.guard.getNewContactPairs(this.current!.routes)
+    // Resolve wire crossings before choosing how to move adjacent annuli.
+    const wirePairs = new Set(
+      this.guard
+        .getNewWireContactPairs(this.current!.routes)
+        .map((pair) => JSON.stringify(pair)),
+    )
+    this.pairs.sort(
+      (left, right) =>
+        Number(wirePairs.has(JSON.stringify(right))) -
+        Number(wirePairs.has(JSON.stringify(left))),
+    )
     if (this.pairs.length === 0) {
       this.startRefinement()
       return
     }
     if (
-      this.contactRounds++ >= 4 ||
-      this.geometryChecks >= 2048 ||
+      this.contactRounds++ >= 8 ||
+      this.geometryChecks >= 4096 ||
       this.candidateChecks >= 256
     ) {
       this.finish()
@@ -128,8 +140,10 @@ export class TraceContactRepairSolver extends BaseSolver {
   private startViaRound(): void {
     this.guard.preserveClearedContacts(this.current!.routes)
     if (
-      this.current!.snapshot.count <= this.targetDrcCount ||
-      this.viaRounds++ >= 4 ||
+      // Annulus repairs can move existing stacks as well as create bridges.
+      // Continue improving both within the shared candidate/geometry budgets.
+      this.current!.snapshot.count === 0 ||
+      this.viaRounds++ >= 8 ||
       this.candidateChecks >= 768
     ) {
       this.finish()
@@ -149,7 +163,29 @@ export class TraceContactRepairSolver extends BaseSolver {
   }
 
   private finish(): void {
-    const candidate = this.current
+    let candidate = this.current
+    // A deferred via contact may have no legal local proposal. Restore its
+    // whole connections, then validate the mixed board before publishing it.
+    // Preserve independent repairs rather than reverting every connection.
+    for (let attempt = 0; candidate && attempt < 2; attempt++) {
+      const peerConnectionNames = this.guard.getNewContactConnectionNames(
+        candidate.routes,
+      )
+      if (peerConnectionNames.size === 0) break
+      const restored = restoreOverlappingConnections({
+        routes: candidate.routes,
+        snapshot: candidate.snapshot,
+        inputSnapshot: this.inputSnapshot!,
+        checkpointRoutes: this.params.inputHdRoutes,
+        peerConnectionNames,
+      })
+      if (!restored) break
+      this.candidateChecks++
+      candidate = {
+        routes: restored.routes,
+        snapshot: this.snapshot(restored.routes),
+      }
+    }
     if (
       candidate &&
       candidate.snapshot.count <= this.inputSnapshot!.count &&
@@ -160,6 +196,7 @@ export class TraceContactRepairSolver extends BaseSolver {
         this.phase !== "simplify" &&
         countVias(candidate.routes) > countVias(this.params.hdRoutes)
       ) {
+        this.current = candidate
         this.startSimplificationRound()
         return
       }
@@ -204,8 +241,11 @@ export class TraceContactRepairSolver extends BaseSolver {
         snapshot: this.snapshot(this.params.hdRoutes),
       }
       // Restore the candidate's DRC quality after removing its physical shorts.
-      // Further polishing only spends time once that objective is met.
-      this.targetDrcCount = this.current.snapshot.count
+      // A candidate with more errors than the original input still needs repair.
+      this.targetDrcCount = Math.min(
+        this.current.snapshot.count,
+        this.inputSnapshot.count,
+      )
       this.affectedConnections = this.guard.getNewContactConnectionNames(
         this.current.routes,
       )

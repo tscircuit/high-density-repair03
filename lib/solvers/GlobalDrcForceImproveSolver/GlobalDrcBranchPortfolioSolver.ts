@@ -504,7 +504,11 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         inputRoutes: this.guardedInputHdRoutes,
         connMap: this.params.connMap,
       })
-      if (this.traceContactGuard.getNewContactPairs(legacyRoutes).length > 1) {
+      // The deferred local owner prioritizes wire bridges. Via-only contacts
+      // still need the remaining topology phases before final publication.
+      if (
+        this.traceContactGuard.getNewWireContactPairs(legacyRoutes).length > 1
+      ) {
         this.stoppedForTraceContacts = true
         this.finishWithOutput(
           legacyRoutes,

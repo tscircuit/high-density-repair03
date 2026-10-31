@@ -4,11 +4,13 @@ import type { SimpleRouteJson } from "../../types"
 import type { HighDensityRoute } from "../../types/high-density-types"
 import type { Bounds2D } from "./internalTypes"
 import { createSpatialIndex, getSpatialCandidateIndexes } from "./spatialIndex"
+import { collectViaNodes } from "./solverHelpers"
 
 type ConnectionName = HighDensityRoute["connectionName"]
 type ContactKey = string
 type RoutePoint = HighDensityRoute["route"][number]
 type CopperSegment = {
+  kind: "wire" | "via"
   connectionName: ConnectionName
   net: string
   start: RoutePoint
@@ -34,6 +36,7 @@ const hasSameCopper = (
     left.connectionName !== right.connectionName ||
     left.rootConnectionName !== right.rootConnectionName ||
     left.traceThickness !== right.traceThickness ||
+    left.viaDiameter !== right.viaDiameter ||
     left.route.length !== right.route.length
   )
     return false
@@ -66,7 +69,9 @@ const addContact = (
     left.connectionName < right.connectionName
       ? [left.connectionName, right.connectionName]
       : [right.connectionName, left.connectionName]
-  const key = JSON.stringify(pair)
+  // An input annulus contact must not whitelist a new wire crossing, or vice versa.
+  const kind = left.kind === right.kind ? left.kind : "trace-via"
+  const key = JSON.stringify([...pair, kind])
   if (contacts.has(key)) return
   const gap =
     segmentToSegmentMinDistance(left.start, left.end, right.start, right.end) -
@@ -75,13 +80,15 @@ const addContact = (
   if (gap < -CONTACT_EPSILON) contacts.set(key, pair)
 }
 
-/** Physical wire contacts, independent of a caller's DRC reporting policy. */
+/** Physical wire and via contacts, independent of a caller's DRC reporting policy. */
 export class TraceContactGuard {
+  private readonly srj: SimpleRouteJson
   private readonly connectivity: ConnectivityMap
   private readonly inputContacts: Map<ContactKey, Contact>
   private readonly cellSize: number
 
   constructor({ srj, inputRoutes, connMap }: GuardParams) {
+    this.srj = srj
     this.cellSize = Math.max(
       1,
       (srj.bounds.maxX - srj.bounds.minX) / 64,
@@ -125,18 +132,29 @@ export class TraceContactGuard {
   }
 
   getNewContactPairs(routes: HighDensityRoute[]): Contact[] {
-    return [...this.collectContacts(routes)]
-      .filter(([key]) => !this.inputContacts.has(key))
-      .map(([, pair]) => pair)
+    return this.filterNewContactPairs(this.collectContacts(routes))
   }
 
-  /** Cheap rejection before checking a local proposal against the whole board. */
+  /** Wire-only prioritization; publication must still check all copper. */
+  getNewWireContactPairs(routes: HighDensityRoute[]): Contact[] {
+    return this.filterNewContactPairs(this.collectContacts(routes, false))
+  }
+
+  private filterNewContactPairs(contacts: Map<ContactKey, Contact>): Contact[] {
+    const pairs = new Map<ContactKey, Contact>()
+    for (const [key, pair] of contacts) {
+      if (!this.inputContacts.has(key)) pairs.set(JSON.stringify(pair), pair)
+    }
+    return [...pairs.values()]
+  }
+
+  /** Cheap rejection of a new contact before checking a proposal against the whole board. */
   hasContactPair(routes: HighDensityRoute[], pair: Contact): boolean {
     const pairRoutes = routes.filter(
       (route) =>
         route.connectionName === pair[0] || route.connectionName === pair[1],
     )
-    return this.collectContacts(pairRoutes).has(JSON.stringify(pair))
+    return this.getNewContactPairs(pairRoutes).length > 0
   }
 
   /** Later repair must not recreate an input contact that was already cleared. */
@@ -201,14 +219,13 @@ export class TraceContactGuard {
         for (let j = i + 1; j < changedCopper.length; j++)
           addContact(contacts, left, changedCopper[j]!)
       }
-      return [...contacts]
-        .filter(([key]) => !this.inputContacts.has(key))
-        .map(([, pair]) => pair)
+      return this.filterNewContactPairs(contacts)
     }
   }
 
   private collectSegments(
     routes: HighDensityRoute[],
+    includeVias = true,
   ): Map<number, CopperSegment[]> {
     const layers = new Map<number, CopperSegment[]>()
     for (const route of routes) {
@@ -232,6 +249,7 @@ export class TraceContactGuard {
           layers.set(start.z, segments)
         }
         segments.push({
+          kind: "wire",
           connectionName: route.connectionName,
           net,
           start,
@@ -246,14 +264,47 @@ export class TraceContactGuard {
         })
       }
     }
+    if (!includeVias) return layers
+    // A via's copper is wider than its connected wires and occupies the full
+    // physical drill span, including layers with no adjacent route segment.
+    for (const via of collectViaNodes(routes, this.srj)) {
+      const route = routes[via.routeIndex]!
+      const net =
+        this.connectivity.getNetConnectedToId(route.connectionName) ??
+        route.rootConnectionName ??
+        route.connectionName
+      for (const z of via.zLayers) {
+        let segments = layers.get(z)
+        if (!segments) {
+          segments = []
+          layers.set(z, segments)
+        }
+        const point = { x: via.x, y: via.y, z }
+        segments.push({
+          kind: "via",
+          connectionName: route.connectionName,
+          net,
+          start: point,
+          end: point,
+          radius: via.radius,
+          bounds: {
+            minX: via.x - via.radius,
+            minY: via.y - via.radius,
+            maxX: via.x + via.radius,
+            maxY: via.y + via.radius,
+          },
+        })
+      }
+    }
     return layers
   }
 
   private collectContacts(
     routes: HighDensityRoute[],
+    includeVias = true,
   ): Map<ContactKey, Contact> {
     const contacts = new Map<ContactKey, Contact>()
-    for (const segments of this.collectSegments(routes).values()) {
+    for (const segments of this.collectSegments(routes, includeVias).values()) {
       const index = createSpatialIndex(
         segments,
         (segment) => segment.bounds,
