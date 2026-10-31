@@ -4,6 +4,7 @@ import type { SimpleRouteJson } from "../../types"
 import type { HighDensityRoute } from "../../types/high-density-types"
 import type { Bounds2D } from "./internalTypes"
 import { createSpatialIndex, getSpatialCandidateIndexes } from "./spatialIndex"
+import { collectViaNodes } from "./solverHelpers"
 
 type ConnectionName = HighDensityRoute["connectionName"]
 type ContactKey = string
@@ -34,6 +35,7 @@ const hasSameCopper = (
     left.connectionName !== right.connectionName ||
     left.rootConnectionName !== right.rootConnectionName ||
     left.traceThickness !== right.traceThickness ||
+    left.viaDiameter !== right.viaDiameter ||
     left.route.length !== right.route.length
   )
     return false
@@ -75,13 +77,15 @@ const addContact = (
   if (gap < -CONTACT_EPSILON) contacts.set(key, pair)
 }
 
-/** Physical wire contacts, independent of a caller's DRC reporting policy. */
+/** Physical wire and via contacts, independent of a caller's DRC reporting policy. */
 export class TraceContactGuard {
+  private readonly srj: SimpleRouteJson
   private readonly connectivity: ConnectivityMap
   private readonly inputContacts: Map<ContactKey, Contact>
   private readonly cellSize: number
 
   constructor({ srj, inputRoutes, connMap }: GuardParams) {
+    this.srj = srj
     this.cellSize = Math.max(
       1,
       (srj.bounds.maxX - srj.bounds.minX) / 64,
@@ -242,6 +246,36 @@ export class TraceContactGuard {
             minY: Math.min(start.y, end.y) - radius,
             maxX: Math.max(start.x, end.x) + radius,
             maxY: Math.max(start.y, end.y) + radius,
+          },
+        })
+      }
+    }
+    // A via's copper is wider than its connected wires and occupies the full
+    // physical drill span, including layers with no adjacent route segment.
+    for (const via of collectViaNodes(routes, this.srj)) {
+      const route = routes[via.routeIndex]!
+      const net =
+        this.connectivity.getNetConnectedToId(route.connectionName) ??
+        route.rootConnectionName ??
+        route.connectionName
+      for (const z of via.zLayers) {
+        let segments = layers.get(z)
+        if (!segments) {
+          segments = []
+          layers.set(z, segments)
+        }
+        const point = { x: via.x, y: via.y, z }
+        segments.push({
+          connectionName: route.connectionName,
+          net,
+          start: point,
+          end: point,
+          radius: via.radius,
+          bounds: {
+            minX: via.x - via.radius,
+            minY: via.y - via.radius,
+            maxX: via.x + via.radius,
+            maxY: via.y + via.radius,
           },
         })
       }

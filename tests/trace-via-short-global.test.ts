@@ -24,7 +24,7 @@ beforeAll(() => {
     expect(input).toEqual(original)
     expect(output).toHaveLength(input.hdRoutes.length)
     expect(solver.stats.initialDrcIssueCount).toBe(5)
-    expect(solver.stats.finalDrcIssueCount).toBeLessThanOrEqual(5)
+    expect(solver.stats.finalDrcIssueCount).toBeLessThanOrEqual(2)
     for (let index = 0; index < output.length; index++) {
       expect(output[index]!.route[0]).toEqual(input.hdRoutes[index]!.route[0])
       expect(output[index]!.route.at(-1)).toEqual(
@@ -35,6 +35,6 @@ beforeAll(() => {
   }
 })
 
-test.failing("global repair does not publish a new different-net trace-to-via short", () => {
+test("global repair does not publish a new different-net trace-to-via short", () => {
   for (const gap of outputGaps) expect(gap).toBeGreaterThanOrEqual(-1e-9)
 })
