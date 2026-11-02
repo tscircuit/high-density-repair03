@@ -1170,6 +1170,12 @@ export class AutoroutingDrcEngine {
       for (const viaB of index.query(getViaBounds(viaA))) {
         this.lastRunStats.broadPhaseCandidateCount += 1
         if (viaB.order <= viaA.order) continue
+        // Through vias share every board layer; blind/buried vias may not.
+        if (
+          this.srj.allowBlindAndBuriedVias &&
+          !viaA.layers.some((layer) => viaB.layers.includes(layer))
+        )
+          continue
         this.lastRunStats.exactCheckCount += 1
 
         const centerDistance = Math.hypot(viaA.x - viaB.x, viaA.y - viaB.y)
