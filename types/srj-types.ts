@@ -1,3 +1,5 @@
+import type { PcbVia } from "circuit-json"
+
 export type TraceId = string
 export type NetId = string
 export type PointId = string
@@ -67,6 +69,7 @@ export interface SimpleRouteJson {
 }
 
 export interface Obstacle {
+  circuitJsonMetadata?: { pcb_via_id?: PcbVia["pcb_via_id"] }
   obstacleId?: string
   type: "rect"
   layers: string[]

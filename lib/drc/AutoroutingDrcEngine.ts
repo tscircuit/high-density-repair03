@@ -68,6 +68,7 @@ type StaticObstacle = {
   kind: "obstacle"
   obstacleType: "pcb_smtpad" | "pcb_plated_hole"
   obstacleId: string
+  isVia: boolean
   shape?: "circle"
   connectedTo: string[]
   x: number
@@ -661,6 +662,7 @@ export class AutoroutingDrcEngine {
         kind: "obstacle",
         obstacleType,
         obstacleId,
+        isVia: obstacle.circuitJsonMetadata?.pcb_via_id !== undefined,
         shape: obstacle.shape,
         connectedTo: obstacle.connectedTo,
         x: obstacle.center.x,
@@ -1118,7 +1120,8 @@ export class AutoroutingDrcEngine {
     obstacle: StaticObstacle,
   ): AutoroutingDrcError | undefined {
     const sameNet = this.obstacleSharesNet(via.netId, obstacle)
-    if (sameNet && this.srj.allowViaInPad !== false) return undefined
+    if (sameNet && (this.srj.allowViaInPad !== false || obstacle.isVia))
+      return undefined
     this.lastRunStats.exactCheckCount += 1
 
     const obstacleBounds = getObstacleLocalBounds(obstacle)
