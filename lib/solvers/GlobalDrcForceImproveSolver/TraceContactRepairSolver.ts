@@ -4,6 +4,7 @@ import { GlobalDrcBranchPortfolioSolver } from "./GlobalDrcBranchPortfolioSolver
 import { TraceContactGuard } from "./TraceContactGuard"
 import { getPeerTraceRepairCandidates } from "./getPeerTraceRepairCandidates"
 import { getPeerTraceViaCandidates } from "./getPeerTraceViaCandidates"
+import { getDrcInvolvedRouteIndexes } from "./getDrcInvolvedRouteIndexes"
 import { getTraceViaSimplificationCandidates } from "./getTraceViaSimplificationCandidates"
 import { getDrcSnapshot, hasNewTraceObstacleOverlaps } from "./solverHelpers"
 import { restoreOverlappingConnections } from "./restoreOverlappingConnections"
@@ -43,6 +44,7 @@ export class TraceContactRepairSolver extends BaseSolver {
   private geometryChecks = 0
   private contactRounds = 0
   private viaRounds = 0
+  private viaRefinementRouteIndexes?: ReadonlySet<number>
   private simplificationRounds = 0
   private outputHdRoutes: HighDensityRoute[]
 
@@ -150,6 +152,9 @@ export class TraceContactRepairSolver extends BaseSolver {
       return
     }
     this.best = this.current
+    this.viaRefinementRouteIndexes = getDrcInvolvedRouteIndexes(
+      this.current!.snapshot,
+    )
     this.candidateContactCheck = this.guard.prepareCandidateCheck(
       this.current!.routes,
     )
@@ -310,12 +315,28 @@ export class TraceContactRepairSolver extends BaseSolver {
         this.current = this.best
         this.startContactRound()
       } else if (this.best !== this.current) {
+        const countImproved =
+          this.best!.snapshot.count < this.current!.snapshot.count
         this.current = this.best
-        this.startViaRound()
+        // Once the original DRC quality is recovered, do not spend more full
+        // board evaluations traversing a plateau solely to polish severity.
+        if (countImproved || this.current!.snapshot.count > this.targetDrcCount)
+          this.startViaRound()
+        else this.finish()
       } else this.finish()
       return
     }
     const routes = proposal.value
+    if (
+      this.phase === "vias" &&
+      this.viaRefinementRouteIndexes !== undefined &&
+      !routes.some(
+        (route, index) =>
+          route !== this.current!.routes[index] &&
+          this.viaRefinementRouteIndexes!.has(index),
+      )
+    )
+      return
     this.geometryChecks++
     if (
       this.phase === "contacts" &&
@@ -341,6 +362,15 @@ export class TraceContactRepairSolver extends BaseSolver {
     if (hasNewTraceObstacleOverlaps(candidate.snapshot, this.inputSnapshot!))
       return
     if (!this.best || isBetter(candidate, this.best)) this.best = candidate
+    if (
+      this.phase === "vias" &&
+      candidate.snapshot.count < this.current!.snapshot.count &&
+      candidate.snapshot.count <= this.targetDrcCount
+    ) {
+      this.current = candidate
+      this.startViaRound()
+      return
+    }
     if (
       this.phase === "contacts" &&
       this.best.snapshot.count <= this.current!.snapshot.count &&
