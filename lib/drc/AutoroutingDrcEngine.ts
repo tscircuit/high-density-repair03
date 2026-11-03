@@ -59,6 +59,7 @@ type Via = {
   x: number
   y: number
   diameter: number
+  holeDiameter: number
   layers: string[]
   primitiveId?: number
 }
@@ -67,6 +68,7 @@ type StaticObstacle = {
   kind: "obstacle"
   obstacleType: "pcb_smtpad" | "pcb_plated_hole"
   obstacleId: string
+  shape?: "circle"
   connectedTo: string[]
   x: number
   y: number
@@ -86,10 +88,12 @@ export type AutoroutingDrcError = {
     | "pcb_trace_error"
     | "pcb_via_clearance_error"
     | "pcb_pad_pad_clearance_error"
+    | "pcb_placement_error"
   error_type:
     | "pcb_trace_error"
     | "pcb_via_clearance_error"
     | "pcb_pad_pad_clearance_error"
+    | "pcb_placement_error"
   message: string
   center?: Point
   pcb_center?: Point
@@ -657,6 +661,7 @@ export class AutoroutingDrcEngine {
         kind: "obstacle",
         obstacleType,
         obstacleId,
+        shape: obstacle.shape,
         connectedTo: obstacle.connectedTo,
         x: obstacle.center.x,
         y: obstacle.center.y,
@@ -756,6 +761,11 @@ export class AutoroutingDrcEngine {
         const viaId = `via_${vias.length}`
         const diameter =
           routePoint.via_diameter ?? this.srj.minViaDiameter ?? 0.3
+        const holeDiameter =
+          routePoint.via_hole_diameter ??
+          this.srj.min_via_hole_diameter ??
+          this.srj.minViaHoleDiameter ??
+          diameter / 2
         const layers = getViaDrillLayers({
           via: routePoint,
           layerCount: this.srj.layerCount,
@@ -770,6 +780,7 @@ export class AutoroutingDrcEngine {
           x: routePoint.x,
           y: routePoint.y,
           diameter,
+          holeDiameter,
           layers,
           primitiveId: this.queryResultBudget
             ? this.getPrimitiveId([
@@ -780,6 +791,7 @@ export class AutoroutingDrcEngine {
                 routePoint.x,
                 routePoint.y,
                 diameter,
+                holeDiameter,
                 layers,
               ])
             : undefined,
@@ -1105,13 +1117,18 @@ export class AutoroutingDrcEngine {
     via: Via,
     obstacle: StaticObstacle,
   ): AutoroutingDrcError | undefined {
-    if (this.obstacleSharesNet(via.netId, obstacle)) return undefined
+    const sameNet = this.obstacleSharesNet(via.netId, obstacle)
+    if (sameNet && this.srj.allowViaInPad !== false) return undefined
     this.lastRunStats.exactCheckCount += 1
 
     const obstacleBounds = getObstacleLocalBounds(obstacle)
     const localVia = applyToPoint(obstacle.worldToLocal, via)
+    const radius =
+      sameNet && obstacle.shape === "circle"
+        ? Math.min(obstacle.width, obstacle.height) / 2
+        : obstacle.radius
     const pointToObstacleDistance =
-      obstacle.radius === undefined
+      radius === undefined
         ? Math.hypot(
             Math.max(
               obstacleBounds.minX - localVia.x,
@@ -1124,10 +1141,16 @@ export class AutoroutingDrcEngine {
               localVia.y - obstacleBounds.maxY,
             ),
           )
-        : Math.hypot(via.x - obstacle.x, via.y - obstacle.y) - obstacle.radius
-    const gap = pointToObstacleDistance - via.diameter / 2
-    if (gap + DRC_EPSILON >= this.viaToPadClearance) return undefined
+        : Math.hypot(via.x - obstacle.x, via.y - obstacle.y) - radius
+    const diameter = sameNet ? via.holeDiameter : via.diameter
+    const minimumClearance = sameNet ? 0 : this.viaToPadClearance
+    const tolerance = sameNet ? POSITION_EPSILON : DRC_EPSILON
+    const gap = pointToObstacleDistance - diameter / 2
+    if (gap + tolerance >= minimumClearance) return undefined
 
+    const errorType = sameNet
+      ? "pcb_placement_error"
+      : "pcb_pad_pad_clearance_error"
     const errorId = `via_pad_clearance_${via.viaId}_${obstacle.obstacleId}`
     const center = {
       x: (via.x + obstacle.x) / 2,
@@ -1135,14 +1158,14 @@ export class AutoroutingDrcEngine {
     }
 
     return {
-      type: "pcb_pad_pad_clearance_error",
-      error_type: "pcb_pad_pad_clearance_error",
-      pcb_pad_pad_clearance_error_id: errorId,
+      type: errorType,
+      error_type: errorType,
+      [`${errorType}_id`]: errorId,
       message: `pcb_via "${via.viaId}" and ${obstacle.obstacleType} "${obstacle.obstacleId}" are too close (gap: ${gap.toFixed(3)}mm)`,
       pcb_trace_id: via.traceId,
       pcb_pad_ids: [via.viaId, obstacle.obstacleId],
       pcb_via_ids: [via.viaId],
-      minimum_clearance: this.viaToPadClearance,
+      minimum_clearance: minimumClearance,
       actual_clearance: gap,
       center,
     }

@@ -3303,6 +3303,15 @@ export const getViaDrcIssueCount = (
       isViaDrcError(error) && (includeViaPadErrors || !isViaPadDrcError(error)),
   ).length
 
+const isForbiddenPadDrillError = (error: Record<string, unknown>): boolean => {
+  return (
+    getDrcErrorType(error) === "pcb_placement_error" &&
+    Array.isArray(error.pcb_via_ids) &&
+    error.pcb_via_ids.length === 1 &&
+    Array.isArray(error.pcb_pad_ids)
+  )
+}
+
 export const isViaPadDrcError = (error: Record<string, unknown>) =>
   getDrcErrorType(error) === "pcb_pad_pad_clearance_error" &&
   Array.isArray(error.pcb_via_ids) &&
@@ -3477,6 +3486,13 @@ export const isDrcSnapshotCountBetter = (
   candidateSnapshot: DrcSnapshot,
   bestSnapshot: DrcSnapshot,
 ) => {
+  const candidateDrillCount = candidateSnapshot.errors.filter(
+    isForbiddenPadDrillError,
+  ).length
+  const bestDrillCount = bestSnapshot.errors.filter(
+    isForbiddenPadDrillError,
+  ).length
+  if (candidateDrillCount > bestDrillCount) return false
   const candidateLegacyCount = getNonViaPadDrcIssueCount(candidateSnapshot)
   const bestLegacyCount = getNonViaPadDrcIssueCount(bestSnapshot)
   if (candidateLegacyCount !== bestLegacyCount) {
@@ -3487,12 +3503,14 @@ export const isDrcSnapshotCountBetter = (
 }
 
 /**
- * Repair established DRC types before via-to-pad errors. Detection remains
- * complete; this ordering only controls how the bounded repair budget is used.
+ * Repair forbidden pad drills first, then established copper DRC types before
+ * via-to-pad clearance. Detection remains complete throughout the search.
  */
 export const getLegacyFirstRepairErrors = (
   errors: Array<Record<string, unknown>>,
 ) => {
+  const drillErrors = errors.filter(isForbiddenPadDrillError)
+  if (drillErrors.length > 0) return drillErrors
   const legacyErrors = errors.filter((error) => !isViaPadDrcError(error))
   return legacyErrors.length > 0 ? legacyErrors : errors
 }
@@ -4882,6 +4900,13 @@ export const isBetterDrcSnapshot = (
   bestSnapshot?: DrcSnapshot,
 ) => {
   if (bestSnapshot) {
+    const candidateDrillCount = candidateSnapshot.errors.filter(
+      isForbiddenPadDrillError,
+    ).length
+    const bestDrillCount = bestSnapshot.errors.filter(
+      isForbiddenPadDrillError,
+    ).length
+    if (candidateDrillCount > bestDrillCount) return false
     const candidateLegacyCount = getNonViaPadDrcIssueCount(candidateSnapshot)
     const bestLegacyCount = getNonViaPadDrcIssueCount(bestSnapshot)
     if (candidateLegacyCount !== bestLegacyCount) {
@@ -4929,6 +4954,7 @@ export const applyDrcErrorForces = (
     const hasTraceViaMetadata =
       !isViaPairError &&
       !isViaPadError &&
+      !Array.isArray(error.pcb_pad_ids) &&
       hasReportedViaIds &&
       (typeof error.pcb_trace_id === "string" ||
         Array.isArray(error.pcb_trace_ids))
@@ -4971,9 +4997,36 @@ export const applyDrcErrorForces = (
       } else {
         const nearestVia = getNearestVia(vias, center, targetRouteIndex)
         if (nearestVia) {
-          changed =
-            moveViaAwayFromPoint(routes, nearestVia, repulsionPoint, srj) ||
-            changed
+          if (
+            isForbiddenPadDrillError(error) &&
+            typeof error.minimum_clearance === "number" &&
+            typeof error.actual_clearance === "number"
+          ) {
+            const dx = nearestVia.x - repulsionPoint.x
+            const dy = nearestVia.y - repulsionPoint.y
+            const distance = Math.hypot(dx, dy)
+            const move =
+              Math.min(
+                MAX_ERROR_MOVE,
+                error.minimum_clearance -
+                  error.actual_clearance +
+                  POSITION_EPSILON,
+              ) * scale
+            const directionX = distance > POSITION_EPSILON ? dx / distance : 1
+            const directionY = distance > POSITION_EPSILON ? dy / distance : 0
+            changed =
+              moveVia(
+                routes,
+                nearestVia,
+                directionX * move,
+                directionY * move,
+                srj,
+              ) || changed
+          } else {
+            changed =
+              moveViaAwayFromPoint(routes, nearestVia, repulsionPoint, srj) ||
+              changed
+          }
         }
       }
       continue
