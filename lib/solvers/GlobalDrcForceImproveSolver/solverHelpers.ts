@@ -3684,9 +3684,11 @@ const appendDistinctRoutePoint = (
   point: MutableRoute["route"][number],
 ) => {
   const previous = points.at(-1)
+  // A nearby wire vertex cannot replace the exact anchor of a via.
   if (
     previous &&
-    areSameXY(previous, point) &&
+    previous.x === point.x &&
+    previous.y === point.y &&
     previous.z === point.z &&
     previous.pcb_port_id === point.pcb_port_id
   ) {
@@ -3821,13 +3823,14 @@ export const applySafeTraceLayerMoveForError = (
   }
 
   const spanStart = originalPoints[spanStartIndex]!
+  const precedingSpanPoint = originalPoints[spanStartIndex - 1]
   const startsAtExistingTransition =
-    spanStartIndex > 0 &&
-    areSameXY(originalPoints[spanStartIndex - 1]!, spanStart)
+    precedingSpanPoint?.x === spanStart.x &&
+    precedingSpanPoint.y === spanStart.y
   const spanEnd = originalPoints[spanEndIndex]!
+  const followingSpanPoint = originalPoints[spanEndIndex + 1]
   const endsAtExistingTransition =
-    spanEndIndex < originalPoints.length - 1 &&
-    areSameXY(originalPoints[spanEndIndex + 1]!, spanEnd)
+    followingSpanPoint?.x === spanEnd.x && followingSpanPoint.y === spanEnd.y
 
   if (movesStartTerminal) {
     appendDistinctRoutePoint(movedRoute, first)
