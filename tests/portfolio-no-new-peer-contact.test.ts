@@ -21,7 +21,6 @@ test("the broad portfolio compares peer contacts against the original input", ()
   expect(solver.solved).toBe(true)
   expect(solver.failed).toBe(false)
   expect(solver.stats.drcBranchPortfolioBroadBranchAttempted).toBe(true)
-  expect(solver.stats.drcBranchPortfolioPeerTraceRepairRolledBack).toBe(true)
   expect(solver.stats.finalDrcIssueCount).toBeLessThanOrEqual(5)
   expect(
     getPhysicalPeerPairs(solver.getOutput()).filter(

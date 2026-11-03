@@ -16,14 +16,34 @@ type Params = {
 
 const getContactOffsets = ({
   via,
+  allVias,
   routes,
   pair,
 }: {
   via: ViaNode
+  allVias: ViaNode[]
   routes: HighDensityRoute[]
   pair: Params["pair"]
 }): { x: number; y: number }[] => {
   const offsets: { x: number; y: number }[] = []
+  for (const other of allVias) {
+    if (
+      routes[other.routeIndex]!.connectionName ===
+        routes[via.routeIndex]!.connectionName ||
+      !pair.includes(routes[other.routeIndex]!.connectionName) ||
+      !via.zLayers.some((z) => other.zLayers.includes(z))
+    )
+      continue
+    const dx = via.x - other.x,
+      dy = via.y - other.y,
+      distance = Math.hypot(dx, dy)
+    const depth = via.radius + other.radius - distance
+    if (depth <= 1e-9) continue
+    const nx = distance > 1e-9 ? dx / distance : 1,
+      ny = distance > 1e-9 ? dy / distance : 0
+    for (const margin of [0.001, 0.025, 0.05, 0.1])
+      offsets.push({ x: nx * (depth + margin), y: ny * (depth + margin) })
+  }
   for (const route of routes) {
     if (
       route.connectionName === routes[via.routeIndex]!.connectionName ||
@@ -69,7 +89,8 @@ export function* getTraceViaContactRepairCandidates({
   routes,
   pair,
 }: Params): Generator<HighDensityRoute[]> {
-  const vias = collectViaNodes(routes, srj).filter((via) => {
+  const allVias = collectViaNodes(routes, srj)
+  const vias = allVias.filter((via) => {
     const owner = routes[via.routeIndex]!
     if (!pair.includes(owner.connectionName) || !via.movable) return false
     if (
@@ -82,6 +103,17 @@ export function* getTraceViaContactRepairCandidates({
         "through_obstacle"
     )
       return false
+    if (
+      allVias.some(
+        (other) =>
+          routes[other.routeIndex]!.connectionName !== owner.connectionName &&
+          pair.includes(routes[other.routeIndex]!.connectionName) &&
+          via.zLayers.some((z) => other.zLayers.includes(z)) &&
+          Math.hypot(via.x - other.x, via.y - other.y) <
+            via.radius + other.radius - 1e-9,
+      )
+    )
+      return true
     return routes.some((route) => {
       if (
         route.connectionName === owner.connectionName ||
@@ -113,7 +145,7 @@ export function* getTraceViaContactRepairCandidates({
   ]
   const routeIndexes = [...new Set(vias.map((via) => via.routeIndex))]
   const choices = vias.map((via) => [
-    ...getContactOffsets({ via, routes, pair }),
+    ...getContactOffsets({ via, allVias, routes, pair }),
     ...offsets,
   ])
   for (const first of choices[0]!)

@@ -58,6 +58,7 @@ import { applyViaToPadClearanceRelaxation } from "./viaToPadClearanceRelaxation"
 import { RELAXED_DRC_OPTIONS } from "./drcPresets"
 import { restoreOverlappingConnections } from "./restoreOverlappingConnections"
 import { TraceContactGuard } from "./TraceContactGuard"
+import { repairNewTraceContacts } from "./repairNewTraceContacts"
 import { haveSameForceCandidateGeometry } from "./haveSameForceCandidateGeometry"
 import type {
   DrcEvaluator,
@@ -472,6 +473,25 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     }
   }
 
+  private repairPeerContacts(
+    routes: HighDensityRoute[],
+    snapshot: DrcSnapshot,
+    inputSnapshot: DrcSnapshot,
+  ): { routes: HighDensityRoute[]; snapshot: DrcSnapshot } | undefined {
+    if (this.getNewPeerContactConnectionNames(routes).size === 0)
+      return undefined
+    return repairNewTraceContacts({
+      srj: this.srj,
+      routes,
+      snapshot,
+      inputSnapshot,
+      guard: this.traceContactGuard!,
+      getSnapshot: (candidate) => this.getSnapshot(candidate),
+      connMap: this.connMap,
+      viaHoleDiameter: this.viaHoleDiameter,
+    })
+  }
+
   private acceptSolvedRoutes(
     routes: HighDensityRoute[],
     snapshot: DrcSnapshot,
@@ -501,6 +521,19 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     let peerConnectionNames = this.deferTraceObstacleOverlapGuard
       ? new Set<HighDensityRoute["connectionName"]>()
       : this.getNewPeerContactConnectionNames(acceptedRoutes)
+    if (peerConnectionNames.size > 0) {
+      const repaired = this.repairPeerContacts(
+        acceptedRoutes,
+        acceptedSnapshot,
+        inputSnapshot,
+      )
+      if (repaired) {
+        acceptedRoutes = repaired.routes
+        acceptedSnapshot = repaired.snapshot
+        peerConnectionNames = new Set()
+        this.rememberOverlapSafeRoutes(acceptedRoutes, acceptedSnapshot)
+      }
+    }
     if (
       !this.deferTraceObstacleOverlapGuard &&
       (hasNewTraceObstacleOverlaps(acceptedSnapshot, inputSnapshot) ||
@@ -512,18 +545,33 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       // connection. Bound full-board revalidation, then retain the safe checkpoint.
       const restorationLimit = peerConnectionNames.size > 0 ? 2 : 1
       for (let attempt = 0; attempt < restorationLimit; attempt++) {
+        const wireConnectionNames = new Set(
+          this.traceContactGuard?.getNewWireContactPairs(acceptedRoutes).flat(),
+        )
         const restored = restoreOverlappingConnections({
           routes: acceptedRoutes,
           snapshot: acceptedSnapshot,
           inputSnapshot,
           checkpointRoutes:
             this.overlapSafeCheckpoint?.routes ?? this.guardedInputHdRoutes,
-          peerConnectionNames,
+          peerConnectionNames:
+            wireConnectionNames.size > 0
+              ? wireConnectionNames
+              : peerConnectionNames,
         })
         if (!restored) break
         for (const name of restored.restoredConnectionNames)
           restoredNames.add(name)
-        const restoredSnapshot = this.getSnapshot(restored.routes)
+        let restoredSnapshot = this.getSnapshot(restored.routes)
+        const repaired = this.repairPeerContacts(
+          restored.routes,
+          restoredSnapshot,
+          inputSnapshot,
+        )
+        if (repaired) {
+          restored.routes = repaired.routes
+          restoredSnapshot = repaired.snapshot
+        }
         this.overlapRestorationChecks++
         this.rememberOverlapSafeRoutes(restored.routes, restoredSnapshot)
         if (this.overlapSafeCheckpoint?.snapshot === restoredSnapshot) {

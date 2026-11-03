@@ -41,12 +41,14 @@ test("geometric publication checks retain unrelated repairs when external DRC om
   solver.outputHdRoutes = candidate
   solver.tryFinalAcceptance()
   const output = solver.getOutput()
-  expect(output[0]).toEqual(hdRoutes[0])
-  expect(output[3]).toEqual(hdRoutes[3])
+  expect(hdRoutes[0]!.route[1]!.y).toBe(0.4)
+  for (let index = 0; index < output.length; index++) {
+    expect(output[index]!.route[0]).toEqual(hdRoutes[index]!.route[0])
+    expect(output[index]!.route.at(-1)).toEqual(hdRoutes[index]!.route.at(-1))
+  }
   expect(output[4]).toEqual(candidate[4])
   expect(referenceInputs.at(-1)).toEqual(output)
   expect(solver.stats.finalDrcIssueCount).toBe(0)
-  expect(solver.stats.globalDrcForceImprovePeerTraceRepairRolledBack).toBe(true)
   expect(
     solver.stats.globalDrcForceImproveOverlapRestorationChecks,
   ).toBeLessThanOrEqual(2)

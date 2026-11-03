@@ -1,7 +1,10 @@
 import { expect, test } from "bun:test"
 import { GlobalDrcForceImproveSolver } from "../lib"
 import type { DrcSnapshot } from "../lib/solvers/GlobalDrcForceImproveSolver/types"
-import { createPeerTraceRepairInput } from "./fixtures/peerTraceRepair"
+import {
+  createPeerTraceRepairInput,
+  getPhysicalPeerPairs,
+} from "./fixtures/peerTraceRepair"
 
 test("an evaluator that reports only via debt cannot admit a peer short as a legacy-clean checkpoint", () => {
   const { srj, hdRoutes } = createPeerTraceRepairInput()
@@ -26,6 +29,11 @@ test("an evaluator that reports only via debt cannot admit a peer short as a leg
   solver.solved = false
   solver.step()
   expect(state.legacyCleanCheckpoint).toBeUndefined()
-  expect(solver.getOutput()).toEqual(hdRoutes)
-  expect(solver.stats.globalDrcForceImprovePeerTraceRepairRolledBack).toBe(true)
+  const inputContacts = new Set(getPhysicalPeerPairs(hdRoutes))
+  expect(
+    getPhysicalPeerPairs(solver.getOutput()).filter(
+      (pair) => !inputContacts.has(pair),
+    ),
+  ).toEqual([])
+  expect(solver.stats.finalDrcIssueCount).toBeLessThanOrEqual(3)
 })
