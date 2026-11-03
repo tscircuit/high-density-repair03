@@ -11,8 +11,8 @@ function verifyExactLayerTransitions(): void {
     obstacles: [],
     connections: [],
   }
-  // Board-world millimeters (+X right, +Y up, +Z above). These distinct wire
-  // vertices precede the exact via site observed on native OrangeCrab RAM_A6.
+  // Board-world XY in mm (+X right, +Y up); z indexes layers from the top.
+  // These wire vertices precede the exact native OrangeCrab RAM_A6 via site.
   const original: HighDensityRoute = {
     connectionName: "RAM_A6",
     traceThickness: 0.0889,
