@@ -32,6 +32,7 @@ import {
   applyViaInPadLayerMoveForError,
   cloneRoutes,
   cloneRoutesForIndexes,
+  createBroadRepulsionCandidateRunner,
   getCenteredErrors,
   getDrcSnapshot,
   getTopologyRepairDrcSnapshot,
@@ -1540,19 +1541,28 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     ) {
       attemptedPeriodicLargeBoardBroadFallback =
         shouldTryPeriodicLargeBoardBroadFallback
+      const runBroadCandidate = this.drcEvaluator
+        ? undefined
+        : createBroadRepulsionCandidateRunner(
+            this.srj,
+            this.effort,
+            this.connMap,
+          )
       for (const passMultiplier of [1, EXTENDED_BROAD_FORCE_PASS_MULTIPLIER]) {
-        const broadCandidateRoutes = applyBroadRepulsionForces(
-          this.srj,
-          bestRoutes,
-          this.effort,
-          passMultiplier,
-          this.connMap,
-          this.drcEvaluator === undefined,
-          // This is a speculative candidate and is DRC-evaluated immediately.
-          // Final cleanup here can perturb branch selection and trigger another
-          // expensive broad attempt; direct/final broad outputs still clean up.
-          false,
-        )
+        const broadCandidateRoutes = runBroadCandidate
+          ? runBroadCandidate(bestRoutes, passMultiplier)
+          : applyBroadRepulsionForces(
+              this.srj,
+              bestRoutes,
+              this.effort,
+              passMultiplier,
+              this.connMap,
+              this.drcEvaluator === undefined,
+              // This is a speculative candidate and is DRC-evaluated immediately.
+              // Final cleanup here can perturb branch selection and trigger another
+              // expensive broad attempt; direct/final broad outputs still clean up.
+              false,
+            )
         if (broadCandidateRoutes === bestRoutes) continue
         const broadCandidateSnapshot = this.getSnapshot(broadCandidateRoutes)
         const broadCandidateViaIssueCount = this.getViaIssueCount(

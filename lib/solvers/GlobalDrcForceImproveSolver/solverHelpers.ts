@@ -2734,16 +2734,31 @@ const pushSegmentSegmentPair = (
     return false
   }
 
-  const candidate = getClosestSegmentContact(left, right)
-
-  const separationX = candidate.leftPoint.x - candidate.rightPoint.x
-  const separationY = candidate.leftPoint.y - candidate.rightPoint.y
-  const distance = Math.hypot(separationX, separationY)
   const requiredDistance =
     left.radius +
     right.radius +
     (RELAXED_DRC_OPTIONS.traceClearance ?? 0.1) +
     CLEARANCE_SLACK
+  // Grid cells are deliberately coarse. Read live endpoints, since earlier
+  // pairs in this pass may have moved them, and keep boundary cases on the
+  // existing exact path rather than changing its rounding or tie order.
+  const rejectionDistance = requiredDistance + POSITION_EPSILON
+  if (
+    Math.min(left.start.x, left.end.x) - Math.max(right.start.x, right.end.x) >
+      rejectionDistance ||
+    Math.min(right.start.x, right.end.x) - Math.max(left.start.x, left.end.x) >
+      rejectionDistance ||
+    Math.min(left.start.y, left.end.y) - Math.max(right.start.y, right.end.y) >
+      rejectionDistance ||
+    Math.min(right.start.y, right.end.y) - Math.max(left.start.y, left.end.y) >
+      rejectionDistance
+  )
+    return false
+
+  const candidate = getClosestSegmentContact(left, right)
+  const separationX = candidate.leftPoint.x - candidate.rightPoint.x
+  const separationY = candidate.leftPoint.y - candidate.rightPoint.y
+  const distance = Math.hypot(separationX, separationY)
   const penetration = requiredDistance - distance
   if (penetration <= 0) return false
 
@@ -2847,6 +2862,19 @@ const getSegmentRectRepulsion = (
 ) => {
   const halfWidth = obstacle.width / 2
   const halfHeight = obstacle.height / 2
+  const rejectionDistance = requiredDistance + POSITION_EPSILON
+  if (
+    Math.min(segment.start.x, segment.end.x) - (obstacle.center.x + halfWidth) >
+      rejectionDistance ||
+    obstacle.center.x - halfWidth - Math.max(segment.start.x, segment.end.x) >
+      rejectionDistance ||
+    Math.min(segment.start.y, segment.end.y) -
+      (obstacle.center.y + halfHeight) >
+      rejectionDistance ||
+    obstacle.center.y - halfHeight - Math.max(segment.start.y, segment.end.y) >
+      rejectionDistance
+  )
+    return undefined
   const obstacleCorners = [
     {
       x: obstacle.center.x - halfWidth,
@@ -3200,6 +3228,59 @@ const applyBroadViaSegmentCleanupPass = (
   }
 
   return changed
+}
+
+/** Extend native speculative attempts without replaying their common passes.
+ * Each returned candidate owns its geometry. A new incumbent starts over. */
+export const createBroadRepulsionCandidateRunner = (
+  srj: SimpleRouteJson,
+  effort: number,
+  connMap?: ConnectivityMap,
+): ((
+  routes: HighDensityRoute[],
+  passMultiplier: number,
+) => HighDensityRoute[]) => {
+  let incumbent: HighDensityRoute[] | undefined
+  let mutableRoutes: MutableRoute[] = []
+  let netMatchers: BroadNetMatchers
+  let completedPasses = 0
+  let settled = false
+  let changed = false
+
+  return (routes, passMultiplier) => {
+    const maxPasses = Math.max(
+      2,
+      Math.round(BROAD_FORCE_PASSES * Math.max(1, effort) * passMultiplier),
+    )
+    if (routes !== incumbent || maxPasses < completedPasses) {
+      incumbent = routes
+      mutableRoutes = cloneRoutes(routes)
+      netMatchers = createBroadNetMatchers(
+        mutableRoutes.length,
+        srj.obstacles.length,
+        connMap,
+      )
+      completedPasses = 0
+      settled = false
+      changed = false
+    } else if (changed && !settled && completedPasses < maxPasses) {
+      // materializeRoutes shares point arrays; detach before extending a
+      // rejected proposal so its snapshot and any observers remain unchanged.
+      mutableRoutes = cloneRoutes(mutableRoutes)
+    }
+
+    while (completedPasses < maxPasses && !settled) {
+      completedPasses += 1
+      if (
+        !applyBroadRepulsionPass(srj, mutableRoutes, connMap, true, netMatchers)
+      ) {
+        settled = true
+        break
+      }
+      changed = true
+    }
+    return changed ? materializeRoutes(mutableRoutes) : routes
+  }
 }
 
 export const applyBroadRepulsionForces = (
