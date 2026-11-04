@@ -567,7 +567,14 @@ const pointToSegmentProjection = (point: Point, segment: Segment) =>
 export const getPointToObstacleDistance = (
   point: Point,
   obstacle: SimpleRouteJson["obstacles"][number],
-) => {
+): number => {
+  if (obstacle.shape === "circle") {
+    const centerDistance = Math.hypot(
+      point.x - obstacle.center.x,
+      point.y - obstacle.center.y,
+    )
+    return Math.max(0, centerDistance - obstacle.width / 2)
+  }
   const halfWidth = obstacle.width / 2
   const halfHeight = obstacle.height / 2
   const dx = Math.max(Math.abs(point.x - obstacle.center.x) - halfWidth, 0)
@@ -629,7 +636,19 @@ export const getRectRepulsion = (
   point: Point,
   obstacle: SimpleRouteJson["obstacles"][number],
   requiredDistance: number,
-) => {
+): { direction: Point; penetration: number } | undefined => {
+  if (obstacle.shape === "circle") {
+    const dx = point.x - obstacle.center.x
+    const dy = point.y - obstacle.center.y
+    const distance = Math.hypot(dx, dy)
+    const penetration = requiredDistance + obstacle.width / 2 - distance
+    if (penetration <= 0) return undefined
+    let direction: Point = { x: 1, y: 0 }
+    if (distance > POSITION_EPSILON) {
+      direction = { x: dx / distance, y: dy / distance }
+    }
+    return { direction, penetration }
+  }
   const halfWidth = obstacle.width / 2
   const halfHeight = obstacle.height / 2
   const closestX = clampValue(
