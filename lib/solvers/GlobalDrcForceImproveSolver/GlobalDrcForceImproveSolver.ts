@@ -473,11 +473,15 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     }
   }
 
-  private repairPeerContacts(
-    routes: HighDensityRoute[],
-    snapshot: DrcSnapshot,
-    inputSnapshot: DrcSnapshot,
-  ): { routes: HighDensityRoute[]; snapshot: DrcSnapshot } | undefined {
+  private repairPeerContacts({
+    routes,
+    snapshot,
+    inputSnapshot,
+  }: {
+    routes: HighDensityRoute[]
+    snapshot: DrcSnapshot
+    inputSnapshot: DrcSnapshot
+  }): { routes: HighDensityRoute[]; snapshot: DrcSnapshot } | undefined {
     if (this.getNewPeerContactConnectionNames(routes).size === 0)
       return undefined
     return repairNewTraceContacts({
@@ -522,11 +526,11 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       ? new Set<HighDensityRoute["connectionName"]>()
       : this.getNewPeerContactConnectionNames(acceptedRoutes)
     if (peerConnectionNames.size > 0) {
-      const repaired = this.repairPeerContacts(
-        acceptedRoutes,
-        acceptedSnapshot,
+      const repaired = this.repairPeerContacts({
+        routes: acceptedRoutes,
+        snapshot: acceptedSnapshot,
         inputSnapshot,
-      )
+      })
       if (repaired) {
         acceptedRoutes = repaired.routes
         acceptedSnapshot = repaired.snapshot
@@ -563,11 +567,11 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         for (const name of restored.restoredConnectionNames)
           restoredNames.add(name)
         let restoredSnapshot = this.getSnapshot(restored.routes)
-        const repaired = this.repairPeerContacts(
-          restored.routes,
-          restoredSnapshot,
+        const repaired = this.repairPeerContacts({
+          routes: restored.routes,
+          snapshot: restoredSnapshot,
           inputSnapshot,
-        )
+        })
         if (repaired) {
           restored.routes = repaired.routes
           restoredSnapshot = repaired.snapshot
