@@ -373,6 +373,9 @@ export class TraceContactRepairSolver extends BaseSolver {
             // Widen placement only when the standard bridge samples miss a
             // legal corridor. Both searches share the same work budgets.
             this.expandedBridgeSearch = true
+            // Narrow bridges need joint annulus refinement; this owner will
+            // repair those contacts before publishing the refined candidate.
+            this.allowRefinementContacts = true
             this.proposals = getPeerTraceRepairCandidates({
               ...this.params,
               routes: this.current!.routes,
