@@ -30,7 +30,7 @@
     "transformation-matrix": "^3.1.0"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.4.13",
+    "@biomejs/biome": "2.6.4",
     "@tscircuit/solver-utils": "^0.0.19",
     "@types/bun": "latest",
     "@types/rbush": "4.0.0",
