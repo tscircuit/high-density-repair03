@@ -651,12 +651,13 @@ export class AutoroutingDrcEngine {
         translate(obstacle.center.x, obstacle.center.y),
         rotateDEG(hasRotation ? obstacle.ccwRotationDegrees! : 0),
       )
-      // Explicit rotation describes a rectangular pad, including square pads.
-      // Only legacy, unrotated multilayer obstacles use the circular inference.
+      // Honor declared circles, including SMT pads. Infer circles only for
+      // legacy unrotated multilayer obstacles with equal dimensions.
       const isCircular =
-        !hasRotation &&
-        isMultiLayer &&
-        Math.abs(obstacle.width - obstacle.height) < 0.001
+        obstacle.shape === "circle" ||
+        (!hasRotation &&
+          isMultiLayer &&
+          Math.abs(obstacle.width - obstacle.height) < 0.001)
       obstacles.push({
         kind: "obstacle",
         obstacleType,
