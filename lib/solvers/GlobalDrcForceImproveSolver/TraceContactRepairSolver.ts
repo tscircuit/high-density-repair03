@@ -42,6 +42,7 @@ export class TraceContactRepairSolver extends BaseSolver {
   private refineSolver?: GlobalDrcBranchPortfolioSolver
   private refinementRounds = 0
   private allowRefinementContacts = false
+  private fineViaAdjustment = false
   private refinementCheckpoint?: Candidate
   private candidateChecks = 0
   private geometryChecks = 0
@@ -115,6 +116,18 @@ export class TraceContactRepairSolver extends BaseSolver {
 
   private startRefinement(): void {
     if (
+      this.allowRefinementContacts &&
+      this.current!.snapshot.count <= this.targetDrcCount &&
+      this.viaRounds === 0 &&
+      !hasNewTraceObstacleOverlaps(this.current!.snapshot, this.inputSnapshot!)
+    ) {
+      // Removing a refinement's annulus contact can leave a small clearance
+      // error. Give the repaired stacks one fine pass, stopping at improvement.
+      this.fineViaAdjustment = true
+      this.startViaRound()
+      return
+    }
+    if (
       this.current!.snapshot.count <= this.targetDrcCount ||
       hasNewTraceObstacleOverlaps(this.current!.snapshot, this.inputSnapshot!)
     ) {
@@ -179,6 +192,7 @@ export class TraceContactRepairSolver extends BaseSolver {
       routes: this.current!.routes,
       previousRoutes: this.params.hdRoutes,
       affectedConnections: this.affectedConnections,
+      fineAdjustmentOnly: this.fineViaAdjustment,
     })
     this.phase = "vias"
   }
@@ -426,7 +440,8 @@ export class TraceContactRepairSolver extends BaseSolver {
       candidate.snapshot.count <= this.targetDrcCount
     ) {
       this.current = candidate
-      this.startViaRound()
+      if (this.fineViaAdjustment) this.finish()
+      else this.startViaRound()
       return
     }
     if (
