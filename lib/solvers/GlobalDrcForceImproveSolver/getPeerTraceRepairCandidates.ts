@@ -19,6 +19,7 @@ type Params = {
   pair: readonly [string, string]
   connMap?: ConnectivityMap
   viaHoleDiameter?: number
+  includeAnnulusOffsets?: boolean
 }
 
 const projectParameter = (point: Point, start: Point, end: Point): number => {
@@ -151,6 +152,7 @@ export function* getPeerTraceRepairCandidates({
   pair,
   connMap,
   viaHoleDiameter,
+  includeAnnulusOffsets = false,
 }: Params): Generator<HighDensityRoute[]> {
   const leftIndexes = routes.flatMap((route, index) =>
     route.connectionName === pair[0] ? [index] : [],
@@ -237,7 +239,20 @@ export function* getPeerTraceRepairCandidates({
         ] as const
         for (const [startPosition, endPosition] of spans) {
           const z = route.route[Math.floor(startPosition)]!.z
-          const distances = [0.15, 0.3, 0.6, 1, 2]
+          // Include annulus-sized offsets: a legal bridge can fit between the
+          // fixed distance samples when neighboring copper constrains a via.
+          const distances = [
+            ...new Set([
+              0.15,
+              0.3,
+              0.6,
+              1,
+              2,
+              ...(includeAnnulusOffsets
+                ? [route.viaDiameter, route.viaDiameter * 3]
+                : []),
+            ]),
+          ].sort((left, right) => left - right)
           for (const before of distances)
             for (const after of distances)
               for (let targetZ = 0; targetZ < srj.layerCount; targetZ++) {

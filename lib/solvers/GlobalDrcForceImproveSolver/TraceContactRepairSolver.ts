@@ -40,9 +40,13 @@ export class TraceContactRepairSolver extends BaseSolver {
   private pairs: (readonly [string, string])[] = []
   private affectedConnections = new Set<string>()
   private refineSolver?: GlobalDrcBranchPortfolioSolver
+  private refinementRounds = 0
+  private allowRefinementContacts = false
+  private refinementCheckpoint?: Candidate
   private candidateChecks = 0
   private geometryChecks = 0
   private contactRounds = 0
+  private expandedBridgeSearch = false
   private viaRounds = 0
   private viaRefinementRouteIndexes?: ReadonlySet<number>
   private simplificationRounds = 0
@@ -97,6 +101,7 @@ export class TraceContactRepairSolver extends BaseSolver {
       return
     }
     this.best = undefined
+    this.expandedBridgeSearch = false
     this.candidateContactCheck = this.guard.prepareCandidateCheck(
       this.current!.routes,
     )
@@ -116,6 +121,15 @@ export class TraceContactRepairSolver extends BaseSolver {
       this.finish()
       return
     }
+    if (this.refinementRounds++ >= 2) {
+      this.startViaRound()
+      return
+    }
+    if (
+      !this.refinementCheckpoint ||
+      isBetter(this.current!, this.refinementCheckpoint)
+    )
+      this.refinementCheckpoint = this.current
     this.refineSolver = new GlobalDrcBranchPortfolioSolver({
       ...this.params,
       hdRoutes: this.current!.routes,
@@ -132,7 +146,9 @@ export class TraceContactRepairSolver extends BaseSolver {
       enableBroadFallback: false,
       enableLargeBoardBroadFallback: false,
       enablePostSolveClearanceRelaxation: false,
-      deferTraceContactGuard: false,
+      // This solver owns the final contact check. Keep a useful refinement
+      // available for local contact repair instead of discarding it wholesale.
+      deferTraceContactGuard: this.allowRefinementContacts,
       referenceDrcEvaluator: undefined,
     })
     this.activeSubSolver = this.refineSolver
@@ -191,6 +207,17 @@ export class TraceContactRepairSolver extends BaseSolver {
         snapshot: this.snapshot(restored.routes),
       }
     }
+    const checkpoint = this.refinementCheckpoint
+    if (
+      checkpoint &&
+      this.guard.getNewContactPairs(checkpoint.routes).length === 0 &&
+      !hasNewTraceObstacleOverlaps(checkpoint.snapshot, this.inputSnapshot!) &&
+      (!candidate ||
+        isBetter(checkpoint, candidate) ||
+        this.guard.getNewContactPairs(candidate.routes).length > 0 ||
+        hasNewTraceObstacleOverlaps(candidate.snapshot, this.inputSnapshot!))
+    )
+      candidate = checkpoint
     if (
       candidate &&
       candidate.snapshot.count <= this.inputSnapshot!.count &&
@@ -267,11 +294,25 @@ export class TraceContactRepairSolver extends BaseSolver {
       const candidate = { routes, snapshot: this.snapshot(routes) }
       if (
         isBetter(candidate, this.current!) &&
-        this.guard.getNewContactPairs(routes).length === 0 &&
         !hasNewTraceObstacleOverlaps(candidate.snapshot, this.inputSnapshot!)
-      )
+      ) {
         this.current = candidate
+        if (this.guard.getNewContactPairs(routes).length > 0) {
+          this.activeSubSolver = null
+          this.startContactRound()
+          return
+        }
+      }
       this.activeSubSolver = null
+      if (
+        !this.allowRefinementContacts &&
+        this.current!.snapshot.count > this.targetDrcCount &&
+        solver.stats.drcBranchPortfolioPeerTraceRepairRolledBack
+      ) {
+        this.allowRefinementContacts = true
+        this.startRefinement()
+        return
+      }
       this.startViaRound()
       return
     }
@@ -309,6 +350,23 @@ export class TraceContactRepairSolver extends BaseSolver {
     ) {
       if (this.phase === "contacts") {
         if (!this.best) {
+          if (
+            proposal.done &&
+            !this.expandedBridgeSearch &&
+            this.geometryChecks < 4096 &&
+            this.candidateChecks < 256
+          ) {
+            // Widen placement only when the standard bridge samples miss a
+            // legal corridor. Both searches share the same work budgets.
+            this.expandedBridgeSearch = true
+            this.proposals = getPeerTraceRepairCandidates({
+              ...this.params,
+              routes: this.current!.routes,
+              pair: this.pairs[0]!,
+              includeAnnulusOffsets: true,
+            })
+            return
+          }
           this.finish()
           return
         }
