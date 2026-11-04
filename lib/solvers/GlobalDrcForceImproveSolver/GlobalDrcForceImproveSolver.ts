@@ -1543,11 +1543,11 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         shouldTryPeriodicLargeBoardBroadFallback
       const runBroadCandidate = this.drcEvaluator
         ? undefined
-        : createBroadRepulsionCandidateRunner(
-            this.srj,
-            this.effort,
-            this.connMap,
-          )
+        : createBroadRepulsionCandidateRunner({
+            srj: this.srj,
+            effort: this.effort,
+            connMap: this.connMap,
+          })
       for (const passMultiplier of [1, EXTENDED_BROAD_FORCE_PASS_MULTIPLIER]) {
         const broadCandidateRoutes = runBroadCandidate
           ? runBroadCandidate(bestRoutes, passMultiplier)

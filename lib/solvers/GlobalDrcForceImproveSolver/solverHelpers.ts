@@ -3232,11 +3232,15 @@ const applyBroadViaSegmentCleanupPass = (
 
 /** Extend native speculative attempts without replaying their common passes.
  * Each returned candidate owns its geometry. A new incumbent starts over. */
-export const createBroadRepulsionCandidateRunner = (
-  srj: SimpleRouteJson,
-  effort: number,
-  connMap?: ConnectivityMap,
-): ((
+export const createBroadRepulsionCandidateRunner = ({
+  srj,
+  effort,
+  connMap,
+}: {
+  srj: SimpleRouteJson
+  effort: number
+  connMap?: ConnectivityMap
+}): ((
   routes: HighDensityRoute[],
   passMultiplier: number,
 ) => HighDensityRoute[]) => {
