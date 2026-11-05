@@ -837,6 +837,16 @@ const getPointOutlineClearance = (
     const start = outline[index]
     const end = outline[(index + 1) % outline.length]
     if (!start || !end) continue
+    // A separated coordinate interval is a lower bound on Euclidean distance.
+    // Keep the tolerance band so pruning cannot change boundary decisions.
+    const searchDistance = minDistance + COORDINATE_EPSILON
+    if (
+      Math.min(start.x, end.x) - point.x > searchDistance ||
+      point.x - Math.max(start.x, end.x) > searchDistance ||
+      Math.min(start.y, end.y) - point.y > searchDistance ||
+      point.y - Math.max(start.y, end.y) > searchDistance
+    )
+      continue
     minDistance = Math.min(
       minDistance,
       pointToSegmentDistance(point, start, end),
@@ -953,7 +963,10 @@ const pointIsInsideBoard = (srj: SimpleRouteJson, point: Point) =>
     ? pointIsInsideOutline(point, srj.outline)
     : pointIsInsideBounds(point, srj.bounds)
 
-const getPointBoardClearance = (srj: SimpleRouteJson, point: Point) => {
+export const getPointBoardClearance = (
+  srj: SimpleRouteJson,
+  point: Point,
+): number => {
   if (srj.outline && srj.outline.length >= 3) {
     const clearance = getPointOutlineClearance(point, srj.outline)
     return pointIsInsideOutline(point, srj.outline) ? clearance : -clearance
@@ -962,11 +975,11 @@ const getPointBoardClearance = (srj: SimpleRouteJson, point: Point) => {
   return getPointBoundsClearance(point, srj.bounds)
 }
 
-const getSegmentBoardClearance = (
+export const getSegmentBoardClearance = (
   srj: SimpleRouteJson,
   start: Point,
   end: Point,
-) => {
+): number => {
   if (
     Math.abs(start.x - end.x) <= COORDINATE_EPSILON &&
     Math.abs(start.y - end.y) <= COORDINATE_EPSILON
@@ -989,10 +1002,22 @@ const getSegmentBoardClearance = (
     }
 
     let minDistance = Number.POSITIVE_INFINITY
+    const minX = Math.min(start.x, end.x)
+    const maxX = Math.max(start.x, end.x)
+    const minY = Math.min(start.y, end.y)
+    const maxY = Math.max(start.y, end.y)
     for (let index = 0; index < srj.outline.length; index += 1) {
       const edgeStart = srj.outline[index]
       const edgeEnd = srj.outline[(index + 1) % srj.outline.length]
       if (!edgeStart || !edgeEnd) continue
+      const searchDistance = minDistance + COORDINATE_EPSILON
+      if (
+        Math.min(edgeStart.x, edgeEnd.x) - maxX > searchDistance ||
+        minX - Math.max(edgeStart.x, edgeEnd.x) > searchDistance ||
+        Math.min(edgeStart.y, edgeEnd.y) - maxY > searchDistance ||
+        minY - Math.max(edgeStart.y, edgeEnd.y) > searchDistance
+      )
+        continue
       minDistance = Math.min(
         minDistance,
         segmentToSegmentMinDistance(start, end, edgeStart, edgeEnd),
