@@ -32,7 +32,7 @@ beforeAll(() => {
   }
 })
 
-test.failing("Game Boy repair does not publish a new trace-to-via short", () => {
+test("Game Boy repair does not publish a new trace-to-via short", () => {
   expect(
     getGameBoyTraceViaContact(getGameBoyContactRepair().output).gap,
   ).toBeGreaterThanOrEqual(-1e-9)
