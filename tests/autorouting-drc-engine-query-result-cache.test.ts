@@ -147,6 +147,15 @@ test("DRC query result cache preserves ordered results and logical stats across 
     const portIds = first.errors[0]!.pcb_port_ids as string[] | undefined
     portIds?.push("caller mutation")
     check()
+    const warmed = check()
+    const located = warmed.locationAwareErrors[0]!
+    expect(warmed.errors).toContain(located)
+    expect(warmed.errorsWithCenters).toContain(located)
+    located.center.y = -999
+    located.message = "cached-result mutation"
+    const warmedPorts = located.pcb_port_ids as string[] | undefined
+    warmedPorts?.push("cached-result mutation")
+    check()
 
     const wire = traces[0]!.route[0] as WirePoint
     const end = traces[0]!.route[1] as WirePoint

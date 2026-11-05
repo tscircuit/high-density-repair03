@@ -890,7 +890,9 @@ export class AutoroutingDrcEngine {
       this.lastRunStats.exactCheckCount += existing.exactCheckCount
       this.lastRunStats.broadPhaseCandidateCount +=
         existing.broadPhaseCandidateCount
-      return existing.errors.length ? structuredClone(existing.errors) : []
+      // Query results stay internal until the deduplicated public result is
+      // copied. Repeated contacts should not each deep-copy the same error.
+      return existing.errors
     }
     const initialExactCheckCount = this.lastRunStats.exactCheckCount
     const initialBroadPhaseCandidateCount =
@@ -1361,13 +1363,18 @@ export class AutoroutingDrcEngine {
     )
     errors.push(...detectedViaPadErrors)
     errors.push(...detectedViaErrors)
-    const errorsWithCenters = errors.filter((error) => error.center)
+    // Isolate callers from cached records after duplicate trace contacts have
+    // been collapsed, preserving shared records across the public result views.
+    const outputErrors = this.queryResultBudget
+      ? structuredClone(errors)
+      : errors
+    const errorsWithCenters = outputErrors.filter((error) => error.center)
     const locationAwareErrors = errorsWithCenters as Array<
       AutoroutingDrcError & { center: Point }
     >
 
     return {
-      errors,
+      errors: outputErrors,
       errorsWithCenters,
       locationAwareErrors,
     }
