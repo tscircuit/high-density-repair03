@@ -12,25 +12,24 @@ type Bounds = {
 }
 
 const getReferenceCandidates = (
-  index: Map<string, number[]>,
+  items: Bounds[],
   bounds: Bounds,
   cellSize: number,
 ): number[] => {
-  const candidates = new Set<number>()
-  for (
-    let x = Math.floor(bounds.minX / cellSize);
-    x <= Math.floor(bounds.maxX / cellSize);
-    x++
-  ) {
-    for (
-      let y = Math.floor(bounds.minY / cellSize);
-      y <= Math.floor(bounds.maxY / cellSize);
-      y++
-    ) {
-      for (const value of index.get(`${x}:${y}`) ?? []) candidates.add(value)
-    }
+  // Independent exhaustive oracle: intersect quantized cell ranges, preserving
+  // original item order without consulting the optimized index's storage.
+  const candidates: number[] = []
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i]!
+    if (
+      Math.floor(item.minX / cellSize) <= Math.floor(bounds.maxX / cellSize) &&
+      Math.floor(item.maxX / cellSize) >= Math.floor(bounds.minX / cellSize) &&
+      Math.floor(item.minY / cellSize) <= Math.floor(bounds.maxY / cellSize) &&
+      Math.floor(item.maxY / cellSize) >= Math.floor(bounds.minY / cellSize)
+    )
+      candidates.push(i)
   }
-  return [...candidates].sort((left, right) => left - right)
+  return candidates
 }
 
 test("bitset candidate enumeration preserves exact ascending spatial indexes", () => {
@@ -63,20 +62,20 @@ test("bitset candidate enumeration preserves exact ascending spatial indexes", (
           maxY: y + random() * 20,
         }
         expect(getSpatialCandidateIndexes(index, box, cellSize)).toEqual(
-          getReferenceCandidates(index, box, cellSize),
+          getReferenceCandidates(items, box, cellSize),
         )
         comparisons++
       }
     }
   }
-  const index = new Map<string, number[]>([
-    ["0:0", [128, 31, 0, 31, 257, 32, 511]],
+  const index = new Map<number, Map<number, number[]>>([
+    [0, new Map([[0, [128, 31, 0, 31, 257, 32, 511]]])],
   ])
   const box = { minX: 0, minY: 0, maxX: 0.1, maxY: 0.1 }
   expect(getSpatialCandidateIndexes(index, box, 1)).toEqual([
     0, 31, 32, 128, 257, 511,
   ])
-  index.set("0:0", [10000, 32, 1023])
+  index.get(0)!.set(0, [10000, 32, 1023])
   expect(getSpatialCandidateIndexes(index, box, 1)).toEqual([32, 1023, 10000])
   expect(comparisons).toBe(3200)
 })

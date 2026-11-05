@@ -33,6 +33,7 @@ import {
   createSpatialIndex,
   expandBounds2d,
   getSpatialCandidateIndexes,
+  type SpatialIndex,
 } from "./spatialIndex"
 import type { DrcEvaluator, DrcSnapshot, PcbTraceId } from "./types"
 import type {
@@ -2962,8 +2963,8 @@ const pushMovablesAwayFromObstacles = (
   routes: MutableRoute[],
   vias: ViaNode[],
   segments: Segment[],
-  viaSpatialIndex: Map<string, number[]>,
-  segmentSpatialIndex: Map<string, number[]>,
+  viaSpatialIndex: SpatialIndex,
+  segmentSpatialIndex: SpatialIndex,
   spatialCellSize: number,
   connMap?: ConnectivityMap,
   netMatchers?: BroadNetMatchers,

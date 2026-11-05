@@ -65,19 +65,20 @@ const addContact = (
     right.bounds.maxY <= left.bounds.minY
   )
     return
-  const pair: Contact =
-    left.connectionName < right.connectionName
-      ? [left.connectionName, right.connectionName]
-      : [right.connectionName, left.connectionName]
-  // An input annulus contact must not whitelist a new wire crossing, or vice versa.
-  const kind = left.kind === right.kind ? left.kind : "trace-via"
-  const key = JSON.stringify([...pair, kind])
-  if (contacts.has(key)) return
   const gap =
     segmentToSegmentMinDistance(left.start, left.end, right.start, right.end) -
     left.radius -
     right.radius
-  if (gap < -CONTACT_EPSILON) contacts.set(key, pair)
+  if (!(gap < -CONTACT_EPSILON)) return
+  // Most spatial candidates do not touch. Allocate a contact key only for
+  // physical intersections, retaining the distinction between copper kinds.
+  const pair: Contact =
+    left.connectionName < right.connectionName
+      ? [left.connectionName, right.connectionName]
+      : [right.connectionName, left.connectionName]
+  const kind = left.kind === right.kind ? left.kind : "trace-via"
+  const key = JSON.stringify([...pair, kind])
+  if (!contacts.has(key)) contacts.set(key, pair)
 }
 
 /** Physical wire and via contacts, independent of a caller's DRC reporting policy. */
