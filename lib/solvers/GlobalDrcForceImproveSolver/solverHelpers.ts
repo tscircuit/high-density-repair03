@@ -3612,6 +3612,33 @@ export const hasNewTraceObstacleOverlaps = (
   return [...candidateOverlaps].some((id) => !bestOverlaps.has(id))
 }
 
+/** Cheap native-engine rejection; accepted proposals still receive full DRC. */
+export const hasNewRouteObstacleOverlaps = ({
+  srj,
+  routes,
+  inputSnapshot,
+  engine,
+}: {
+  srj: SimpleRouteJson
+  routes: HighDensityRoute[]
+  inputSnapshot: DrcSnapshot
+  engine: AutoroutingDrcEngine
+}): boolean => {
+  const { traces, traceRouteIndexById, traceConnectionNameById } =
+    createSimplifiedTraces(srj, routes)
+  const errors = engine.getObstacleContactErrors(traces)
+  return hasNewTraceObstacleOverlaps(
+    {
+      errors,
+      count: errors.length,
+      issueScore: getDrcIssueScore(errors),
+      traceRouteIndexById,
+      traceConnectionNameById,
+    },
+    inputSnapshot,
+  )
+}
+
 export const isDrcSnapshotCountBetter = (
   candidateSnapshot: DrcSnapshot,
   bestSnapshot: DrcSnapshot,

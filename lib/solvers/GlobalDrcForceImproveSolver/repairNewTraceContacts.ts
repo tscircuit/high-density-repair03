@@ -78,6 +78,7 @@ export const repairNewTraceContacts = ({
   inputSnapshot,
   guard,
   getSnapshot,
+  hasNewObstacleOverlaps,
   connMap,
   viaHoleDiameter,
 }: Candidate & {
@@ -85,6 +86,7 @@ export const repairNewTraceContacts = ({
   inputSnapshot: DrcSnapshot
   guard: TraceContactGuard
   getSnapshot: (routes: HighDensityRoute[]) => DrcSnapshot
+  hasNewObstacleOverlaps?: (routes: HighDensityRoute[]) => boolean
   connMap?: ConnectivityMap
   viaHoleDiameter?: number
 }): Candidate | undefined => {
@@ -125,6 +127,9 @@ export const repairNewTraceContacts = ({
       )
         continue
       drcChecks++
+      // Count the rejected proposal against the same search budget. A fixed-pad
+      // short cannot pass the full snapshot acceptance check below.
+      if (hasNewObstacleOverlaps?.(proposal)) continue
       const candidateSnapshot = getSnapshot(proposal)
       if (
         candidateSnapshot.count > snapshot.count ||
