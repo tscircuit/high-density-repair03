@@ -3645,8 +3645,8 @@ export const hasNewRouteObstacleOverlaps = ({
   for (const [id, name] of traceConnectionNameById) {
     if (relevantNames.has(name)) traceIds.add(id)
   }
-  // Keep the full geometry for via ownership/deduplication, but query obstacles
-  // only for relevant traces. Unchanged copper does not need repeated checks.
+  // Keep the full trace order for via ownership/deduplication; the engine builds
+  // and checks obstacle-query geometry only for the selected trace owners.
   const errors = engine.getObstacleContactErrors(traces, traceIds)
   return hasNewTraceObstacleOverlaps(
     {

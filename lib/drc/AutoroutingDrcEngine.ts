@@ -700,21 +700,29 @@ export class AutoroutingDrcEngine {
 
   private collectDynamicGeometry(
     traces: SimplifiedPcbTraces,
-    cachePrimitives = true,
-  ) {
+    {
+      cachePrimitives = true,
+      traceIds,
+    }: { cachePrimitives?: boolean; traceIds?: ReadonlySet<string> } = {},
+  ): { segments: TraceSegment[]; vias: Via[] } {
     const segments: TraceSegment[] = []
     const vias: Via[] = []
     const viaLocations = new Set<string>()
 
     for (const trace of traces) {
-      const netId = this.resolveNetId(trace.connection_name)
-      const pcbPortIds = getTracePortIds(trace)
+      const includeTrace = !traceIds || traceIds.has(trace.pcb_trace_id)
+      const netId = includeTrace ? this.resolveNetId(trace.connection_name) : ""
+      const pcbPortIds = includeTrace ? getTracePortIds(trace) : []
       const traceOwnershipKey =
-        this.queryResultBudget && cachePrimitives
+        includeTrace && this.queryResultBudget && cachePrimitives
           ? JSON.stringify([trace.pcb_trace_id, netId, pcbPortIds])
           : undefined
 
-      for (let index = 0; index < trace.route.length - 1; index += 1) {
+      for (
+        let index = 0;
+        includeTrace && index < trace.route.length - 1;
+        index += 1
+      ) {
         const start = trace.route[index]
         const end = trace.route[index + 1]
         if (
@@ -762,8 +770,11 @@ export class AutoroutingDrcEngine {
         const locationKey = `${routePoint.x},${routePoint.y},${routePoint.from_layer},${routePoint.to_layer}`
         if (viaLocations.has(locationKey)) continue
         viaLocations.add(locationKey)
+        // Every trace still claims its via locations in original order. An
+        // unselected owner must suppress later duplicates exactly as in full DRC.
+        if (!includeTrace) continue
 
-        const viaId = `via_${vias.length}`
+        const viaId = `via_${viaLocations.size - 1}`
         const diameter =
           routePoint.via_diameter ?? this.srj.minViaDiameter ?? 0.3
         const holeDiameter =
@@ -778,7 +789,7 @@ export class AutoroutingDrcEngine {
         })
         vias.push({
           kind: "via",
-          order: vias.length,
+          order: viaLocations.size - 1,
           viaId,
           traceId: trace.pcb_trace_id,
           netId,
@@ -1274,10 +1285,12 @@ export class AutoroutingDrcEngine {
     const previousStats = this.lastRunStats
     this.lastRunStats = { ...previousStats }
     try {
-      const { segments, vias } = this.collectDynamicGeometry(traces, false)
+      const { segments, vias } = this.collectDynamicGeometry(traces, {
+        cachePrimitives: false,
+        traceIds,
+      })
       const errors: AutoroutingDrcError[] = []
       for (const segment of segments) {
-        if (traceIds && !traceIds.has(segment.traceId)) continue
         const obstacles = this.obstacleIndexesByLayer
           .get(segment.layer)
           ?.query(getSegmentBounds(segment))
@@ -1287,7 +1300,6 @@ export class AutoroutingDrcEngine {
         }
       }
       for (const via of vias) {
-        if (traceIds && !traceIds.has(via.traceId)) continue
         const checked = new Set<StaticObstacle>()
         for (const layer of via.layers) {
           const obstacles = this.obstacleIndexesByLayer
