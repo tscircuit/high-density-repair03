@@ -72,5 +72,5 @@ beforeAll(() => {
 
 test("native DRC evaluations for repeated force-scale candidates", () => {
   // Count actual native evaluations; logical attempts and output are checked above.
-  expect(nativeEvaluationCount).toBe(8)
+  expect(nativeEvaluationCount).toBe(4)
 })

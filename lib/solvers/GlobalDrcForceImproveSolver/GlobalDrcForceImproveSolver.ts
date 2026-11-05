@@ -32,6 +32,7 @@ import {
   applyViaInPadLayerMoveForError,
   cloneRoutes,
   cloneRoutesForIndexes,
+  createBroadRepulsionCandidateRunner,
   getCenteredErrors,
   getDrcSnapshot,
   getTopologyRepairDrcSnapshot,
@@ -57,6 +58,7 @@ import { applyViaToPadClearanceRelaxation } from "./viaToPadClearanceRelaxation"
 import { RELAXED_DRC_OPTIONS } from "./drcPresets"
 import { restoreOverlappingConnections } from "./restoreOverlappingConnections"
 import { TraceContactGuard } from "./TraceContactGuard"
+import { haveSameForceCandidateGeometry } from "./haveSameForceCandidateGeometry"
 import type {
   DrcEvaluator,
   DrcSnapshot,
@@ -1448,6 +1450,7 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
 
       this.errorCursor = (errorIndex + 1) % prioritizedErrors.length
       const canMoveSharedViaSiteWithoutTradingDrcErrors = bestIssueCount === 1
+      let previousRejectedForceCandidate: HighDensityRoute[] | undefined
 
       for (const scale of getForceScalesForEffort(this.effort)) {
         if (candidateAttemptsThisStep >= maxCandidateAttemptsThisStep) break
@@ -1470,6 +1473,20 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
         const materializedCandidateRoutes = materializeRoutes(candidateRoutes)
         candidateAttemptsThisStep += 1
         this.candidateAttempts += 1
+        // Clamped moves and fixed detours can produce identical geometry at
+        // successive scales. Retain the logical budget without repeating DRC.
+        // Scope this to native checks and this error's unchanged incumbent;
+        // custom evaluators can have their own state and caching contracts.
+        if (
+          !this.drcEvaluator &&
+          previousRejectedForceCandidate &&
+          haveSameForceCandidateGeometry(
+            previousRejectedForceCandidate,
+            materializedCandidateRoutes,
+          )
+        ) {
+          continue
+        }
         const candidateSnapshot = this.getSnapshot(materializedCandidateRoutes)
         const candidateViaIssueCount = this.getViaIssueCount(candidateSnapshot)
 
@@ -1496,6 +1513,9 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
           }
           break
         }
+        if (!this.drcEvaluator) {
+          previousRejectedForceCandidate = materializedCandidateRoutes
+        }
       }
 
       if (acceptedCandidate) break
@@ -1521,19 +1541,28 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
     ) {
       attemptedPeriodicLargeBoardBroadFallback =
         shouldTryPeriodicLargeBoardBroadFallback
+      const runBroadCandidate = this.drcEvaluator
+        ? undefined
+        : createBroadRepulsionCandidateRunner({
+            srj: this.srj,
+            effort: this.effort,
+            connMap: this.connMap,
+          })
       for (const passMultiplier of [1, EXTENDED_BROAD_FORCE_PASS_MULTIPLIER]) {
-        const broadCandidateRoutes = applyBroadRepulsionForces(
-          this.srj,
-          bestRoutes,
-          this.effort,
-          passMultiplier,
-          this.connMap,
-          this.drcEvaluator === undefined,
-          // This is a speculative candidate and is DRC-evaluated immediately.
-          // Final cleanup here can perturb branch selection and trigger another
-          // expensive broad attempt; direct/final broad outputs still clean up.
-          false,
-        )
+        const broadCandidateRoutes = runBroadCandidate
+          ? runBroadCandidate(bestRoutes, passMultiplier)
+          : applyBroadRepulsionForces(
+              this.srj,
+              bestRoutes,
+              this.effort,
+              passMultiplier,
+              this.connMap,
+              this.drcEvaluator === undefined,
+              // This is a speculative candidate and is DRC-evaluated immediately.
+              // Final cleanup here can perturb branch selection and trigger another
+              // expensive broad attempt; direct/final broad outputs still clean up.
+              false,
+            )
         if (broadCandidateRoutes === bestRoutes) continue
         const broadCandidateSnapshot = this.getSnapshot(broadCandidateRoutes)
         const broadCandidateViaIssueCount = this.getViaIssueCount(
