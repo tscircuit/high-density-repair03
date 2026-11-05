@@ -916,7 +916,9 @@ export class AutoroutingDrcEngine {
       this.queryResultCache.delete(oldestKey)
     }
     this.queryResultCache.set(key, {
-      errors: errors.length ? structuredClone(errors) : [],
+      // These records are engine-owned. evaluateInternal copies the final
+      // public result, so storing them does not expose cached objects to callers.
+      errors,
       exactCheckCount:
         this.lastRunStats.exactCheckCount - initialExactCheckCount,
       broadPhaseCandidateCount:
