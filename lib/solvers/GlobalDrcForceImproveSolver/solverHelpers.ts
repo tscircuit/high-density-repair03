@@ -1,3 +1,4 @@
+import { BoardClearanceCache } from "./BoardClearanceCache"
 import {
   pointToSegmentDistance,
   segmentToSegmentMinDistance,
@@ -943,7 +944,7 @@ const getOutlineInwardNormal = (
   }
 }
 
-const getPointBoardInwardNormal = (srj: SimpleRouteJson, point: Point) =>
+const computePointBoardInwardNormal = (srj: SimpleRouteJson, point: Point) =>
   srj.outline && srj.outline.length >= 3
     ? getOutlineInwardNormal(point, srj.outline)
     : getBoundsInwardNormal(point, srj.bounds)
@@ -953,7 +954,7 @@ const pointIsInsideBoard = (srj: SimpleRouteJson, point: Point) =>
     ? pointIsInsideOutline(point, srj.outline)
     : pointIsInsideBounds(point, srj.bounds)
 
-const getPointBoardClearance = (srj: SimpleRouteJson, point: Point) => {
+const computePointBoardClearance = (srj: SimpleRouteJson, point: Point) => {
   if (srj.outline && srj.outline.length >= 3) {
     const clearance = getPointOutlineClearance(point, srj.outline)
     return pointIsInsideOutline(point, srj.outline) ? clearance : -clearance
@@ -962,7 +963,7 @@ const getPointBoardClearance = (srj: SimpleRouteJson, point: Point) => {
   return getPointBoundsClearance(point, srj.bounds)
 }
 
-const getSegmentBoardClearance = (
+const computeSegmentBoardClearance = (
   srj: SimpleRouteJson,
   start: Point,
   end: Point,
@@ -1015,6 +1016,41 @@ const getSegmentBoardClearance = (
     getPointBoundsClearance(start, srj.bounds),
     getPointBoundsClearance(end, srj.bounds),
   )
+}
+
+export const getPointBoardInwardNormal = (
+  srj: SimpleRouteJson,
+  point: Point,
+): Point | undefined => {
+  const cached = BoardClearanceCache.forBoard(srj).getPoint(point)
+  if (!cached.hasInwardNormal) {
+    cached.inwardNormal = computePointBoardInwardNormal(srj, point)
+    cached.hasInwardNormal = true
+  }
+  return cached.inwardNormal
+}
+
+export const getPointBoardClearance = (
+  srj: SimpleRouteJson,
+  point: Point,
+): number => {
+  const cached = BoardClearanceCache.forBoard(srj).getPoint(point)
+  if (cached.clearance === undefined) {
+    cached.clearance = computePointBoardClearance(srj, point)
+  }
+  return cached.clearance
+}
+
+export const getSegmentBoardClearance = (
+  srj: SimpleRouteJson,
+  start: Point,
+  end: Point,
+): number => {
+  const cached = BoardClearanceCache.forBoard(srj).getSegment(start, end)
+  if (cached.clearance === undefined) {
+    cached.clearance = computeSegmentBoardClearance(srj, start, end)
+  }
+  return cached.clearance
 }
 
 const getBoardEdgeProximityThreshold = (
@@ -1089,9 +1125,7 @@ const clipPointIndexesTranslationAwayFromBoardEdge = (
   dy: number,
   featureRadius: number,
 ) => {
-  const uniquePointIndexes = [...new Set(pointIndexes)].sort(
-    (left, right) => left - right,
-  )
+  const uniquePointIndexes = pointIndexes
   let translation = { x: dx, y: dy }
   const edgeProximityThreshold = getBoardEdgeProximityThreshold(
     srj,
@@ -1137,9 +1171,7 @@ const getRoutePointIndexesMinBoardClearance = (
   pointIndexes: number[],
   translatedPoints?: Map<number, Point>,
 ) => {
-  const uniquePointIndexes = [...new Set(pointIndexes)].sort(
-    (left, right) => left - right,
-  )
+  const uniquePointIndexes = pointIndexes
   if (uniquePointIndexes.length === 0) return Number.POSITIVE_INFINITY
 
   const movedPointIndexes = new Set(uniquePointIndexes)
