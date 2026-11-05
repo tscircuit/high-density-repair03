@@ -136,7 +136,7 @@ export interface AutoroutingDrcEngineOptions {
    */
   includeTraceViaOwnerMetadata?: boolean
   /**
-   * Total budget for retained primitive keys, cached results, and entry overhead.
+   * Total budget for retained primitive geometry/keys, cached results, and entry overhead.
    * Defaults to 8,000,000 accounting units; zero disables caching.
    * Units count serialized key/error characters and fixed id/entry estimates.
    * This is an accounting budget, not a byte or heap limit.
@@ -457,6 +457,9 @@ export class AutoroutingDrcEngine {
   // Advance through FIFO entries instead of rescanning deleted Map slots.
   private primitiveEvictionCursor = this.primitiveIdsByKey.entries()
   private primitiveKeyUnits = 0
+  private geometryCacheUnits = 0
+  private reusableSegments: TraceSegment[] = []
+  private reusableVias: Via[] = []
   private nextPrimitiveId = 0
   private readonly staticObstacleIds = new WeakMap<StaticObstacle, number>()
   private readonly queryResultCache = new Map<
@@ -698,19 +701,31 @@ export class AutoroutingDrcEngine {
     }
   }
 
-  private collectDynamicGeometry(traces: SimplifiedPcbTraces) {
+  private collectDynamicGeometry(
+    traces: SimplifiedPcbTraces,
+    {
+      cachePrimitives = true,
+      traceIds,
+    }: { cachePrimitives?: boolean; traceIds?: ReadonlySet<string> } = {},
+  ): { segments: TraceSegment[]; vias: Via[] } {
     const segments: TraceSegment[] = []
     const vias: Via[] = []
     const viaLocations = new Set<string>()
 
     for (const trace of traces) {
-      const netId = this.resolveNetId(trace.connection_name)
-      const pcbPortIds = getTracePortIds(trace)
-      const traceOwnershipKey = this.queryResultBudget
-        ? JSON.stringify([trace.pcb_trace_id, netId, pcbPortIds])
-        : undefined
+      const includeTrace = !traceIds || traceIds.has(trace.pcb_trace_id)
+      const netId = includeTrace ? this.resolveNetId(trace.connection_name) : ""
+      const pcbPortIds = includeTrace ? getTracePortIds(trace) : []
+      const traceOwnershipKey =
+        includeTrace && this.queryResultBudget && cachePrimitives
+          ? JSON.stringify([trace.pcb_trace_id, netId, pcbPortIds])
+          : undefined
 
-      for (let index = 0; index < trace.route.length - 1; index += 1) {
+      for (
+        let index = 0;
+        includeTrace && index < trace.route.length - 1;
+        index += 1
+      ) {
         const start = trace.route[index]
         const end = trace.route[index + 1]
         if (
@@ -724,6 +739,26 @@ export class AutoroutingDrcEngine {
           Math.abs(start.x - end.x) <= POSITION_EPSILON &&
           Math.abs(start.y - end.y) <= POSITION_EPSILON
         ) {
+          continue
+        }
+
+        const previous = cachePrimitives
+          ? this.reusableSegments[segments.length]
+          : undefined
+        if (
+          previous &&
+          previous.traceId === trace.pcb_trace_id &&
+          previous.netId === netId &&
+          Object.is(previous.start.x, start.x) &&
+          Object.is(previous.start.y, start.y) &&
+          Object.is(previous.end.x, end.x) &&
+          Object.is(previous.end.y, end.y) &&
+          Object.is(previous.width, getWireWidth(start, end)) &&
+          previous.layer === start.layer &&
+          previous.pcbPortIds.length === pcbPortIds.length &&
+          previous.pcbPortIds.every((id, index) => id === pcbPortIds[index])
+        ) {
+          segments.push(previous)
           continue
         }
 
@@ -758,8 +793,11 @@ export class AutoroutingDrcEngine {
         const locationKey = `${routePoint.x},${routePoint.y},${routePoint.from_layer},${routePoint.to_layer}`
         if (viaLocations.has(locationKey)) continue
         viaLocations.add(locationKey)
+        // Every trace still claims its via locations in original order. An
+        // unselected owner must suppress later duplicates exactly as in full DRC.
+        if (!includeTrace) continue
 
-        const viaId = `via_${vias.length}`
+        const viaId = `via_${viaLocations.size - 1}`
         const diameter =
           routePoint.via_diameter ?? this.srj.minViaDiameter ?? 0.3
         const holeDiameter =
@@ -772,9 +810,27 @@ export class AutoroutingDrcEngine {
           layerCount: this.srj.layerCount,
           allowBlindAndBuriedVias: this.srj.allowBlindAndBuriedVias,
         })
+        const previous = cachePrimitives
+          ? this.reusableVias[vias.length]
+          : undefined
+        if (
+          previous &&
+          previous.viaId === viaId &&
+          previous.traceId === trace.pcb_trace_id &&
+          previous.netId === netId &&
+          Object.is(previous.x, routePoint.x) &&
+          Object.is(previous.y, routePoint.y) &&
+          Object.is(previous.diameter, diameter) &&
+          Object.is(previous.holeDiameter, holeDiameter) &&
+          previous.layers.length === layers.length &&
+          previous.layers.every((layer, index) => layer === layers[index])
+        ) {
+          vias.push(previous)
+          continue
+        }
         vias.push({
           kind: "via",
-          order: vias.length,
+          order: viaLocations.size - 1,
           viaId,
           traceId: trace.pcb_trace_id,
           netId,
@@ -783,20 +839,51 @@ export class AutoroutingDrcEngine {
           diameter,
           holeDiameter,
           layers,
-          primitiveId: this.queryResultBudget
-            ? this.getPrimitiveId([
-                "via",
-                viaId,
-                trace.pcb_trace_id,
-                netId,
-                routePoint.x,
-                routePoint.y,
-                diameter,
-                holeDiameter,
-                layers,
-              ])
-            : undefined,
+          primitiveId:
+            this.queryResultBudget && cachePrimitives
+              ? this.getPrimitiveId([
+                  "via",
+                  viaId,
+                  trace.pcb_trace_id,
+                  netId,
+                  routePoint.x,
+                  routePoint.y,
+                  diameter,
+                  holeDiameter,
+                  layers,
+                ])
+              : undefined,
         })
+      }
+    }
+
+    if (cachePrimitives) {
+      // Retain only a bounded prefix from the last complete evaluation. Exact
+      // field comparisons detect in-place edits without serializing every
+      // unchanged primitive again. IDs never recycle, even after key eviction.
+      const geometryBudget = Math.floor(this.primitiveKeyBudget / 2)
+      this.geometryCacheUnits = 0
+      this.reusableVias = []
+      this.reusableSegments = []
+      for (const via of vias) {
+        const units = 128 + via.layers.length * 8
+        if (this.geometryCacheUnits + units > geometryBudget) break
+        this.reusableVias.push(via)
+        this.geometryCacheUnits += units
+      }
+      for (const segment of segments) {
+        const units = 128 + segment.pcbPortIds.length * 8
+        if (this.geometryCacheUnits + units > geometryBudget) break
+        this.reusableSegments.push(segment)
+        this.geometryCacheUnits += units
+      }
+      while (
+        this.primitiveKeyUnits + this.geometryCacheUnits >
+        this.primitiveKeyBudget
+      ) {
+        const [oldestKey, oldest] = this.primitiveEvictionCursor.next().value!
+        this.primitiveKeyUnits -= oldest.units
+        this.primitiveIdsByKey.delete(oldestKey)
       }
     }
 
@@ -854,12 +941,13 @@ export class AutoroutingDrcEngine {
     const existing = this.primitiveIdsByKey.get(key)
     if (existing) return existing.id
     const units = key.length + 64
+    const availableBudget = this.primitiveKeyBudget - this.geometryCacheUnits
     if (
-      units > this.primitiveKeyBudget ||
+      units > availableBudget ||
       this.nextPrimitiveId >= Number.MAX_SAFE_INTEGER
     )
       return undefined
-    while (this.primitiveKeyUnits + units > this.primitiveKeyBudget) {
+    while (this.primitiveKeyUnits + units > availableBudget) {
       const [oldestKey, oldest] = this.primitiveEvictionCursor.next().value!
       this.primitiveKeyUnits -= oldest.units
       this.primitiveIdsByKey.delete(oldestKey)
@@ -890,7 +978,9 @@ export class AutoroutingDrcEngine {
       this.lastRunStats.exactCheckCount += existing.exactCheckCount
       this.lastRunStats.broadPhaseCandidateCount +=
         existing.broadPhaseCandidateCount
-      return existing.errors.length ? structuredClone(existing.errors) : []
+      // Query results stay internal until the deduplicated public result is
+      // copied. Repeated contacts should not each deep-copy the same error.
+      return existing.errors
     }
     const initialExactCheckCount = this.lastRunStats.exactCheckCount
     const initialBroadPhaseCandidateCount =
@@ -909,7 +999,9 @@ export class AutoroutingDrcEngine {
       this.queryResultCache.delete(oldestKey)
     }
     this.queryResultCache.set(key, {
-      errors: errors.length ? structuredClone(errors) : [],
+      // These records are engine-owned. evaluateInternal copies the final
+      // public result, so storing them does not expose cached objects to callers.
+      errors,
       exactCheckCount:
         this.lastRunStats.exactCheckCount - initialExactCheckCount,
       broadPhaseCandidateCount:
@@ -1256,6 +1348,49 @@ export class AutoroutingDrcEngine {
     return this.evaluateInternal(traces, true)
   }
 
+  /** Static-contact rejection without rebuilding the whole-board copper index.
+   * Preserve the statistics from the caller's last complete DRC evaluation. */
+  getObstacleContactErrors(
+    traces: SimplifiedPcbTraces,
+    traceIds?: ReadonlySet<string>,
+  ): AutoroutingDrcError[] {
+    const previousStats = this.lastRunStats
+    this.lastRunStats = { ...previousStats }
+    try {
+      const { segments, vias } = this.collectDynamicGeometry(traces, {
+        cachePrimitives: false,
+        traceIds,
+      })
+      const errors: AutoroutingDrcError[] = []
+      for (const segment of segments) {
+        const obstacles = this.obstacleIndexesByLayer
+          .get(segment.layer)
+          ?.query(getSegmentBounds(segment))
+        for (const obstacle of obstacles ?? []) {
+          const error = this.checkTraceObstacle(segment, obstacle)
+          if (error) errors.push(error)
+        }
+      }
+      for (const via of vias) {
+        const checked = new Set<StaticObstacle>()
+        for (const layer of via.layers) {
+          const obstacles = this.obstacleIndexesByLayer
+            .get(layer)
+            ?.query(getViaBounds(via))
+          for (const obstacle of obstacles ?? []) {
+            if (checked.has(obstacle)) continue
+            checked.add(obstacle)
+            const error = this.checkViaObstacle(via, obstacle)
+            if (error) errors.push(error)
+          }
+        }
+      }
+      return errors
+    } finally {
+      this.lastRunStats = previousStats
+    }
+  }
+
   /**
    * Evaluates the established trace/via DRC set used by the first repair
    * stage. Via-to-pad errors remain part of the normal complete evaluation and
@@ -1361,13 +1496,18 @@ export class AutoroutingDrcEngine {
     )
     errors.push(...detectedViaPadErrors)
     errors.push(...detectedViaErrors)
-    const errorsWithCenters = errors.filter((error) => error.center)
+    // Isolate callers from cached records after duplicate trace contacts have
+    // been collapsed, preserving shared records across the public result views.
+    const outputErrors = this.queryResultBudget
+      ? structuredClone(errors)
+      : errors
+    const errorsWithCenters = outputErrors.filter((error) => error.center)
     const locationAwareErrors = errorsWithCenters as Array<
       AutoroutingDrcError & { center: Point }
     >
 
     return {
-      errors,
+      errors: outputErrors,
       errorsWithCenters,
       locationAwareErrors,
     }

@@ -33,6 +33,7 @@ import {
   createSpatialIndex,
   expandBounds2d,
   getSpatialCandidateIndexes,
+  type SpatialIndex,
 } from "./spatialIndex"
 import type { DrcEvaluator, DrcSnapshot, PcbTraceId } from "./types"
 import type {
@@ -836,6 +837,16 @@ const getPointOutlineClearance = (
     const start = outline[index]
     const end = outline[(index + 1) % outline.length]
     if (!start || !end) continue
+    // A separated coordinate interval is a lower bound on Euclidean distance.
+    // Keep the tolerance band so pruning cannot change boundary decisions.
+    const searchDistance = minDistance + COORDINATE_EPSILON
+    if (
+      Math.min(start.x, end.x) - point.x > searchDistance ||
+      point.x - Math.max(start.x, end.x) > searchDistance ||
+      Math.min(start.y, end.y) - point.y > searchDistance ||
+      point.y - Math.max(start.y, end.y) > searchDistance
+    )
+      continue
     minDistance = Math.min(
       minDistance,
       pointToSegmentDistance(point, start, end),
@@ -952,7 +963,10 @@ const pointIsInsideBoard = (srj: SimpleRouteJson, point: Point) =>
     ? pointIsInsideOutline(point, srj.outline)
     : pointIsInsideBounds(point, srj.bounds)
 
-const getPointBoardClearance = (srj: SimpleRouteJson, point: Point) => {
+export const getPointBoardClearance = (
+  srj: SimpleRouteJson,
+  point: Point,
+): number => {
   if (srj.outline && srj.outline.length >= 3) {
     const clearance = getPointOutlineClearance(point, srj.outline)
     return pointIsInsideOutline(point, srj.outline) ? clearance : -clearance
@@ -961,11 +975,11 @@ const getPointBoardClearance = (srj: SimpleRouteJson, point: Point) => {
   return getPointBoundsClearance(point, srj.bounds)
 }
 
-const getSegmentBoardClearance = (
+export const getSegmentBoardClearance = (
   srj: SimpleRouteJson,
   start: Point,
   end: Point,
-) => {
+): number => {
   if (
     Math.abs(start.x - end.x) <= COORDINATE_EPSILON &&
     Math.abs(start.y - end.y) <= COORDINATE_EPSILON
@@ -988,10 +1002,22 @@ const getSegmentBoardClearance = (
     }
 
     let minDistance = Number.POSITIVE_INFINITY
+    const minX = Math.min(start.x, end.x)
+    const maxX = Math.max(start.x, end.x)
+    const minY = Math.min(start.y, end.y)
+    const maxY = Math.max(start.y, end.y)
     for (let index = 0; index < srj.outline.length; index += 1) {
       const edgeStart = srj.outline[index]
       const edgeEnd = srj.outline[(index + 1) % srj.outline.length]
       if (!edgeStart || !edgeEnd) continue
+      const searchDistance = minDistance + COORDINATE_EPSILON
+      if (
+        Math.min(edgeStart.x, edgeEnd.x) - maxX > searchDistance ||
+        minX - Math.max(edgeStart.x, edgeEnd.x) > searchDistance ||
+        Math.min(edgeStart.y, edgeEnd.y) - maxY > searchDistance ||
+        minY - Math.max(edgeStart.y, edgeEnd.y) > searchDistance
+      )
+        continue
       minDistance = Math.min(
         minDistance,
         segmentToSegmentMinDistance(start, end, edgeStart, edgeEnd),
@@ -2962,8 +2988,8 @@ const pushMovablesAwayFromObstacles = (
   routes: MutableRoute[],
   vias: ViaNode[],
   segments: Segment[],
-  viaSpatialIndex: Map<string, number[]>,
-  segmentSpatialIndex: Map<string, number[]>,
+  viaSpatialIndex: SpatialIndex,
+  segmentSpatialIndex: SpatialIndex,
   spatialCellSize: number,
   connMap?: ConnectivityMap,
   netMatchers?: BroadNetMatchers,
@@ -3584,6 +3610,54 @@ export const hasNewTraceObstacleOverlaps = (
   if (candidateOverlaps.size === 0) return false
   const bestOverlaps = getTraceObstacleOverlapIds(bestSnapshot)
   return [...candidateOverlaps].some((id) => !bestOverlaps.has(id))
+}
+
+/** Cheap native-engine rejection; accepted proposals still receive full DRC. */
+export const hasNewRouteObstacleOverlaps = ({
+  srj,
+  routes,
+  referenceRoutes,
+  referenceSnapshot,
+  inputSnapshot,
+  engine,
+}: {
+  srj: SimpleRouteJson
+  routes: HighDensityRoute[]
+  referenceRoutes: HighDensityRoute[]
+  referenceSnapshot: DrcSnapshot
+  inputSnapshot: DrcSnapshot
+  engine: AutoroutingDrcEngine
+}): boolean => {
+  const relevantNames =
+    getNewTraceObstacleOverlapConnectionNames(
+      referenceSnapshot,
+      inputSnapshot,
+    ) ?? new Set<string>()
+  // Local proposals retain unchanged route objects. A missed name only skips
+  // this rejection shortcut: every remaining proposal still receives full DRC.
+  for (let index = 0; index < routes.length; index++) {
+    if (routes[index] !== referenceRoutes[index])
+      relevantNames.add(routes[index]!.connectionName)
+  }
+  const { traces, traceRouteIndexById, traceConnectionNameById } =
+    createSimplifiedTraces(srj, routes)
+  const traceIds = new Set<string>()
+  for (const [id, name] of traceConnectionNameById) {
+    if (relevantNames.has(name)) traceIds.add(id)
+  }
+  // Keep the full trace order for via ownership/deduplication; the engine builds
+  // and checks obstacle-query geometry only for the selected trace owners.
+  const errors = engine.getObstacleContactErrors(traces, traceIds)
+  return hasNewTraceObstacleOverlaps(
+    {
+      errors,
+      count: errors.length,
+      issueScore: getDrcIssueScore(errors),
+      traceRouteIndexById,
+      traceConnectionNameById,
+    },
+    inputSnapshot,
+  )
 }
 
 export const isDrcSnapshotCountBetter = (

@@ -16,6 +16,7 @@ type CacheInternals = {
   queryResultCache: Map<string, unknown>
   queryResultUnits: number
   primitiveKeyUnits: number
+  geometryCacheUnits: number
   primitiveIdsByKey: Map<string, { id: number; units: number }>
   getPrimitiveId: (values: unknown[]) => number | undefined
 }
@@ -147,6 +148,15 @@ test("DRC query result cache preserves ordered results and logical stats across 
     const portIds = first.errors[0]!.pcb_port_ids as string[] | undefined
     portIds?.push("caller mutation")
     check()
+    const warmed = check()
+    const located = warmed.locationAwareErrors[0]!
+    expect(warmed.errors).toContain(located)
+    expect(warmed.errorsWithCenters).toContain(located)
+    located.center.y = -999
+    located.message = "cached-result mutation"
+    const warmedPorts = located.pcb_port_ids as string[] | undefined
+    warmedPorts?.push("cached-result mutation")
+    check()
 
     const wire = traces[0]!.route[0] as WirePoint
     const end = traces[0]!.route[1] as WirePoint
@@ -245,6 +255,7 @@ test("DRC query result cache preserves ordered results and logical stats across 
     expect(disabled.lastRunStats).toEqual(reference.lastRunStats)
     expect((disabled as unknown as CacheInternals).queryResultUnits).toBe(0)
     expect((disabled as unknown as CacheInternals).primitiveKeyUnits).toBe(0)
+    expect((disabled as unknown as CacheInternals).geometryCacheUnits).toBe(0)
 
     for (const traceClearance of [0, 0.05, 0.5]) {
       const context = {
@@ -270,7 +281,9 @@ test("DRC query result cache preserves ordered results and logical stats across 
       wire.y += 0.001
       expect(bounded.evaluate(traces)).toEqual(reference.evaluate(traces))
       expect(
-        boundedInternals.queryResultUnits + boundedInternals.primitiveKeyUnits,
+        boundedInternals.queryResultUnits +
+          boundedInternals.primitiveKeyUnits +
+          boundedInternals.geometryCacheUnits,
       ).toBeLessThanOrEqual(1_024)
     }
     for (const capacity of [-1, 0.5, Infinity, NaN]) {

@@ -10,6 +10,7 @@ type Params = {
   routes: HighDensityRoute[]
   previousRoutes: HighDensityRoute[]
   affectedConnections: ReadonlySet<string>
+  fineAdjustmentOnly?: boolean
 }
 
 /** Move a complete via stack while preserving implicit and explicit terminals. */
@@ -18,6 +19,7 @@ export function* getPeerTraceViaCandidates({
   routes,
   previousRoutes,
   affectedConnections,
+  fineAdjustmentOnly = false,
 }: Params): Generator<HighDensityRoute[]> {
   const previousVias = new Set(
     previousRoutes.flatMap((route) =>
@@ -66,7 +68,7 @@ export function* getPeerTraceViaCandidates({
       )
         continue
       if (++viaCount > 8) return
-      for (const distance of [0.05, 0.1, 0.4])
+      for (const distance of fineAdjustmentOnly ? [0.025] : [0.05, 0.1, 0.4])
         for (let direction = 0; direction < 8; direction++) {
           const x = b.x + Math.cos((direction * Math.PI) / 4) * distance
           const y = b.y + Math.sin((direction * Math.PI) / 4) * distance

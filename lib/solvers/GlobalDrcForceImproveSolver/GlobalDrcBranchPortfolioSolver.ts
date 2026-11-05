@@ -7,6 +7,7 @@ import { RELAXED_DRC_OPTIONS } from "./drcPresets"
 import { getDrcSnapshot } from "./drc-snapshot"
 import { restoreOverlappingConnections } from "./restoreOverlappingConnections"
 import { TraceContactGuard } from "./TraceContactGuard"
+import { repairNewTraceContacts } from "./repairNewTraceContacts"
 import {
   applyBroadRepulsionForces,
   cloneRoutes,
@@ -253,6 +254,31 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
     }
   }
 
+  private repairPeerContacts(
+    routes: HighDensityRoute[],
+    snapshot: DrcSnapshot,
+  ): { routes: HighDensityRoute[]; snapshot: DrcSnapshot } | undefined {
+    if (this.getNewPeerContactConnectionNames(routes).size === 0)
+      return undefined
+    return repairNewTraceContacts({
+      ...this.params,
+      routes,
+      snapshot,
+      inputSnapshot: this.inputSnapshot!,
+      guard: this.traceContactGuard!,
+      getSnapshot: (candidate) =>
+        getDrcSnapshot(
+          this.params.srj,
+          candidate,
+          this.phase === "viaInPad"
+            ? (this.params.viaInPadDrcEvaluator ?? this.params.drcEvaluator)
+            : this.params.drcEvaluator,
+          this.params.connMap,
+          this.autoroutingDrcEngine,
+        ),
+    })
+  }
+
   private finishWithOutput(
     routes: HighDensityRoute[],
     snapshot: DrcSnapshot,
@@ -267,25 +293,44 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
       safeTraceLayerPhaseAccepted: this.safeTraceLayerPhaseAccepted,
     })
     let peerConnectionNames = this.getNewPeerContactConnectionNames(routes)
+    if (peerConnectionNames.size > 0) {
+      const repaired = this.repairPeerContacts(acceptedRoutes, acceptedSnapshot)
+      if (repaired) {
+        acceptedRoutes = repaired.routes
+        acceptedSnapshot = repaired.snapshot
+        peerConnectionNames = new Set()
+        this.rememberOverlapSafeCandidate({
+          ...repaired,
+          solver: selectedSolver,
+          safeTraceLayerPhaseAccepted: this.safeTraceLayerPhaseAccepted,
+        })
+      }
+    }
     if (
-      hasNewTraceObstacleOverlaps(snapshot, this.inputSnapshot!) ||
+      hasNewTraceObstacleOverlaps(acceptedSnapshot, this.inputSnapshot!) ||
       peerConnectionNames.size > 0
     ) {
       this.peerTraceRepairRolledBack = peerConnectionNames.size > 0
       const restoredNames = new Set<HighDensityRoute["connectionName"]>()
       const restorationLimit = peerConnectionNames.size > 0 ? 2 : 1
       for (let attempt = 0; attempt < restorationLimit; attempt++) {
+        const wireConnectionNames = new Set(
+          this.traceContactGuard?.getNewWireContactPairs(acceptedRoutes).flat(),
+        )
         const restored = restoreOverlappingConnections({
           routes: acceptedRoutes,
           snapshot: acceptedSnapshot,
           inputSnapshot: this.inputSnapshot!,
           checkpointRoutes: this.overlapSafeCheckpoint!.routes,
-          peerConnectionNames,
+          peerConnectionNames:
+            wireConnectionNames.size > 0
+              ? wireConnectionNames
+              : peerConnectionNames,
         })
         if (!restored) break
         for (const name of restored.restoredConnectionNames)
           restoredNames.add(name)
-        const restoredSnapshot = getDrcSnapshot(
+        let restoredSnapshot = getDrcSnapshot(
           this.params.srj,
           restored.routes,
           this.phase === "viaInPad"
@@ -294,6 +339,14 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
           this.params.connMap,
           this.autoroutingDrcEngine,
         )
+        const repaired = this.repairPeerContacts(
+          restored.routes,
+          restoredSnapshot,
+        )
+        if (repaired) {
+          restored.routes = repaired.routes
+          restoredSnapshot = repaired.snapshot
+        }
         this.overlapRestorationChecks++
         this.rememberOverlapSafeCandidate({
           routes: restored.routes,
@@ -504,7 +557,11 @@ export class GlobalDrcBranchPortfolioSolver extends BaseSolver {
         inputRoutes: this.guardedInputHdRoutes,
         connMap: this.params.connMap,
       })
-      if (this.traceContactGuard.getNewContactPairs(legacyRoutes).length > 1) {
+      // The deferred local owner prioritizes wire bridges. Via-only contacts
+      // still need the remaining topology phases before final publication.
+      if (
+        this.traceContactGuard.getNewWireContactPairs(legacyRoutes).length > 1
+      ) {
         this.stoppedForTraceContacts = true
         this.finishWithOutput(
           legacyRoutes,
