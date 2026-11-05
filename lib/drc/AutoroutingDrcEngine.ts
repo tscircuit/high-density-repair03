@@ -136,7 +136,7 @@ export interface AutoroutingDrcEngineOptions {
    */
   includeTraceViaOwnerMetadata?: boolean
   /**
-   * Total budget for retained primitive keys, cached results, and entry overhead.
+   * Total budget for retained primitive geometry/keys, cached results, and entry overhead.
    * Defaults to 8,000,000 accounting units; zero disables caching.
    * Units count serialized key/error characters and fixed id/entry estimates.
    * This is an accounting budget, not a byte or heap limit.
@@ -457,6 +457,9 @@ export class AutoroutingDrcEngine {
   // Advance through FIFO entries instead of rescanning deleted Map slots.
   private primitiveEvictionCursor = this.primitiveIdsByKey.entries()
   private primitiveKeyUnits = 0
+  private geometryCacheUnits = 0
+  private reusableSegments: TraceSegment[] = []
+  private reusableVias: Via[] = []
   private nextPrimitiveId = 0
   private readonly staticObstacleIds = new WeakMap<StaticObstacle, number>()
   private readonly queryResultCache = new Map<
@@ -739,6 +742,26 @@ export class AutoroutingDrcEngine {
           continue
         }
 
+        const previous = cachePrimitives
+          ? this.reusableSegments[segments.length]
+          : undefined
+        if (
+          previous &&
+          previous.traceId === trace.pcb_trace_id &&
+          previous.netId === netId &&
+          Object.is(previous.start.x, start.x) &&
+          Object.is(previous.start.y, start.y) &&
+          Object.is(previous.end.x, end.x) &&
+          Object.is(previous.end.y, end.y) &&
+          Object.is(previous.width, getWireWidth(start, end)) &&
+          previous.layer === start.layer &&
+          previous.pcbPortIds.length === pcbPortIds.length &&
+          previous.pcbPortIds.every((id, index) => id === pcbPortIds[index])
+        ) {
+          segments.push(previous)
+          continue
+        }
+
         segments.push({
           kind: "trace_segment",
           order: segments.length,
@@ -787,6 +810,24 @@ export class AutoroutingDrcEngine {
           layerCount: this.srj.layerCount,
           allowBlindAndBuriedVias: this.srj.allowBlindAndBuriedVias,
         })
+        const previous = cachePrimitives
+          ? this.reusableVias[vias.length]
+          : undefined
+        if (
+          previous &&
+          previous.viaId === viaId &&
+          previous.traceId === trace.pcb_trace_id &&
+          previous.netId === netId &&
+          Object.is(previous.x, routePoint.x) &&
+          Object.is(previous.y, routePoint.y) &&
+          Object.is(previous.diameter, diameter) &&
+          Object.is(previous.holeDiameter, holeDiameter) &&
+          previous.layers.length === layers.length &&
+          previous.layers.every((layer, index) => layer === layers[index])
+        ) {
+          vias.push(previous)
+          continue
+        }
         vias.push({
           kind: "via",
           order: viaLocations.size - 1,
@@ -813,6 +854,36 @@ export class AutoroutingDrcEngine {
                 ])
               : undefined,
         })
+      }
+    }
+
+    if (cachePrimitives) {
+      // Retain only a bounded prefix from the last complete evaluation. Exact
+      // field comparisons detect in-place edits without serializing every
+      // unchanged primitive again. IDs never recycle, even after key eviction.
+      const geometryBudget = Math.floor(this.primitiveKeyBudget / 2)
+      this.geometryCacheUnits = 0
+      this.reusableVias = []
+      this.reusableSegments = []
+      for (const via of vias) {
+        const units = 128 + via.layers.length * 8
+        if (this.geometryCacheUnits + units > geometryBudget) break
+        this.reusableVias.push(via)
+        this.geometryCacheUnits += units
+      }
+      for (const segment of segments) {
+        const units = 128 + segment.pcbPortIds.length * 8
+        if (this.geometryCacheUnits + units > geometryBudget) break
+        this.reusableSegments.push(segment)
+        this.geometryCacheUnits += units
+      }
+      while (
+        this.primitiveKeyUnits + this.geometryCacheUnits >
+        this.primitiveKeyBudget
+      ) {
+        const [oldestKey, oldest] = this.primitiveEvictionCursor.next().value!
+        this.primitiveKeyUnits -= oldest.units
+        this.primitiveIdsByKey.delete(oldestKey)
       }
     }
 
@@ -870,12 +941,13 @@ export class AutoroutingDrcEngine {
     const existing = this.primitiveIdsByKey.get(key)
     if (existing) return existing.id
     const units = key.length + 64
+    const availableBudget = this.primitiveKeyBudget - this.geometryCacheUnits
     if (
-      units > this.primitiveKeyBudget ||
+      units > availableBudget ||
       this.nextPrimitiveId >= Number.MAX_SAFE_INTEGER
     )
       return undefined
-    while (this.primitiveKeyUnits + units > this.primitiveKeyBudget) {
+    while (this.primitiveKeyUnits + units > availableBudget) {
       const [oldestKey, oldest] = this.primitiveEvictionCursor.next().value!
       this.primitiveKeyUnits -= oldest.units
       this.primitiveIdsByKey.delete(oldestKey)

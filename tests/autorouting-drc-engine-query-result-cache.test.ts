@@ -16,6 +16,7 @@ type CacheInternals = {
   queryResultCache: Map<string, unknown>
   queryResultUnits: number
   primitiveKeyUnits: number
+  geometryCacheUnits: number
   primitiveIdsByKey: Map<string, { id: number; units: number }>
   getPrimitiveId: (values: unknown[]) => number | undefined
 }
@@ -254,6 +255,7 @@ test("DRC query result cache preserves ordered results and logical stats across 
     expect(disabled.lastRunStats).toEqual(reference.lastRunStats)
     expect((disabled as unknown as CacheInternals).queryResultUnits).toBe(0)
     expect((disabled as unknown as CacheInternals).primitiveKeyUnits).toBe(0)
+    expect((disabled as unknown as CacheInternals).geometryCacheUnits).toBe(0)
 
     for (const traceClearance of [0, 0.05, 0.5]) {
       const context = {
@@ -279,7 +281,9 @@ test("DRC query result cache preserves ordered results and logical stats across 
       wire.y += 0.001
       expect(bounded.evaluate(traces)).toEqual(reference.evaluate(traces))
       expect(
-        boundedInternals.queryResultUnits + boundedInternals.primitiveKeyUnits,
+        boundedInternals.queryResultUnits +
+          boundedInternals.primitiveKeyUnits +
+          boundedInternals.geometryCacheUnits,
       ).toBeLessThanOrEqual(1_024)
     }
     for (const capacity of [-1, 0.5, Infinity, NaN]) {
