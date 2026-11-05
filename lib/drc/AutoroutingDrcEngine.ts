@@ -698,7 +698,10 @@ export class AutoroutingDrcEngine {
     }
   }
 
-  private collectDynamicGeometry(traces: SimplifiedPcbTraces) {
+  private collectDynamicGeometry(
+    traces: SimplifiedPcbTraces,
+    cachePrimitives = true,
+  ) {
     const segments: TraceSegment[] = []
     const vias: Via[] = []
     const viaLocations = new Set<string>()
@@ -706,9 +709,10 @@ export class AutoroutingDrcEngine {
     for (const trace of traces) {
       const netId = this.resolveNetId(trace.connection_name)
       const pcbPortIds = getTracePortIds(trace)
-      const traceOwnershipKey = this.queryResultBudget
-        ? JSON.stringify([trace.pcb_trace_id, netId, pcbPortIds])
-        : undefined
+      const traceOwnershipKey =
+        this.queryResultBudget && cachePrimitives
+          ? JSON.stringify([trace.pcb_trace_id, netId, pcbPortIds])
+          : undefined
 
       for (let index = 0; index < trace.route.length - 1; index += 1) {
         const start = trace.route[index]
@@ -783,19 +787,20 @@ export class AutoroutingDrcEngine {
           diameter,
           holeDiameter,
           layers,
-          primitiveId: this.queryResultBudget
-            ? this.getPrimitiveId([
-                "via",
-                viaId,
-                trace.pcb_trace_id,
-                netId,
-                routePoint.x,
-                routePoint.y,
-                diameter,
-                holeDiameter,
-                layers,
-              ])
-            : undefined,
+          primitiveId:
+            this.queryResultBudget && cachePrimitives
+              ? this.getPrimitiveId([
+                  "via",
+                  viaId,
+                  trace.pcb_trace_id,
+                  netId,
+                  routePoint.x,
+                  routePoint.y,
+                  diameter,
+                  holeDiameter,
+                  layers,
+                ])
+              : undefined,
         })
       }
     }
@@ -1256,6 +1261,48 @@ export class AutoroutingDrcEngine {
 
   evaluate(traces: SimplifiedPcbTraces): AutoroutingDrcResult {
     return this.evaluateInternal(traces, true)
+  }
+
+  /** Static-contact rejection without rebuilding the whole-board copper index.
+   * Preserve the statistics from the caller's last complete DRC evaluation. */
+  getObstacleContactErrors(
+    traces: SimplifiedPcbTraces,
+    traceIds?: ReadonlySet<string>,
+  ): AutoroutingDrcError[] {
+    const previousStats = this.lastRunStats
+    this.lastRunStats = { ...previousStats }
+    try {
+      const { segments, vias } = this.collectDynamicGeometry(traces, false)
+      const errors: AutoroutingDrcError[] = []
+      for (const segment of segments) {
+        if (traceIds && !traceIds.has(segment.traceId)) continue
+        const obstacles = this.obstacleIndexesByLayer
+          .get(segment.layer)
+          ?.query(getSegmentBounds(segment))
+        for (const obstacle of obstacles ?? []) {
+          const error = this.checkTraceObstacle(segment, obstacle)
+          if (error) errors.push(error)
+        }
+      }
+      for (const via of vias) {
+        if (traceIds && !traceIds.has(via.traceId)) continue
+        const checked = new Set<StaticObstacle>()
+        for (const layer of via.layers) {
+          const obstacles = this.obstacleIndexesByLayer
+            .get(layer)
+            ?.query(getViaBounds(via))
+          for (const obstacle of obstacles ?? []) {
+            if (checked.has(obstacle)) continue
+            checked.add(obstacle)
+            const error = this.checkViaObstacle(via, obstacle)
+            if (error) errors.push(error)
+          }
+        }
+      }
+      return errors
+    } finally {
+      this.lastRunStats = previousStats
+    }
   }
 
   /**

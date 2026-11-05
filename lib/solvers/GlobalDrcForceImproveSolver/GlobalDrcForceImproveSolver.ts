@@ -45,6 +45,7 @@ import {
   getTraceRoutePairForError,
   getViaDrcIssueCount,
   hasNewTraceObstacleOverlaps,
+  hasNewRouteObstacleOverlaps,
   isBetterDrcSnapshot,
   isDrcSnapshotCountBetter,
   isTraceObstacleDrcError,
@@ -491,6 +492,16 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       inputSnapshot,
       guard: this.traceContactGuard!,
       getSnapshot: (candidate) => this.getSnapshot(candidate),
+      hasNewObstacleOverlaps:
+        this.autoroutingDrcEngine && !this.drcEvaluator
+          ? (candidate) =>
+              hasNewRouteObstacleOverlaps({
+                srj: this.srj,
+                ...candidate,
+                inputSnapshot,
+                engine: this.autoroutingDrcEngine!,
+              })
+          : undefined,
       connMap: this.connMap,
       viaHoleDiameter: this.viaHoleDiameter,
     })

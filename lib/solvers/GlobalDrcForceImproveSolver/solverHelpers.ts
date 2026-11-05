@@ -3612,6 +3612,54 @@ export const hasNewTraceObstacleOverlaps = (
   return [...candidateOverlaps].some((id) => !bestOverlaps.has(id))
 }
 
+/** Cheap native-engine rejection; accepted proposals still receive full DRC. */
+export const hasNewRouteObstacleOverlaps = ({
+  srj,
+  routes,
+  referenceRoutes,
+  referenceSnapshot,
+  inputSnapshot,
+  engine,
+}: {
+  srj: SimpleRouteJson
+  routes: HighDensityRoute[]
+  referenceRoutes: HighDensityRoute[]
+  referenceSnapshot: DrcSnapshot
+  inputSnapshot: DrcSnapshot
+  engine: AutoroutingDrcEngine
+}): boolean => {
+  const relevantNames =
+    getNewTraceObstacleOverlapConnectionNames(
+      referenceSnapshot,
+      inputSnapshot,
+    ) ?? new Set<string>()
+  // Local proposals retain unchanged route objects. A missed name only skips
+  // this rejection shortcut: every remaining proposal still receives full DRC.
+  for (let index = 0; index < routes.length; index++) {
+    if (routes[index] !== referenceRoutes[index])
+      relevantNames.add(routes[index]!.connectionName)
+  }
+  const { traces, traceRouteIndexById, traceConnectionNameById } =
+    createSimplifiedTraces(srj, routes)
+  const traceIds = new Set<string>()
+  for (const [id, name] of traceConnectionNameById) {
+    if (relevantNames.has(name)) traceIds.add(id)
+  }
+  // Keep the full geometry for via ownership/deduplication, but query obstacles
+  // only for relevant traces. Unchanged copper does not need repeated checks.
+  const errors = engine.getObstacleContactErrors(traces, traceIds)
+  return hasNewTraceObstacleOverlaps(
+    {
+      errors,
+      count: errors.length,
+      issueScore: getDrcIssueScore(errors),
+      traceRouteIndexById,
+      traceConnectionNameById,
+    },
+    inputSnapshot,
+  )
+}
+
 export const isDrcSnapshotCountBetter = (
   candidateSnapshot: DrcSnapshot,
   bestSnapshot: DrcSnapshot,
