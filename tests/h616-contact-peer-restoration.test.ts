@@ -11,7 +11,10 @@ import { VisualizedGlobalDrcForceImproveSolver } from "../fixture-support/Visual
 import { AutoroutingDrcEngine, TraceContactRepairSolver } from "../lib"
 import type { TraceContactRepairSolverParams } from "../lib/solvers/GlobalDrcForceImproveSolver/TraceContactRepairSolver"
 import { TraceContactGuard } from "../lib/solvers/GlobalDrcForceImproveSolver/TraceContactGuard"
-import { getDrcSnapshot } from "../lib/solvers/GlobalDrcForceImproveSolver/solverHelpers"
+import {
+  getDrcSnapshot,
+  hasNewTraceObstacleOverlaps,
+} from "../lib/solvers/GlobalDrcForceImproveSolver/solverHelpers"
 
 test("retains safe peer repairs on the H616 DDR board", async () => {
   const fixture = JSON.parse(
@@ -55,6 +58,23 @@ test("retains safe peer repairs on the H616 DDR board", async () => {
   expect(solver.failed).toBe(false)
   expect(inputGuard.getNewContactPairs(output)).toEqual([])
   expect(output).toHaveLength(fixture.inputHdRoutes.length)
+  expect(
+    output.find((route) => route.connectionName === "source_net_173"),
+  ).toEqual(
+    fixture.hdRoutes.find((route) => route.connectionName === "source_net_173"),
+  )
+  expect(
+    hasNewTraceObstacleOverlaps(
+      snapshot,
+      getDrcSnapshot(
+        fixture.srj,
+        fixture.inputHdRoutes,
+        undefined,
+        connMap,
+        engine,
+      ),
+    ),
+  ).toBe(false)
   for (const route of output) {
     const input = fixture.inputHdRoutes.find(
       (input) => input.connectionName === route.connectionName,

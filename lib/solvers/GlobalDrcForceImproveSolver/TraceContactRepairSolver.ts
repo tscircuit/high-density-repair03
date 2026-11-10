@@ -17,6 +17,13 @@ export type TraceContactRepairSolverParams =
   }
 type Candidate = { routes: HighDensityRoute[]; snapshot: DrcSnapshot }
 type Phase = "start" | "contacts" | "refine" | "vias" | "simplify" | "done"
+
+// Bound geometric screening and expensive DRC evaluations across all phases.
+const MAX_GEOMETRY_CHECKS = 4096
+const MAX_CANDIDATE_CHECKS = 768
+// Contact search leaves part of the DRC budget for later refinement.
+const MAX_CONTACT_CANDIDATE_CHECKS = 256
+
 const countVias = (routes: HighDensityRoute[]): number =>
   routes.reduce((count, route) => count + route.vias.length, 0)
 const isBetter = (candidate: Candidate, previous: Candidate): boolean =>
@@ -101,8 +108,8 @@ export class TraceContactRepairSolver extends BaseSolver {
     }
     if (
       this.contactRounds++ >= 8 ||
-      this.geometryChecks >= 4096 ||
-      this.candidateChecks >= 256
+      this.geometryChecks >= MAX_GEOMETRY_CHECKS ||
+      this.candidateChecks >= MAX_CONTACT_CANDIDATE_CHECKS
     ) {
       this.finish()
       return
@@ -181,7 +188,7 @@ export class TraceContactRepairSolver extends BaseSolver {
       // Continue improving both within the shared candidate/geometry budgets.
       this.current!.snapshot.count === 0 ||
       this.viaRounds++ >= 8 ||
-      this.candidateChecks >= 768
+      this.candidateChecks >= MAX_CANDIDATE_CHECKS
     ) {
       this.finish()
       return
@@ -205,6 +212,10 @@ export class TraceContactRepairSolver extends BaseSolver {
 
   private finish(): void {
     let candidate = this.current
+    const repairedCandidate = candidate
+    const restoredConnectionNames = new Set<
+      HighDensityRoute["connectionName"]
+    >()
     // Whole-connection restoration uses the input baseline. The local guard
     // also forbids cleared input contacts, which can reject the checkpoint.
     const publicationGuard = this.inputContactGuard
@@ -224,10 +235,43 @@ export class TraceContactRepairSolver extends BaseSolver {
         peerConnectionNames,
       })
       if (!restored) break
+      for (const name of restored.restoredConnectionNames)
+        restoredConnectionNames.add(name)
       this.candidateChecks++
       candidate = {
         routes: restored.routes,
         snapshot: this.snapshot(restored.routes),
+      }
+    }
+    // Restoring one side can make its peer's repaired route safe again.
+    if (candidate && repairedCandidate) {
+      for (const name of restoredConnectionNames) {
+        if (
+          this.candidateChecks >= MAX_CANDIDATE_CHECKS ||
+          this.geometryChecks >= MAX_GEOMETRY_CHECKS
+        )
+          break
+        const retained = restoreOverlappingConnections({
+          routes: candidate.routes,
+          snapshot: candidate.snapshot,
+          inputSnapshot: this.inputSnapshot!,
+          checkpointRoutes: repairedCandidate.routes,
+          peerConnectionNames: new Set([name]),
+        })
+        if (!retained) continue
+        this.geometryChecks++
+        if (publicationGuard.getNewContactPairs(retained.routes).length > 0)
+          continue
+        this.candidateChecks++
+        const proposal = {
+          routes: retained.routes,
+          snapshot: this.snapshot(retained.routes),
+        }
+        if (
+          isBetter(proposal, candidate) &&
+          !hasNewTraceObstacleOverlaps(proposal.snapshot, this.inputSnapshot!)
+        )
+          candidate = proposal
       }
     }
     const checkpoint = this.refinementCheckpoint
@@ -343,8 +387,8 @@ export class TraceContactRepairSolver extends BaseSolver {
       const proposal = this.proposals!.next()
       if (
         proposal.done ||
-        this.geometryChecks >= 4096 ||
-        this.candidateChecks >= 768
+        this.geometryChecks >= MAX_GEOMETRY_CHECKS ||
+        this.candidateChecks >= MAX_CANDIDATE_CHECKS
       ) {
         this.finish()
         return
@@ -368,16 +412,16 @@ export class TraceContactRepairSolver extends BaseSolver {
     const proposal = this.proposals!.next()
     if (
       proposal.done ||
-      this.geometryChecks >= 4096 ||
-      this.candidateChecks >= 768
+      this.geometryChecks >= MAX_GEOMETRY_CHECKS ||
+      this.candidateChecks >= MAX_CANDIDATE_CHECKS
     ) {
       if (this.phase === "contacts") {
         if (!this.best) {
           if (
             proposal.done &&
             !this.expandedBridgeSearch &&
-            this.geometryChecks < 4096 &&
-            this.candidateChecks < 256
+            this.geometryChecks < MAX_GEOMETRY_CHECKS &&
+            this.candidateChecks < MAX_CONTACT_CANDIDATE_CHECKS
           ) {
             // Widen placement only when the standard bridge samples miss a
             // legal corridor. Both searches share the same work budgets.
