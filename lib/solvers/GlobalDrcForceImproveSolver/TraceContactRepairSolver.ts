@@ -28,6 +28,7 @@ const isBetter = (candidate: Candidate, previous: Candidate): boolean =>
 export class TraceContactRepairSolver extends BaseSolver {
   readonly params: TraceContactRepairSolverParams
   readonly guard: TraceContactGuard
+  private readonly inputContactGuard: TraceContactGuard
   private phase: Phase = "start"
   private inputSnapshot?: DrcSnapshot
   private targetDrcCount = Infinity
@@ -57,6 +58,11 @@ export class TraceContactRepairSolver extends BaseSolver {
     super()
     this.params = params
     this.guard = new TraceContactGuard({
+      srj: params.srj,
+      inputRoutes: params.inputHdRoutes,
+      connMap: params.connMap,
+    })
+    this.inputContactGuard = new TraceContactGuard({
       srj: params.srj,
       inputRoutes: params.inputHdRoutes,
       connMap: params.connMap,
@@ -199,11 +205,14 @@ export class TraceContactRepairSolver extends BaseSolver {
 
   private finish(): void {
     let candidate = this.current
+    // Whole-connection restoration uses the input baseline. The local guard
+    // also forbids cleared input contacts, which can reject the checkpoint.
+    const publicationGuard = this.inputContactGuard
     // A deferred via contact may have no legal local proposal. Restore its
     // whole connections, then validate the mixed board before publishing it.
     // Preserve independent repairs rather than reverting every connection.
     for (let attempt = 0; candidate && attempt < 2; attempt++) {
-      const peerConnectionNames = this.guard.getNewContactConnectionNames(
+      const peerConnectionNames = publicationGuard.getNewContactConnectionNames(
         candidate.routes,
       )
       if (peerConnectionNames.size === 0) break
@@ -235,7 +244,7 @@ export class TraceContactRepairSolver extends BaseSolver {
     if (
       candidate &&
       candidate.snapshot.count <= this.inputSnapshot!.count &&
-      this.guard.getNewContactPairs(candidate.routes).length === 0 &&
+      publicationGuard.getNewContactPairs(candidate.routes).length === 0 &&
       !hasNewTraceObstacleOverlaps(candidate.snapshot, this.inputSnapshot!)
     ) {
       if (
