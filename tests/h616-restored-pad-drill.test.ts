@@ -64,6 +64,7 @@ test("checks pad drills after restoring H616 DDR connections", async (): Promise
   const drills = snapshot.errors.filter(
     (error) => error.type === "pcb_placement_error",
   )
+  expect(drills).toEqual([])
   const board = new VisualizedGlobalDrcForceImproveSolver({
     srj: fixture.srj,
     hdRoutes: output,

@@ -3433,7 +3433,9 @@ export const getViaDrcIssueCount = (
       isViaDrcError(error) && (includeViaPadErrors || !isViaPadDrcError(error)),
   ).length
 
-const isForbiddenPadDrillError = (error: Record<string, unknown>): boolean => {
+export const isForbiddenPadDrillError = (
+  error: Record<string, unknown>,
+): boolean => {
   return (
     getDrcErrorType(error) === "pcb_placement_error" &&
     Array.isArray(error.pcb_via_ids) &&
