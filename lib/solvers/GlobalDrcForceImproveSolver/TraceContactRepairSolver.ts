@@ -6,7 +6,15 @@ import { getPeerTraceRepairCandidates } from "./getPeerTraceRepairCandidates"
 import { getPeerTraceViaCandidates } from "./getPeerTraceViaCandidates"
 import { getDrcInvolvedRouteIndexes } from "./getDrcInvolvedRouteIndexes"
 import { getTraceViaSimplificationCandidates } from "./getTraceViaSimplificationCandidates"
-import { getDrcSnapshot, hasNewTraceObstacleOverlaps } from "./solverHelpers"
+import {
+  applyDrcErrorForces,
+  cloneRoutesForIndexes,
+  getDrcSnapshot,
+  getTraceRouteIndexForError,
+  hasNewTraceObstacleOverlaps,
+  isForbiddenPadDrillError,
+  materializeRoutesForIndexes,
+} from "./solverHelpers"
 import { restoreOverlappingConnections } from "./restoreOverlappingConnections"
 import type { DrcSnapshot, GlobalDrcBranchPortfolioSolverParams } from "./types"
 
@@ -210,6 +218,56 @@ export class TraceContactRepairSolver extends BaseSolver {
     this.phase = "vias"
   }
 
+  private repairRestoredPadDrills(candidate: Candidate): Candidate {
+    const guard = new TraceContactGuard({
+      srj: this.params.srj,
+      inputRoutes: candidate.routes,
+      connMap: this.params.connMap,
+    })
+    // Whole-connection rollback can restore a drill that earlier repair cleared.
+    // Move its complete stack in the final mixed board, then validate every peer.
+    for (const error of candidate.snapshot.errors.filter(
+      isForbiddenPadDrillError,
+    )) {
+      if (
+        this.candidateChecks >= MAX_CANDIDATE_CHECKS ||
+        this.geometryChecks >= MAX_GEOMETRY_CHECKS
+      )
+        break
+      const routeIndex = getTraceRouteIndexForError(
+        error,
+        candidate.snapshot.traceRouteIndexById,
+      )
+      if (routeIndex === undefined) continue
+      const routes = cloneRoutesForIndexes(candidate.routes, [routeIndex])
+      if (
+        !applyDrcErrorForces(
+          this.params.srj,
+          routes,
+          [error],
+          candidate.snapshot.traceRouteIndexById,
+          1,
+          this.params.connMap,
+        )
+      )
+        continue
+      const repairedRoutes = materializeRoutesForIndexes(routes, [routeIndex])
+      this.geometryChecks++
+      if (guard.getNewContactPairs(repairedRoutes).length > 0) continue
+      this.candidateChecks++
+      const proposal = {
+        routes: repairedRoutes,
+        snapshot: this.snapshot(repairedRoutes),
+      }
+      if (
+        isBetter(proposal, candidate) &&
+        !hasNewTraceObstacleOverlaps(proposal.snapshot, this.inputSnapshot!)
+      )
+        candidate = proposal
+    }
+    return candidate
+  }
+
   private finish(): void {
     let candidate = this.current
     const repairedCandidate = candidate
@@ -285,6 +343,8 @@ export class TraceContactRepairSolver extends BaseSolver {
         hasNewTraceObstacleOverlaps(candidate.snapshot, this.inputSnapshot!))
     )
       candidate = checkpoint
+    if (candidate && restoredConnectionNames.size > 0)
+      candidate = this.repairRestoredPadDrills(candidate)
     if (
       candidate &&
       candidate.snapshot.count <= this.inputSnapshot!.count &&
