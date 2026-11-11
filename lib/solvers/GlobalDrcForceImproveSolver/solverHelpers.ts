@@ -5102,6 +5102,7 @@ export const isBetterDrcSnapshot = (
     (candidateIssueCount === bestIssueCount &&
       candidateIssueScore < bestIssueScore) ||
     (candidateIssueCount === bestIssueCount &&
+      candidateIssueScore === bestIssueScore &&
       candidateViaIssueCount < bestViaIssueCount)
   )
 }
