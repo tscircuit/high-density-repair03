@@ -80,6 +80,7 @@ test("reproduces the ButterStick clearance ranking decision", async (): Promise<
     parent,
   )
   const selected = acceptCandidate ? candidate : parent
+  expect(getRepairDrcIssueScore(selected)).toBeLessThanOrEqual(parentScore)
   const view = new VisualizedGlobalDrcForceImproveSolver({
     srj,
     hdRoutes: acceptCandidate ? candidateRoutes : hdRoutes,
