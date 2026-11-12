@@ -113,18 +113,14 @@ export const getDrcErrors = (
       (error.pcb_error_id.startsWith("same_net_vias_close_") ||
         error.pcb_error_id.startsWith("different_net_vias_close_"))
     ) {
-      const viaIds = error.pcb_error_id
+      const suffix = error.pcb_error_id
         .replace("same_net_vias_close_", "")
         .replace("different_net_vias_close_", "")
-        .split("_")
-        .filter(Boolean)
 
-      if (viaIds.length === 2) {
-        const viaAId = viaIds[0]
-        const viaBId = viaIds[1]
-        if (!viaAId || !viaBId) return error
-        const viaA = viasById.get(viaAId)
-        const viaB = viasById.get(viaBId)
+      for (let i = 1; i < suffix.length - 1; i += 1) {
+        if (suffix[i] !== "_") continue
+        const viaA = viasById.get(suffix.slice(0, i))
+        const viaB = viasById.get(suffix.slice(i + 1))
 
         if (viaA && viaB) {
           return {
