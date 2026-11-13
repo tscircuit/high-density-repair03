@@ -27,7 +27,7 @@ export type TraceContactRepairSolverParams =
 type Candidate = { routes: HighDensityRoute[]; snapshot: DrcSnapshot }
 type Phase = "start" | "contacts" | "refine" | "vias" | "simplify" | "done"
 
-// Bound geometric screening and expensive DRC evaluations across all phases.
+// Bound geometric search and expensive DRC evaluations.
 const MAX_GEOMETRY_CHECKS = 4096
 const MAX_CANDIDATE_CHECKS = 768
 // Contact search leaves part of the DRC budget for later refinement.
@@ -219,21 +219,41 @@ export class TraceContactRepairSolver extends BaseSolver {
     this.phase = "vias"
   }
 
-  private repairRestoredVias(candidate: Candidate): Candidate {
+  private repairRestoredVias(
+    candidate: Candidate,
+    restoredConnectionNames: ReadonlySet<HighDensityRoute["connectionName"]>,
+  ): Candidate {
     const guard = new TraceContactGuard({
       srj: this.params.srj,
       inputRoutes: candidate.routes,
       connMap: this.params.connMap,
     })
     // Restoring one connection can invalidate another route's via clearance.
-    // Recheck affected copper in the mixed board before publishing.
-    const viaErrors = candidate.snapshot.errors.filter(isViaDrcError)
+    // Recheck the boundary between restored and retained copper.
+    const viaErrors = candidate.snapshot.errors.filter((error): boolean => {
+      if (isForbiddenPadDrillError(error)) return true
+      if (!isViaDrcError(error) || !Array.isArray(error.pcb_trace_ids))
+        return false
+      let hasRestoredOwner = false
+      let hasRetainedOwner = false
+      for (const id of error.pcb_trace_ids) {
+        const owner = candidate.snapshot.traceConnectionNameById?.get(id)
+        if (owner === undefined) continue
+        if (restoredConnectionNames.has(owner)) hasRestoredOwner = true
+        else hasRetainedOwner = true
+      }
+      return hasRestoredOwner && hasRetainedOwner
+    })
     viaErrors.sort(
       (left, right): number =>
         Number(isForbiddenPadDrillError(right)) -
         Number(isForbiddenPadDrillError(left)),
     )
-    for (const error of viaErrors) {
+    const finalizationBudget = Math.max(
+      0,
+      MAX_CANDIDATE_CHECKS - this.candidateChecks,
+    )
+    for (const error of viaErrors.slice(0, finalizationBudget)) {
       // Search may have used its geometry budget; final validation still shares
       // the DRC budget and makes at most one proposal per reported via issue.
       if (this.candidateChecks >= MAX_CANDIDATE_CHECKS) break
@@ -358,7 +378,7 @@ export class TraceContactRepairSolver extends BaseSolver {
     )
       candidate = checkpoint
     if (candidate && restoredConnectionNames.size > 0)
-      candidate = this.repairRestoredVias(candidate)
+      candidate = this.repairRestoredVias(candidate, restoredConnectionNames)
     if (
       candidate &&
       candidate.snapshot.count <= this.inputSnapshot!.count &&
