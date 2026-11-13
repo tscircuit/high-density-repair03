@@ -4,15 +4,16 @@ import { GlobalDrcBranchPortfolioSolver } from "./GlobalDrcBranchPortfolioSolver
 import { TraceContactGuard } from "./TraceContactGuard"
 import { getPeerTraceRepairCandidates } from "./getPeerTraceRepairCandidates"
 import { getPeerTraceViaCandidates } from "./getPeerTraceViaCandidates"
+import { haveSameForceCandidateGeometry } from "./haveSameForceCandidateGeometry"
 import { getDrcInvolvedRouteIndexes } from "./getDrcInvolvedRouteIndexes"
 import { getTraceViaSimplificationCandidates } from "./getTraceViaSimplificationCandidates"
 import {
   applyDrcErrorForces,
-  cloneRoutesForIndexes,
+  cloneRoutes,
   getDrcSnapshot,
-  getTraceRouteIndexForError,
   hasNewTraceObstacleOverlaps,
   isForbiddenPadDrillError,
+  isViaDrcError,
   materializeRoutesForIndexes,
 } from "./solverHelpers"
 import { restoreOverlappingConnections } from "./restoreOverlappingConnections"
@@ -218,28 +219,27 @@ export class TraceContactRepairSolver extends BaseSolver {
     this.phase = "vias"
   }
 
-  private repairRestoredPadDrills(candidate: Candidate): Candidate {
+  private repairRestoredVias(candidate: Candidate): Candidate {
     const guard = new TraceContactGuard({
       srj: this.params.srj,
       inputRoutes: candidate.routes,
       connMap: this.params.connMap,
     })
-    // Whole-connection rollback can restore a drill that earlier repair cleared.
-    // Move its complete stack in the final mixed board, then validate every peer.
-    for (const error of candidate.snapshot.errors.filter(
-      isForbiddenPadDrillError,
-    )) {
-      if (
-        this.candidateChecks >= MAX_CANDIDATE_CHECKS ||
-        this.geometryChecks >= MAX_GEOMETRY_CHECKS
-      )
-        break
-      const routeIndex = getTraceRouteIndexForError(
-        error,
-        candidate.snapshot.traceRouteIndexById,
-      )
-      if (routeIndex === undefined) continue
-      const routes = cloneRoutesForIndexes(candidate.routes, [routeIndex])
+    // Restoring one connection can invalidate another route's via clearance.
+    // Recheck affected copper in the mixed board before publishing.
+    const viaErrors = candidate.snapshot.errors.filter(isViaDrcError)
+    viaErrors.sort(
+      (left, right): number =>
+        Number(isForbiddenPadDrillError(right)) -
+        Number(isForbiddenPadDrillError(left)),
+    )
+    for (const error of viaErrors) {
+      // Search may have used its geometry budget; final validation still shares
+      // the DRC budget and makes at most one proposal per reported via issue.
+      if (this.candidateChecks >= MAX_CANDIDATE_CHECKS) break
+      // Forces can move nearby copper outside the error's named owners.
+      // Rejected proposals must not mutate the candidate we retain.
+      const routes = cloneRoutes(candidate.routes)
       if (
         !applyDrcErrorForces(
           this.params.srj,
@@ -251,7 +251,20 @@ export class TraceContactRepairSolver extends BaseSolver {
         )
       )
         continue
-      const repairedRoutes = materializeRoutesForIndexes(routes, [routeIndex])
+      const changedRouteIndexes: number[] = []
+      for (let index = 0; index < routes.length; index++) {
+        if (
+          !haveSameForceCandidateGeometry(
+            [routes[index]!],
+            [candidate.routes[index]!],
+          )
+        )
+          changedRouteIndexes.push(index)
+      }
+      const repairedRoutes = materializeRoutesForIndexes(
+        routes,
+        changedRouteIndexes,
+      )
       this.geometryChecks++
       if (guard.getNewContactPairs(repairedRoutes).length > 0) continue
       this.candidateChecks++
@@ -261,7 +274,8 @@ export class TraceContactRepairSolver extends BaseSolver {
       }
       if (
         isBetter(proposal, candidate) &&
-        !hasNewTraceObstacleOverlaps(proposal.snapshot, this.inputSnapshot!)
+        !hasNewTraceObstacleOverlaps(proposal.snapshot, this.inputSnapshot!) &&
+        !hasNewTraceObstacleOverlaps(proposal.snapshot, candidate.snapshot)
       )
         candidate = proposal
     }
@@ -344,7 +358,7 @@ export class TraceContactRepairSolver extends BaseSolver {
     )
       candidate = checkpoint
     if (candidate && restoredConnectionNames.size > 0)
-      candidate = this.repairRestoredPadDrills(candidate)
+      candidate = this.repairRestoredVias(candidate)
     if (
       candidate &&
       candidate.snapshot.count <= this.inputSnapshot!.count &&
