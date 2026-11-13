@@ -3420,7 +3420,7 @@ export const getTargetedClearanceSweepErrors = (
     .slice(0, maxErrors)
 }
 
-const isViaDrcError = (error: Record<string, unknown>) =>
+export const isViaDrcError = (error: Record<string, unknown>): boolean =>
   getDrcErrorType(error) === "pcb_via_clearance_error" ||
   Array.isArray(error.pcb_via_ids)
 

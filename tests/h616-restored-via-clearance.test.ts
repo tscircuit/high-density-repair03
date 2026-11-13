@@ -60,6 +60,8 @@ test("preserves via clearance when restoring H616 DDR contacts", async (): Promi
       owners.includes("source_net_172") && owners.includes("source_net_13_mst2")
     )
   })
+  expect(clearanceErrors).toEqual([])
+  expect(snapshot.count).toBeLessThan(26)
   const board = new VisualizedGlobalDrcForceImproveSolver({
     srj: fixture.srj,
     hdRoutes: output,
