@@ -1,0 +1,37 @@
+{
+  "source": "https://tscircuit.com/gokul/fire-stick",
+  "sourceDescription": "Author-owned board routing checkpoint, captured before joint DRC exact repair; contributed under this repository MIT license.",
+  "capturePackage": "@tscircuit/capacity-autorouter@0.0.1129",
+  "captureBoundary": "Pipeline9JointDrcRepairSolver.exactRepairSolver.params",
+  "captureSha256": "de9194f612fbe475fdd024fe9a484e5b4cc734669db22352b212d1112824105e",
+  "fixtureSha256": "6263c80ed091318c17c16bd58df28b8ded4cdc2142ef227a35ef8a00b8e93cfa",
+  "adaptations": [
+    "Preserve all captured obstacle geometry, routes, net aliases, and solver budgets.",
+    "Assign pcb_smtpad_fixed_<original obstacle index> aliases to fixed-copper rectangles that lack pad/port IDs, so the native repair DRC includes them without the autorouter-specific fixed-copper callback. These rectangles represent fixed copper, not actual component pads.",
+    "Omit nonserializable autorouter DRC callbacks; use the native DRC engine. Enable the standalone contact guard (deferTraceContactGuard=false)."
+  ],
+  "physicalPad": {
+    "obstacleId": "pcb_smtpad_383",
+    "center": {
+      "x": -19.49,
+      "y": 0
+    },
+    "width": 0.54,
+    "height": 0.64
+  },
+  "routingObstacle": {
+    "width": 0.66,
+    "height": 0.76
+  },
+  "reproducedOn": "742b7cfd9065229a10fff5332abc95e26a0401d0",
+  "observed": "Input clears actual pad but intersects expanded obstacle; published repair crosses actual pad. This is worsening of an existing obstacle-pair violation, not a new obstacle pair.",
+  "displayCopper": {
+    "file": "existing-pad-overlap-display-copper.json.gz",
+    "sha256": "29fbcc0fdb7029b42913ebc976a0b3f7fe272a115bc5564b64ef1b9da706c76c",
+    "sourceCheckpoint": "outputs/youtube-stick/review/automation-nov15/local-feeds.circuit.json.gz",
+    "sourceCheckpointSha256": "0e42efdbe015d5c96c36bc16be1ae08aa4c277e6e41707bde9eabb4d3431e31c",
+    "savedTraces": "outputs/youtube-stick/review/automation-nov19/before-routing/remaining-board-traces.json",
+    "savedTracesSha256": "4029cc9ba2906f5416bef1fee70937549a5c7ddc6aa4db578a00d6dd429deadf",
+    "verification": "All 4002 fixed-copper obstacle centers match same-ID saved trace segments or vias on the relevant layers within 0.001 mm. Display segments are clipped to captured SRJ bounds. Display only; solver input is unchanged."
+  }
+}
