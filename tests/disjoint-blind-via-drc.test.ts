@@ -25,6 +25,6 @@ beforeAll((): void => {
   expect(through.errors[0]!.actual_clearance).toBeCloseTo(-0.1, 9)
 })
 
-test.failing("disjoint blind vias do not produce a via-pair DRC", (): void => {
+test("disjoint blind vias do not produce a via-pair DRC", (): void => {
   expect(result.errors).toEqual([])
 })
