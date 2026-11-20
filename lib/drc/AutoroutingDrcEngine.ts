@@ -32,9 +32,9 @@ type Bounds = {
   maxY: number
 }
 
-type WireRoutePoint = Extract<
+type WireOrViaRoutePoint = Extract<
   SimplifiedPcbTrace["route"][number],
-  { route_type: "wire" }
+  { route_type: "wire" | "via" }
 >
 
 type TraceSegment = {
@@ -733,10 +733,22 @@ export class AutoroutingDrcEngine {
       ) {
         const start = trace.route[index]
         const end = trace.route[index + 1]
+        const segmentLayer =
+          start?.route_type === "wire" &&
+          end?.route_type === "wire" &&
+          start.layer === end.layer
+            ? start.layer
+            : start?.route_type === "via" &&
+                end?.route_type === "wire" &&
+                start.to_layer === end.layer
+              ? end.layer
+              : undefined
         if (
-          start?.route_type !== "wire" ||
-          end?.route_type !== "wire" ||
-          start.layer !== end.layer
+          !start ||
+          !end ||
+          (start.route_type !== "wire" && start.route_type !== "via") ||
+          end.route_type !== "wire" ||
+          !segmentLayer
         ) {
           continue
         }
@@ -747,6 +759,7 @@ export class AutoroutingDrcEngine {
           continue
         }
 
+        const segmentWidth = getWireWidth(start, end)
         const previous = cachePrimitives
           ? this.reusableSegments[segments.length]
           : undefined
@@ -758,8 +771,8 @@ export class AutoroutingDrcEngine {
           Object.is(previous.start.y, start.y) &&
           Object.is(previous.end.x, end.x) &&
           Object.is(previous.end.y, end.y) &&
-          Object.is(previous.width, getWireWidth(start, end)) &&
-          previous.layer === start.layer &&
+          Object.is(previous.width, segmentWidth) &&
+          previous.layer === segmentLayer &&
           previous.pcbPortIds.length === pcbPortIds.length &&
           previous.pcbPortIds.every((id, index) => id === pcbPortIds[index])
         ) {
@@ -774,8 +787,8 @@ export class AutoroutingDrcEngine {
           netId,
           start: { x: start.x, y: start.y },
           end: { x: end.x, y: end.y },
-          width: getWireWidth(start, end),
-          layer: start.layer,
+          width: segmentWidth,
+          layer: segmentLayer,
           pcbPortIds,
           primitiveId:
             traceOwnershipKey === undefined
@@ -787,8 +800,8 @@ export class AutoroutingDrcEngine {
                   start.y,
                   end.x,
                   end.y,
-                  getWireWidth(start, end),
-                  start.layer,
+                  segmentWidth,
+                  segmentLayer,
                 ]),
         })
       }
@@ -1525,5 +1538,8 @@ export class AutoroutingDrcEngine {
   }
 }
 
-const getWireWidth = (start: WireRoutePoint, end: WireRoutePoint): number =>
-  start.width ?? end.width ?? 0.1
+const getWireWidth = (
+  start: WireOrViaRoutePoint,
+  end: Extract<SimplifiedPcbTrace["route"][number], { route_type: "wire" }>,
+): number =>
+  (start.route_type === "wire" ? start.width : undefined) ?? end.width ?? 0.1

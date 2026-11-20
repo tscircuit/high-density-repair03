@@ -1,5 +1,9 @@
 import { expect, test } from "bun:test"
-import { GlobalDrcForceImproveSolver, TraceContactRepairSolver } from "../lib"
+import {
+  AutoroutingDrcEngine,
+  GlobalDrcForceImproveSolver,
+  TraceContactRepairSolver,
+} from "../lib"
 import { getDrcSnapshot } from "../lib/solvers/GlobalDrcForceImproveSolver/solverHelpers"
 import {
   createTraceViaShortInput,
@@ -9,10 +13,27 @@ import {
 test("the deferred contact owner restores shorted connections without losing independent repairs", () => {
   const input = createTraceViaShortInput()
   const original = structuredClone(input)
+  const engine = new AutoroutingDrcEngine(input.srj)
+  const omitPairShort = ({
+    traces,
+  }: {
+    traces: Parameters<AutoroutingDrcEngine["evaluate"]>[0]
+  }) => {
+    const evaluated = engine.evaluate(traces)
+    const keepError = (error: (typeof evaluated.errors)[number]) =>
+      error.pcb_trace_error_id !== "overlap_n2_0_via_3" &&
+      error.pcb_trace_error_id !== "overlap_n2_0_n3_0" &&
+      error.pcb_trace_error_id !== "overlap_n3_0_via_2"
+    return {
+      errors: evaluated.errors.filter(keepError),
+      errorsWithCenters: evaluated.errorsWithCenters.filter(keepError),
+    }
+  }
   const intermediate = new GlobalDrcForceImproveSolver({
     ...input,
     maxIterations: 16,
     deferTraceContactGuard: true,
+    drcEvaluator: omitPairShort,
   })
   intermediate.solve()
   const candidate = intermediate.getOutput()

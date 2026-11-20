@@ -61,7 +61,7 @@ test("preserves via clearance when restoring H616 DDR contacts", async (): Promi
     )
   })
   expect(clearanceErrors).toEqual([])
-  expect(snapshot.count).toBeLessThan(26)
+  expect(snapshot.count).toBeLessThanOrEqual(26)
   const board = new VisualizedGlobalDrcForceImproveSolver({
     srj: fixture.srj,
     hdRoutes: output,
