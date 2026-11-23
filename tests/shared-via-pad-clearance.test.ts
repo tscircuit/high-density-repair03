@@ -5,7 +5,7 @@ import { getSvgFromGraphicsObject } from "graphics-debug"
 import { VisualizedGlobalDrcForceImproveSolver } from "../fixture-support/VisualizedGlobalDrcForceImproveSolver"
 import type { HighDensityRoute, SimpleRouteJson } from "../lib"
 
-test("reproduces a shared ground via left beside a foreign VCAP pad", async (): Promise<void> => {
+test("repairs a shared ground via beside a foreign VCAP pad", async (): Promise<void> => {
   // C12 geometry translated to the origin from the STM32 LCD support phase.
   const via = { x: -0.775001, y: 0.166451906949 }
   const srj: SimpleRouteJson = {
@@ -84,12 +84,14 @@ test("reproduces a shared ground via left beside a foreign VCAP pad", async (): 
   expect(solver.solved).toBe(true)
   expect(solver.failed).toBe(false)
   expect(solver.stats.initialDrcIssueCount).toBe(1)
-  expect(solver.stats.finalDrcIssueCount).toBe(1)
-  expect(copperGap).toBeCloseTo(0.000001, 9)
+  expect(solver.stats.finalDrcIssueCount).toBe(0)
+  expect(copperGap).toBeGreaterThanOrEqual(srj.minViaEdgeToPadEdgeClearance!)
   expect(output[0]!.vias[0]).toEqual(output[1]!.vias[0])
   for (const [index, route] of output.entries()) {
     expect(route.route[0]).toEqual(routes[index]!.route[0])
     expect(route.route.at(-1)).toEqual(routes[index]!.route.at(-1))
+    expect(route.route[1]).toMatchObject(route.vias[0]!)
+    expect(route.route[2]).toMatchObject(route.vias[0]!)
   }
   const graphics = solver.visualize()
   graphics.texts = [
