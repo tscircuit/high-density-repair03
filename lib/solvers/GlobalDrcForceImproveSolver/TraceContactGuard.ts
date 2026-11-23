@@ -136,6 +136,14 @@ export class TraceContactGuard {
     return this.filterNewContactPairs(this.collectContacts(routes))
   }
 
+  /** Every physical contact, including those the guard's input already had. */
+  getContactPairs(routes: HighDensityRoute[]): Contact[] {
+    const pairs = new Map<ContactKey, Contact>()
+    for (const pair of this.collectContacts(routes).values())
+      pairs.set(JSON.stringify(pair), pair)
+    return [...pairs.values()]
+  }
+
   /** Wire-only prioritization; publication must still check all copper. */
   getNewWireContactPairs(routes: HighDensityRoute[]): Contact[] {
     return this.filterNewContactPairs(this.collectContacts(routes, false))

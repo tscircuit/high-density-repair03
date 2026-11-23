@@ -402,6 +402,14 @@ export class TraceContactRepairSolver extends BaseSolver {
         return
       }
       this.outputHdRoutes = candidate.routes
+    } else if (
+      repairedCandidate &&
+      this.removesMoreContactsThanItAdds(repairedCandidate)
+    ) {
+      // No candidate is free of new contacts, so the alternative is the input
+      // with all of its own shorts. Keep the repair when it is strictly better
+      // on both counts; an input without contacts can never qualify.
+      this.outputHdRoutes = repairedCandidate.routes
     }
     this.stats = {
       traceContactRepairCandidateChecks: this.candidateChecks,
@@ -411,11 +419,24 @@ export class TraceContactRepairSolver extends BaseSolver {
       traceContactRepairSimplificationRounds: this.simplificationRounds,
       traceContactRepairAccepted:
         this.outputHdRoutes !== this.params.inputHdRoutes,
+      traceContactRepairPublishedNewContactPairCount:
+        publicationGuard.getNewContactPairs(this.outputHdRoutes).length,
     }
     this.activeSubSolver = null
     this.phase = "done"
     this.progress = 1
     this.solved = true
+  }
+
+  /** Fewer physical contacts and fewer DRC errors than the input board. */
+  private removesMoreContactsThanItAdds(candidate: Candidate): boolean {
+    const guard = this.inputContactGuard
+    return (
+      candidate.snapshot.count < this.inputSnapshot!.count &&
+      !hasNewTraceObstacleOverlaps(candidate.snapshot, this.inputSnapshot!) &&
+      guard.getContactPairs(candidate.routes).length <
+        guard.getContactPairs(this.params.inputHdRoutes).length
+    )
   }
 
   private startSimplificationRound(): void {
