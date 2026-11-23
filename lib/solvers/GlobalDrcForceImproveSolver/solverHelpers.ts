@@ -3670,6 +3670,18 @@ export const hasNewRouteObstacleOverlaps = ({
   )
 }
 
+export const getSmtPadOverlapDepth = (
+  error: Record<string, unknown>,
+): number => {
+  if (typeof error.pcb_smtpad_id !== "string") return 0
+  const gap = error.worst_actual_clearance ?? error.actual_clearance
+  if (typeof gap !== "number" || !Number.isFinite(gap)) return 0
+  return Math.max(0, -gap)
+}
+
+const countPadShorts = (snapshot: DrcSnapshot): number =>
+  snapshot.errors.filter((error) => getSmtPadOverlapDepth(error) > 0).length
+
 export const isDrcSnapshotCountBetter = (
   candidateSnapshot: DrcSnapshot,
   bestSnapshot: DrcSnapshot,
@@ -5186,6 +5198,9 @@ export const isBetterDrcSnapshot = (
       isForbiddenPadDrillError,
     ).length
     if (candidateDrillCount > bestDrillCount) return false
+    const padShortChange =
+      countPadShorts(candidateSnapshot) - countPadShorts(bestSnapshot)
+    if (padShortChange !== 0) return padShortChange < 0
     const candidateLegacyCount = getNonViaPadDrcIssueCount(candidateSnapshot)
     const bestLegacyCount = getNonViaPadDrcIssueCount(bestSnapshot)
     if (candidateLegacyCount !== bestLegacyCount) {

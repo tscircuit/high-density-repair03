@@ -4,6 +4,8 @@ import type { GraphicsObject } from "graphics-debug"
 import { AutoroutingDrcEngine } from "../../drc"
 import {
   BROAD_FALLBACK_SMALL_ROUTE_LIMIT,
+  CLEARANCE_SLACK,
+  TRACE_PAD_REPAIR_MAX_MOVE,
   EXTENDED_BROAD_FORCE_PASS_MULTIPLIER,
   LARGE_DRC_COUNT_THRESHOLD,
   MAX_DRC_COUNT_PLATEAU_CHECKS,
@@ -40,6 +42,7 @@ import {
   getNonViaPadDrcIssueCount,
   getRepairDrcIssueCount,
   getRepairDrcIssueScore,
+  getSmtPadOverlapDepth,
   getTargetedClearanceSweepErrors,
   getTraceRouteIndexForError,
   getTraceRoutePairForError,
@@ -1567,7 +1570,15 @@ export class GlobalDrcForceImproveSolver extends BaseSolver {
       const canMoveSharedViaSiteWithoutTradingDrcErrors = bestIssueCount === 1
       let previousRejectedForceCandidate: HighDensityRoute[] | undefined
 
-      for (const scale of getForceScalesForEffort(this.effort)) {
+      let scales: readonly number[] = getForceScalesForEffort(this.effort)
+      const overlapDepth = getSmtPadOverlapDepth(error)
+      if (overlapDepth > 0) {
+        // In a fine-pitch gap, a full clearance move can reach the opposite pad.
+        const separationScale =
+          (overlapDepth + CLEARANCE_SLACK) / TRACE_PAD_REPAIR_MAX_MOVE
+        if (separationScale < 1) scales = [separationScale, ...scales]
+      }
+      for (const scale of scales) {
         if (candidateAttemptsThisStep >= maxCandidateAttemptsThisStep) break
 
         const candidateRoutes = cloneRoutes(bestRoutes)
