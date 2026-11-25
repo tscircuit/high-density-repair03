@@ -25,7 +25,7 @@ beforeAll(() => {
     expect(solver.failed).toBe(false)
     expect(input).toEqual(original)
     expect(output).toHaveLength(input.hdRoutes.length)
-    expect(solver.stats.initialDrcIssueCount).toBe(5)
+    expect(solver.stats.initialDrcIssueCount).toBe(10)
     expect(solver.stats.finalDrcIssueCount).toBeLessThanOrEqual(2)
     for (let index = 0; index < output.length; index++) {
       expect(output[index]!.route[0]).toEqual(input.hdRoutes[index]!.route[0])

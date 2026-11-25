@@ -731,15 +731,35 @@ export class AutoroutingDrcEngine {
         includeTrace && index < trace.route.length - 1;
         index += 1
       ) {
-        const start = trace.route[index]
-        const end = trace.route[index + 1]
+        const routeStart = trace.route[index]
+        const routeEnd = trace.route[index + 1]
+        let start: Point
+        let end: Point
+        let width: number
+        let layer: string
+
         if (
-          start?.route_type !== "wire" ||
-          end?.route_type !== "wire" ||
-          start.layer !== end.layer
+          routeStart?.route_type === "wire" &&
+          routeEnd?.route_type === "wire" &&
+          routeStart.layer === routeEnd.layer
         ) {
+          start = routeStart
+          end = routeEnd
+          width = getWireWidth(routeStart, routeEnd)
+          layer = routeStart.layer
+        } else if (
+          routeStart?.route_type === "via" &&
+          routeEnd?.route_type === "wire" &&
+          routeStart.to_layer === routeEnd.layer
+        ) {
+          start = routeStart
+          end = routeEnd
+          width = routeEnd.width ?? 0.1
+          layer = routeEnd.layer
+        } else {
           continue
         }
+
         if (
           Math.abs(start.x - end.x) <= POSITION_EPSILON &&
           Math.abs(start.y - end.y) <= POSITION_EPSILON
@@ -758,8 +778,8 @@ export class AutoroutingDrcEngine {
           Object.is(previous.start.y, start.y) &&
           Object.is(previous.end.x, end.x) &&
           Object.is(previous.end.y, end.y) &&
-          Object.is(previous.width, getWireWidth(start, end)) &&
-          previous.layer === start.layer &&
+          Object.is(previous.width, width) &&
+          previous.layer === layer &&
           previous.pcbPortIds.length === pcbPortIds.length &&
           previous.pcbPortIds.every((id, index) => id === pcbPortIds[index])
         ) {
@@ -774,8 +794,8 @@ export class AutoroutingDrcEngine {
           netId,
           start: { x: start.x, y: start.y },
           end: { x: end.x, y: end.y },
-          width: getWireWidth(start, end),
-          layer: start.layer,
+          width,
+          layer,
           pcbPortIds,
           primitiveId:
             traceOwnershipKey === undefined
@@ -787,8 +807,8 @@ export class AutoroutingDrcEngine {
                   start.y,
                   end.x,
                   end.y,
-                  getWireWidth(start, end),
-                  start.layer,
+                  width,
+                  layer,
                 ]),
         })
       }

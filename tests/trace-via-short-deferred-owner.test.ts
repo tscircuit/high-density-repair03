@@ -16,6 +16,12 @@ test("the deferred contact owner restores shorted connections without losing ind
   })
   intermediate.solve()
   const candidate = intermediate.getOutput()
+  const viaRoute = candidate.find((route) => route.connectionName === "n3")
+  if (!viaRoute) throw new Error("Expected the n3 trace")
+  for (const point of [viaRoute.route[1], viaRoute.route[2]]) {
+    if (point) point.y = 0.55
+  }
+  if (viaRoute.vias[0]) viaRoute.vias[0].y = 0.55
   expect(getTraceViaCopperGap(candidate)).toBeLessThan(0)
   const owner = new TraceContactRepairSolver({
     ...input,
