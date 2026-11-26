@@ -10,6 +10,7 @@ export const expectSrjRepairSnapshot = async (
   input: HighDensityRoute[],
   output: HighDensityRoute[],
   testPath: string,
+  drcCount?: number,
 ): Promise<void> => {
   expect(output.map((route) => route.connectionName)).toEqual(
     input.map((route) => route.connectionName),
@@ -37,8 +38,12 @@ export const expectSrjRepairSnapshot = async (
     hdRoutes: output,
     connMap: getConnectivityMapFromSimpleRouteJson(srj),
   })
-  const svg = getSvgFromGraphicsObject(visualizer.visualize(), {
+  let svg = getSvgFromGraphicsObject(visualizer.visualize(), {
     backgroundColor: "white",
   })
+  if (drcCount !== undefined) {
+    const label = `<text x="16" y="32" font-family="sans-serif" font-size="19">Repair fixture DRC errors: ${drcCount}</text>`
+    svg = svg.replace("</svg>", label + "</svg>")
+  }
   await expect(svg).toMatchSvgSnapshot(testPath)
 }
