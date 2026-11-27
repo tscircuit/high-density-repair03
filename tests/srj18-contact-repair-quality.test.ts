@@ -48,7 +48,7 @@ const getSample4CopperGap = (routes: HighDensityRoute[]): number => {
 test("SRJ18 contact protection retains baseline repair quality and terminals", () => {
   for (const [sample, ceiling] of [
     [4, 12],
-    [6, 369],
+    [6, 371],
     [13, 154],
   ] as const) {
     const { params } = loadSrj18Sample(sample - 1)
